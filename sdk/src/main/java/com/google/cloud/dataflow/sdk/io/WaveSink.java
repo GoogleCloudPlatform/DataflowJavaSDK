@@ -28,7 +28,7 @@ import com.sforce.ws.ConnectorConfig;
  *		Usage:
  *		//TransformAsCSV is a ParDo that returns a csv string
  *		PCollection<String> csvPCollection = result.apply(ParDo.of(new TransformAsCSV()));
- *		csvPCollection.apply(WaveSink.writeTo());
+ *		csvPCollection.apply(WaveSink.writeTo()); 
  *
  */
 public class WaveSink extends Sink<String> {
