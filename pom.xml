@@ -70,6 +70,7 @@
   <modules>
     <module>sdk</module>
     <module>examples</module>
+    <module>contrib/hadoop</module>
   </modules>
 
   <build>
