@@ -19,7 +19,10 @@ package com.google.cloud.dataflow.sdk.runners.worker;
 import static com.google.cloud.dataflow.sdk.util.Structs.getString;
 
 import com.google.api.services.bigquery.model.TableReference;
+import com.google.api.services.bigquery.model.TableRow;
 import com.google.cloud.dataflow.sdk.coders.Coder;
+import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
+import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
 import com.google.cloud.dataflow.sdk.options.BigQueryOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.util.CloudObject;
@@ -35,11 +38,27 @@ public class BigQueryReaderFactory {
 
   public static BigQueryReader create(PipelineOptions options, CloudObject spec, Coder<?> coder,
       ExecutionContext executionContext) throws Exception {
-    return new BigQueryReader(
+
+    if (coder instanceof TableRowJsonCoder) {
+      return new BigQueryReader(
         options.as(BigQueryOptions.class),
         new TableReference()
+          .setProjectId(getString(spec, PropertyNames.BIGQUERY_PROJECT))
+          .setDatasetId(getString(spec, PropertyNames.BIGQUERY_DATASET))
+          .setTableId(getString(spec, PropertyNames.BIGQUERY_TABLE)),
+        TableRow.class);
+    } else {
+      if (coder instanceof SerializableCoder) {
+        SerializableCoder serializableCoder = (SerializableCoder) coder;
+        return new BigQueryReader(
+          options.as(BigQueryOptions.class),
+          new TableReference()
             .setProjectId(getString(spec, PropertyNames.BIGQUERY_PROJECT))
             .setDatasetId(getString(spec, PropertyNames.BIGQUERY_DATASET))
-            .setTableId(getString(spec, PropertyNames.BIGQUERY_TABLE)));
+            .setTableId(getString(spec, PropertyNames.BIGQUERY_TABLE)),
+          serializableCoder.getRecordType());
+      }
+      throw new IllegalStateException("Unsupported coder.");
+    }
   }
 }

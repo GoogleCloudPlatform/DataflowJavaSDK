@@ -22,6 +22,7 @@ import com.google.api.services.bigquery.model.TableReference;
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.api.services.bigquery.model.TableSchema;
 import com.google.cloud.dataflow.sdk.coders.Coder;
+import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
 import com.google.cloud.dataflow.sdk.options.BigQueryOptions;
@@ -50,12 +51,12 @@ import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
 import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.PInput;
-
 import org.joda.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -217,8 +218,8 @@ public class BigQueryIO {
    * </code></pre>
    */
   public static class Read {
-    public static Bound named(String name) {
-      return new Bound().named(name);
+    public static Bound<TableRow> named(String name) {
+      return new Bound(TableRow.class).named(name);
     }
 
     /**
@@ -226,49 +227,63 @@ public class BigQueryIO {
      * "[project_id]:[dataset_id].[table_id]" or "[dataset_id].[table_id]" for
      * tables within the current project.
      */
-    public static Bound from(String tableSpec) {
-      return new Bound().from(tableSpec);
+    public static Bound<TableRow> from(String tableSpec) {
+      return new Bound(TableRow.class).from(tableSpec);
     }
 
     /**
      * Reads a BigQuery table specified as a TableReference object.
      */
-    public static Bound from(TableReference table) {
-      return new Bound().from(table);
+    public static Bound<TableRow> from(TableReference table) {
+      return new Bound(TableRow.class).from(table);
     }
 
     /**
      * Disables BigQuery table validation, which is enabled by default.
      */
-    public static Bound withoutValidation() {
-      return new Bound().withoutValidation();
+    public static Bound<TableRow> withoutValidation() {
+      return new Bound(TableRow.class).withoutValidation();
+    }
+
+    /**
+     * Use typing.
+     * @param type
+     * @param <T>
+     * @return
+     */
+    public static <T> Bound<T> withType(Class<T> type) {
+      return new Bound<>(type);
     }
 
     /**
      * A {@link PTransform} that reads from a BigQuery table and returns a bounded
      * {@link PCollection} of {@link TableRow TableRows}.
      */
-    public static class Bound extends PTransform<PInput, PCollection<TableRow>> {
+    public static class Bound<T> extends PTransform<PInput, PCollection<T>> {
       private static final long serialVersionUID = 0;
 
       TableReference table;
       final boolean validate;
+      /** The class type of the row. */
+      final Class<T> type;
 
-      Bound() {
+      Bound(Class<T> type) {
+        this.type = type;
         this.validate = true;
       }
 
-      Bound(String name, TableReference reference, boolean validate) {
+      Bound(String name, TableReference reference, Class<T> type, boolean validate) {
         super(name);
         this.table = reference;
+        this.type = type;
         this.validate = validate;
       }
 
       /**
        * Sets the name associated with this transformation.
        */
-      public Bound named(String name) {
-        return new Bound(name, table, validate);
+      public Bound<T> named(String name) {
+        return new Bound(name, table, type, validate);
       }
 
       /**
@@ -276,31 +291,32 @@ public class BigQueryIO {
        * <p>
        * Refer to {@link #parseTableSpec(String)} for the specification format.
        */
-      public Bound from(String tableSpec) {
+      public Bound<T> from(String tableSpec) {
         return from(parseTableSpec(tableSpec));
       }
 
       /**
        * Sets the table specification.
        */
-      public Bound from(TableReference table) {
-        return new Bound(name, table, validate);
+      public Bound<T> from(TableReference table) {
+        return new Bound(name, table, type, validate);
       }
 
       /**
        * Disable table validation.
        */
-      public Bound withoutValidation() {
-        return new Bound(name, table, false);
+      public Bound<T> withoutValidation() {
+        return new Bound(name, table, type, false);
       }
 
       @Override
-      public PCollection<TableRow> apply(PInput input) {
+      public PCollection<T> apply(PInput input) {
         if (table == null) {
           throw new IllegalStateException(
               "must set the table reference of a BigQueryIO.Read transform");
         }
-        return PCollection.<TableRow>createPrimitiveOutputInternal(
+        if (TableRow.class.equals(type)) {
+          return (PCollection<T>) PCollection.<TableRow>createPrimitiveOutputInternal(
             input.getPipeline(),
             WindowingStrategy.globalDefault(),
             IsBounded.BOUNDED)
@@ -308,11 +324,40 @@ public class BigQueryIO {
             // unchangeable later, to ensure that we read the input in the
             // format specified by the Read transform.
             .setCoder(TableRowJsonCoder.of());
+        }
+        PCollection<T> pCollection = (PCollection<T>) PCollection.
+          <TableRow>createPrimitiveOutputInternal(
+            input.getPipeline(),
+            WindowingStrategy.globalDefault(),
+            IsBounded.BOUNDED);
+
+        if (Serializable.class.isAssignableFrom(type)) {
+          try {
+            pCollection.setCoder((Coder<T>) SerializableCoder.of(type.getName()));
+          } catch (ClassNotFoundException e) {
+            throw new IllegalStateException(
+              "typed BigQueryIO.Read should be serializable",
+              e);
+          }
+        } else {
+          throw new IllegalStateException(
+            "type show be serializable");
+        }
+        return pCollection;
       }
 
       @Override
-      protected Coder<TableRow> getDefaultOutputCoder() {
-        return TableRowJsonCoder.of();
+      protected Coder<T> getDefaultOutputCoder() {
+        if (TableRow.class.equals(type)) {
+          return (Coder<T>) TableRowJsonCoder.of();
+        }
+        try {
+          return (Coder<T>) SerializableCoder.of(type.getName());
+        } catch (ClassNotFoundException e) {
+          throw new IllegalStateException(
+            "typed BigQueryIO.Read should be serializable",
+            e);
+        }
       }
 
       @Override
@@ -343,6 +388,13 @@ public class BigQueryIO {
        */
       public boolean getValidate() {
         return validate;
+      }
+
+      /**
+       * Return the type of model object.
+       */
+      public Class<T> getType() {
+        return type;
       }
     }
   }
@@ -862,8 +914,8 @@ public class BigQueryIO {
    * <p>
    * This loads the entire table into an in-memory PCollection.
    */
-  private static void evaluateReadHelper(
-      Read.Bound transform, DirectPipelineRunner.EvaluationContext context) {
+  private static <T> void evaluateReadHelper(
+      Read.Bound<T> transform, DirectPipelineRunner.EvaluationContext context) {
     BigQueryOptions options = context.getPipelineOptions();
     Bigquery client = Transport.newBigQueryClient(options).build();
     TableReference ref = transform.table;
@@ -872,10 +924,10 @@ public class BigQueryIO {
     }
 
     LOG.info("Reading from BigQuery table {}", toTableSpec(ref));
-    List<WindowedValue<TableRow>> elems =
-        ReaderUtils.readElemsFromReader(new BigQueryReader(client, ref));
+    List<WindowedValue<T>> elems = ReaderUtils.readElemsFromReader(
+      new BigQueryReader(client, ref, transform.getType()));
     LOG.info("Number of records read from BigQuery: {}", elems.size());
-    context.setPCollectionWindowedValue(context.getOutput(transform), elems);
+    context.setPCollectionWindowedValue((PCollection) context.getOutput(transform), elems);
   }
 
   /**

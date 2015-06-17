@@ -40,11 +40,11 @@ public class BigQueryIOTranslator {
   /**
    * Implements BigQueryIO Read translation for the Dataflow backend.
    */
-  public static class ReadTranslator
-      implements DataflowPipelineTranslator.TransformTranslator<BigQueryIO.Read.Bound> {
+  public static class ReadTranslator<T>
+      implements DataflowPipelineTranslator.TransformTranslator<BigQueryIO.Read.Bound<T>> {
 
     @Override
-    public void translate(BigQueryIO.Read.Bound transform,
+    public void translate(BigQueryIO.Read.Bound<T> transform,
                           DataflowPipelineTranslator.TranslationContext context) {
       TableReference table = transform.getTable();
       if (table.getProjectId() == null) {
