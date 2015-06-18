@@ -16,31 +16,35 @@
 
 package com.google.cloud.dataflow.sdk.util;
 
-import com.google.api.client.util.Data;
 import com.google.api.client.util.Preconditions;
 import com.google.api.services.bigquery.Bigquery;
 import com.google.api.services.bigquery.model.TableFieldSchema;
 import com.google.api.services.bigquery.model.TableReference;
-import com.google.api.services.bigquery.model.TableRow;
-
-import org.joda.time.format.DateTimeFormat;
-import org.joda.time.format.DateTimeFormatter;
+import com.google.cloud.dataflow.sdk.util.bqmap.BqTypeMapper;
 
 import java.io.Closeable;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Iterates over all rows in a table.
+ *
+ * @param <T> the type of the elements read from the source
  */
-public class BigQueryTableRowIterator extends AbstractBigQueryIterator<TableRow>
-  implements Closeable {
+public class BigQueryTypedIterator<T> extends AbstractBigQueryIterator<T> implements Closeable {
 
-  public BigQueryTableRowIterator(Bigquery client, TableReference ref) {
+  private BqTypeMapper mapper;
+  private Class<T> type;
+
+
+  public BigQueryTypedIterator(Bigquery client, TableReference ref, Class<T> type) {
     super(client, ref);
+    createFieldMapper(type);
+  }
+
+  private void createFieldMapper(Class<T> type) {
+    this.type = type;
   }
 
   /**
@@ -62,52 +66,17 @@ public class BigQueryTableRowIterator extends AbstractBigQueryIterator<TableRow>
    * <p> Note that currently integers are encoded as strings to match
    * the behavior of the backend service.
    */
-  private Object getTypedCellValue(TableFieldSchema fieldSchema, Object v) {
+  private void setField(TableFieldSchema fieldSchema, Object o, Object v)
+    throws InstantiationException, IllegalAccessException {
     // In the input from the BQ API, atomic types all come in as
     // strings, while on the Dataflow service they have more precise
     // types.
-
-    if (Data.isNull(v)) {
-      return null;
-    }
-
-    if (Objects.equals(fieldSchema.getMode(), "REPEATED")) {
-      TableFieldSchema elementSchema = fieldSchema.clone().setMode("REQUIRED");
-      @SuppressWarnings("unchecked")
-      List<Map<String, Object>> rawValues = (List<Map<String, Object>>) v;
-      List<Object> values = new ArrayList<Object>(rawValues.size());
-      for (Map<String, Object> element : rawValues) {
-        values.add(getTypedCellValue(elementSchema, element.get("v")));
-      }
-      return values;
-    }
-
-    if (fieldSchema.getType().equals("RECORD")) {
-      @SuppressWarnings("unchecked")
-      Map<String, Object> typedV = (Map<String, Object>) v;
-      return getTypedTableRow(fieldSchema.getFields(), typedV);
-    }
-
-    if (fieldSchema.getType().equals("FLOAT")) {
-      return Double.parseDouble((String) v);
-    }
-
-    if (fieldSchema.getType().equals("BOOLEAN")) {
-      return Boolean.parseBoolean((String) v);
-    }
-
-    if (fieldSchema.getType().equals("TIMESTAMP")) {
-      // Seconds to milliseconds
-      long milliSecs = (new Double(Double.parseDouble((String) v) * 1000)).longValue();
-      DateTimeFormatter formatter =
-          DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS").withZoneUTC();
-      return formatter.print(milliSecs) + " UTC";
-    }
-
-    return v;
+    String name = fieldSchema.getName();
+    mapper.set(name, o, v);
   }
 
-  protected TableRow getTypedTableRow(List<TableFieldSchema> fields, Map<String, Object> rawRow) {
+  @Override
+  protected T getTypedTableRow(List<TableFieldSchema> fields, Map<String, Object> rawRow) {
     @SuppressWarnings("unchecked")
     List<Map<String, Object>> cells = (List<Map<String, Object>>) rawRow.get("f");
     Preconditions.checkState(cells.size() == fields.size());
@@ -115,17 +84,29 @@ public class BigQueryTableRowIterator extends AbstractBigQueryIterator<TableRow>
     Iterator<Map<String, Object>> cellIt = cells.iterator();
     Iterator<TableFieldSchema> fieldIt = fields.iterator();
 
-    TableRow row = new TableRow();
-    while (cellIt.hasNext()) {
-      Map<String, Object> cell = cellIt.next();
-      TableFieldSchema fieldSchema = fieldIt.next();
-      row.set(fieldSchema.getName(), getTypedCellValue(fieldSchema, cell.get("v")));
+    try {
+      T row = type.newInstance();
+      while (cellIt.hasNext()) {
+        Map<String, Object> cell = cellIt.next();
+        TableFieldSchema fieldSchema = fieldIt.next();
+        setField(fieldSchema, row, cell.get("v"));
+      }
+      return row;
+    } catch (InstantiationException e) {
+      throw new RuntimeException(
+        "Can't create type",
+        e
+      );
+    } catch (IllegalAccessException e) {
+      throw new RuntimeException(
+        "One of the fields are not accessible",
+        e
+      );
     }
-    return row;
   }
 
   @Override
   protected void buildMapper() {
-
+    this.mapper = new BqTypeMapper(type, schema);
   }
 }

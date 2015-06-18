@@ -20,6 +20,7 @@ import static com.google.cloud.dataflow.sdk.util.CoderUtils.makeCloudEncoding;
 import static com.google.cloud.dataflow.sdk.util.Structs.addString;
 
 import com.google.api.services.dataflow.model.Source;
+import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.util.BatchModeExecutionContext;
 import com.google.cloud.dataflow.sdk.util.CloudObject;
@@ -62,11 +63,20 @@ public class BigQueryReaderFactoryTest {
         "someproject", "somedataset", "sometable", makeCloudEncoding("TableRowJsonCoder"));
   }
 
-  @Test
-  public void testCreateBigQueryReaderCoderIgnored() throws Exception {
-    // BigQuery sources do not need a coder because the TableRow objects are read directly from
-    // the table using the BigQuery API.
+  @Test(expected = RuntimeException.class)
+  public void testCreateBigQueryReaderCoderUnsupported() throws Exception {
     runTestCreateBigQueryReader(
-        "someproject", "somedataset", "sometable", makeCloudEncoding("BigEndianIntegerCoder"));
+      "someproject", "somedataset", "sometable", makeCloudEncoding("BigEndianIntegerCoder"));
+  }
+
+  @Test
+  public void testCreateBigQueryTypedReader() throws Exception {
+    // BigQuery sources now supports an experimental feature that can make typed object,
+    // as long as the type are serializable.
+    SerializableCoder<BigQueryReaderTest.TestType> coder = SerializableCoder.of(
+      BigQueryReaderTest.TestType.class);
+
+    runTestCreateBigQueryReader(
+      "someproject", "somedataset", "sometable", coder.asCloudObject());
   }
 }
