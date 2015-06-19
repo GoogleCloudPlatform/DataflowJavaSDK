@@ -1,46 +1,50 @@
 package com.google.wave.prototype.sf;
 
-public class SFReferenceData {
-	private String accountId;
-	private String opportunityId;
-	private String proposalId;
+import java.io.Serializable;
 
-	public SFReferenceData(String accountId, String opportunityId,
-			String proposalId) {
-		super();
-		this.accountId = accountId;
-		this.opportunityId = opportunityId;
-		this.proposalId = proposalId;
-	}
+public class SFReferenceData implements Serializable {
+    private static final long serialVersionUID = -7597520654419284165L;
 
-	public String getAccountId() {
-		return accountId;
-	}
+    private String accountId;
+    private String opportunityId;
+    private String proposalId;
 
-	public void setAccountId(String accountId) {
-		this.accountId = accountId;
-	}
+    public SFReferenceData(String accountId, String opportunityId,
+            String proposalId) {
+        super();
+        this.accountId = accountId;
+        this.opportunityId = opportunityId;
+        this.proposalId = proposalId;
+    }
 
-	public String getOpportunityId() {
-		return opportunityId;
-	}
+    public String getAccountId() {
+        return accountId;
+    }
 
-	public void setOpportunityId(String opportunityId) {
-		this.opportunityId = opportunityId;
-	}
+    public void setAccountId(String accountId) {
+        this.accountId = accountId;
+    }
 
-	public String getProposalId() {
-		return proposalId;
-	}
+    public String getOpportunityId() {
+        return opportunityId;
+    }
 
-	public void setProposalId(String proposalId) {
-		this.proposalId = proposalId;
-	}
+    public void setOpportunityId(String opportunityId) {
+        this.opportunityId = opportunityId;
+    }
 
-	@Override
-	public String toString() {
-		return accountId + ","+ opportunityId + "," + proposalId;
-	}
+    public String getProposalId() {
+        return proposalId;
+    }
 
-	
+    public void setProposalId(String proposalId) {
+        this.proposalId = proposalId;
+    }
+
+    @Override
+    public String toString() {
+        return accountId + ","+ opportunityId + "," + proposalId;
+    }
+
+
 }
