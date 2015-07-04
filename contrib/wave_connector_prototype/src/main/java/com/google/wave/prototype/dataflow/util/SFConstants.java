@@ -1,9 +1,9 @@
-package com.google.wave.prototype.sf;
+package com.google.wave.prototype.dataflow.util;
 
-public interface SFContants {
-    public static String STR_INSIGHT_EXTERNAL_DATA = "InsightsExternalData";
-    public static String STR_INSIGHT_EXTERNAL_DATA_PART = "InsightsExternalDataPart";
-    public static String STR_INSIGHT_EXTERNAL_DATA_ID = "InsightsExternalDataId";
+public interface SFConstants {
+    public static String STR_INSIGHTS_EXTERNAL_DATA = "InsightsExternalData";
+    public static String STR_INSIGHTS_EXTERNAL_DATA_PART = "InsightsExternalDataPart";
+    public static String STR_INSIGHTS_EXTERNAL_DATA_ID = "InsightsExternalDataId";
 
     public static String STR_FORMAT = "Format";
     public static String STR_DATAFILE = "DataFile";
@@ -16,6 +16,8 @@ public interface SFContants {
     public static String STR_CSV_FORMAT = "Csv";
     public static String STR_OVERWRITE_OPERATION = "Overwrite";
     public static String STR_ACTION_NONE = "None";
-    public static String STR_PROCESS_NONE = "Process";
+    public static String STR_ACTION_PROCESS = "Process";
 
+    public static String GS_FILE_PREFIX = "gs://";
+    public static String LOCAL_FILE_PREFIX = "file://";
 }

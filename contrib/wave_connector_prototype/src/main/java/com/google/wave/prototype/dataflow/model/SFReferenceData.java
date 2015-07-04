@@ -1,7 +1,10 @@
-package com.google.wave.prototype.sf;
+package com.google.wave.prototype.dataflow.model;
 
 import java.io.Serializable;
 
+/**
+ * POJO containing Salesforce reference data
+ */
 public class SFReferenceData implements Serializable {
     private static final long serialVersionUID = -7597520654419284165L;
 
