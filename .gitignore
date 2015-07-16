@@ -1,4 +1,5 @@
 target/
+sdk/dependency-reduced-pom.xml
 
 # Ignore IntelliJ files.
 .idea/
