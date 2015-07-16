@@ -580,7 +580,10 @@ public class PubsubIO {
               Transport.newPubsubClient(c.getPipelineOptions().as(DataflowPipelineOptions.class))
                   .build();
 
-          String subscription = getSubscription().asV1Beta2Path();
+          String subscription = null;
+          if (getSubscription() != null) {
+            subscription = getSubscription().asV1Beta2Path();
+          }
           if (subscription == null) {
             String topic = getTopic().asV1Beta2Path();
             String[] split = topic.split("/");
