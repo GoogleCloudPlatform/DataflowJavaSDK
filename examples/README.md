@@ -30,7 +30,7 @@ Besides `WordCount`, the following examples are included:
   <code>PCollection</code>; also how to use an <code>Aggregator</code> to track
   information in the Google Developers Console.
   </li>
-  <li><a href="https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/examples/src/main/java/com/google/cloud/dataflow/examples/DatastoreWordCount.java">DatastoreWordCount</a>
+  <li><a href="https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/examples/src/main/java/com/google/cloud/dataflow/examples/cookbook/DatastoreWordCount.java">DatastoreWordCount</a>
   &mdash; An example that shows you how to read from Google Cloud Datastore.</li>
   <li><a href="https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/examples/src/main/java/com/google/cloud/dataflow/examples/DeDupExample.java">DeDupExample</a>
   &mdash; An example that uses Shakespeare's plays as plain text files, and
