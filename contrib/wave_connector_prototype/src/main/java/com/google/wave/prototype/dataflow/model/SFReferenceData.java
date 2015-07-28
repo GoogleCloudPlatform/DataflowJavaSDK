@@ -49,5 +49,44 @@ public class SFReferenceData implements Serializable {
         return accountId + ","+ opportunityId + "," + proposalId;
     }
 
+    @Override
+    public int hashCode() {
+        final int prime = 31;
+        int result = 1;
+        result = prime * result
+                + ((accountId == null) ? 0 : accountId.hashCode());
+        result = prime * result
+                + ((opportunityId == null) ? 0 : opportunityId.hashCode());
+        result = prime * result
+                + ((proposalId == null) ? 0 : proposalId.hashCode());
+        return result;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        SFReferenceData other = (SFReferenceData) obj;
+        if (accountId == null) {
+            if (other.accountId != null)
+                return false;
+        } else if (!accountId.equals(other.accountId))
+            return false;
+        if (opportunityId == null) {
+            if (other.opportunityId != null)
+                return false;
+        } else if (!opportunityId.equals(other.opportunityId))
+            return false;
+        if (proposalId == null) {
+            if (other.proposalId != null)
+                return false;
+        } else if (!proposalId.equals(other.proposalId))
+            return false;
+        return true;
+    }
 
 }

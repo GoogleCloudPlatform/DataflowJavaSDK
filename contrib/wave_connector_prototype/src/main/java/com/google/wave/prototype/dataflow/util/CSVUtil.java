@@ -3,7 +3,9 @@ package com.google.wave.prototype.dataflow.util;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.xml.namespace.QName;
@@ -11,7 +13,13 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
-import org.apache.commons.lang3.StringUtils;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.schema.Column;
+import net.sf.jsqlparser.statement.select.PlainSelect;
+import net.sf.jsqlparser.statement.select.Select;
+import net.sf.jsqlparser.statement.select.SelectExpressionItem;
+import net.sf.jsqlparser.statement.select.SelectItem;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
@@ -29,31 +37,27 @@ import com.sforce.ws.parser.XmlOutputStream;
  */
 public class CSVUtil {
     private static final Logger LOG = LoggerFactory.getLogger(CSVUtil.class);
-    // "SELECT ".length()
-    private static final int SELECT_PREFIX_LENGTH = 7;
 
-    /** Fields queried from Salesforce */
-    private String[] queryFields;
+    /** Columns queried from Salesforce */
+    private List<String> columnNames = new ArrayList<String>();
 
     /**
      * @param soqlQuery - SOQL query used to fetch Salesforce Reference data
+     * @throws Exception
      */
-    public CSVUtil(String soqlQuery) {
-        // Parsing the SOQL Query to get the fields queried from Salesforce
-        // Removing select clause
-        // Example query for better understanding in each steps
-        // soqlQuery = "SELECT oppor.AccountId, oppor.Id FROM Opportunity as oppor"
-        soqlQuery = soqlQuery.substring(SELECT_PREFIX_LENGTH);
-        // Getting the fields present between select and from
-        int fromIndex = StringUtils.indexOfIgnoreCase(soqlQuery, " from ");
-        // soqlQuery = "oppor.AccountId, oppor.Id "
-        soqlQuery = soqlQuery.substring(0, fromIndex);
-        // Fields are separated by comma
-        // Splitting will give the queried fields
-        // fields = {"oppor.AccountId", " oppor.Id"}
-        // space is taken care by stripAlias()
-        queryFields = soqlQuery.split(",");
-        LOG.debug("Fields from SOQL Query " + queryFields);
+    public CSVUtil(String soqlQuery) throws Exception {
+        // Parsing the SOQL Query to get the columns queried from Salesforce
+        Select stmt = (Select) CCJSqlParserUtil.parse(soqlQuery);
+        PlainSelect plainSelect = (PlainSelect) stmt.getSelectBody();
+        // SelectedItems contains the column to be selected
+        List<SelectItem> selectItems = plainSelect.getSelectItems();
+        for (SelectItem selectItem : selectItems) {
+            // We will get only columns as expressions are not supported
+            Column column = (Column) ((SelectExpressionItem) selectItem).getExpression();
+            columnNames.add(column.getColumnName());
+        }
+
+        LOG.debug("Columns from SOQL Query " + columnNames);
     }
 
     /**
@@ -68,13 +72,13 @@ public class CSVUtil {
         Document doc = readDocument(sObject);
         // Reading the fields present in XML document
         Map<String, String> fieldMap = readFields(doc);
-        for (int i = 0; i < queryFields.length; i++) {
+        for (int i = 0, size = columnNames.size(); i < size; i++) {
             if (i != 0) {
                 csv.append(',');
             }
 
-            // Getting the corresponding value from the fieldMap using fields constructed from SOQL query
-            String fieldValue = fieldMap.get(stripAlias(queryFields[i]));
+            // Getting the corresponding value from the fieldMap using columns constructed from SOQL query
+            String fieldValue = fieldMap.get(columnNames.get(i));
             if (fieldValue != null) {
                 csv.append(fieldValue);
             }
@@ -116,10 +120,6 @@ public class CSVUtil {
 
     private String stripPrefix(String nodeName) {
         return strip(nodeName, ':');
-    }
-
-    private String stripAlias(String field) {
-        return strip(field, '.').trim();
     }
 
     private String strip(String str, char separator) {

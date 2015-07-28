@@ -1,6 +1,8 @@
 package com.google.wave.prototype.dataflow.model;
 
-import org.junit.Assert;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
+
 import org.junit.Test;
 
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
@@ -23,8 +25,8 @@ public class SFConfigTest {
         // This will read the config file and populate SFConfig with userId and password
         SFConfig sfConfig = SFConfig.getInstance(sb.toString(), PipelineOptionsFactory.create());
 
-        Assert.assertEquals("demo@demo.com", sfConfig.getUserId());
-        Assert.assertEquals("test", sfConfig.getPassword());
+        assertEquals("demo@demo.com", sfConfig.getUserId());
+        assertEquals("test", sfConfig.getPassword());
     }
 
     @Test
@@ -32,7 +34,7 @@ public class SFConfigTest {
         try {
             // Providing invalid file path which should throw Exception
             SFConfig.getInstance("test_sf_config.json", PipelineOptionsFactory.create());
-            Assert.fail("Expected exception not raised");
+            fail("Expected exception not raised");
         } catch (Exception e) {
             // Expected exception here
         }

@@ -30,9 +30,10 @@ import com.google.wave.prototype.dataflow.function.AggregateDataEnricher;
 import com.google.wave.prototype.dataflow.function.CSVFormatter;
 import com.google.wave.prototype.dataflow.function.TableRowFormatter;
 import com.google.wave.prototype.dataflow.model.AggregatedData;
-import com.google.wave.prototype.dataflow.sink.SFWaveSink;
-import com.google.wave.prototype.dataflow.transform.AdDataBundler;
+import com.google.wave.prototype.dataflow.model.SFConfig;
+import com.google.wave.prototype.dataflow.sf.SFWaveDatasetWriter;
 import com.google.wave.prototype.dataflow.transform.AggregateEvents;
+import com.google.wave.prototype.dataflow.transform.SFWaveWrite;
 
 /**
  * Google Dataflow Job
@@ -47,7 +48,7 @@ import com.google.wave.prototype.dataflow.transform.AggregateEvents;
  * 		--inputTable=GOOGLE_BIGQUERY_TABLE_CONTAINING_SALESFORCE_REFERENCE_DATA
  * 		--output=GOOGLE_BIGQUERY_TABLE_TO_WHICH_ENRICHED_DATA_HAS_TO_BE_ADDED
  * 		--dataset=SALESFORCE WAVE DATASET
- * 		--metadataFileLocation=GCS_LOCATION_OF_SALESFORCE_METADATA_FILE
+ * 		--sfMetadataFileLocation=GCS_LOCATION_OF_SALESFORCE_METADATA_FILE
  * 		--sfConfigFileLocation=GCS_LOCATION_OF_SALESFORCE_CONFIG_FILE
  */
 public class AdDataJob {
@@ -70,8 +71,8 @@ public class AdDataJob {
         void setDataset(String dataset);
 
         @Default.String("gs://sam-bucket1/SampleAdData/metadata.json")
-        String getMetadataFileLocation();
-        void setMetadataFileLocation(String metadataFileLocation);
+        String getSfMetadataFileLocation();
+        void setSfMetadataFileLocation(String sfMetadataFileLocation);
 
         @Default.String("gs://sam-bucket1/config/sf_source_config.json")
         String getSfConfigFileLocation();
@@ -109,7 +110,12 @@ public class AdDataJob {
         return columns;
     }
 
-    public static void main(String[] args) {
+    private static SFWaveDatasetWriter createSFWaveDatasetWriter(AdDataJob.Options options) throws Exception {
+        SFConfig sfConfig = SFConfig.getInstance(options.getSfConfigFileLocation(), options);
+        return new SFWaveDatasetWriter(sfConfig, options.getDataset());
+    }
+
+    public static void main(String[] args) throws Exception {
         // Helper if command line options are not provided
         if (args.length < 2) {
             args = new String[2];
@@ -141,9 +147,7 @@ public class AdDataJob {
         PCollection<String> enrichedCSV = enriched.apply(ParDo.of(new CSVFormatter()));
         // Writing the results into Salesforce Wave
         enrichedCSV
-                // Bundling the individual CSV Rows into 10 MB chunk
-                .apply(new AdDataBundler())
-                .apply(SFWaveSink.writeTo(options.getDataset(), options.getSfConfigFileLocation(), options.getMetadataFileLocation()));
+                .apply(new SFWaveWrite(createSFWaveDatasetWriter(options), options.getSfMetadataFileLocation()));
 
         // Populated BigQuery with enriched data
         enrichedCSV

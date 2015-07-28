@@ -22,7 +22,7 @@ import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.wave.prototype.dataflow.function.TableRowFormatter;
 import com.google.wave.prototype.dataflow.model.SFConfig;
-import com.google.wave.prototype.dataflow.model.SFQuery;
+import com.google.wave.prototype.dataflow.sf.SFSOQLExecutor;
 import com.google.wave.prototype.dataflow.transform.SFRead;
 
 /**
@@ -97,16 +97,14 @@ public class SFReferenceDataJob {
         options.setRunner(BlockingDataflowPipelineRunner.class);
         Pipeline p = Pipeline.create(options);
 
-        // SFQuery with SOQL to be executed and
+        // SFSOQLExecutor which will be used to execute SOQL query
         // SFConfig which will be used to create Salesforce Connection
-        SFQuery sfQuery = new SFQuery(
-                options.getSfQuery(),
-                SFConfig.getInstance(options.getSfConfigFileLocation(), options));
+        SFSOQLExecutor soqlExecutor = new SFSOQLExecutor(SFConfig.getInstance(options.getSfConfigFileLocation(), options));
 
         // Executing pipeline
-        p.apply(Create.of(sfQuery))
+        p.apply(Create.of(options.getSfQuery()))
                 // Reading from Salesforce
-                .apply(new SFRead())
+                .apply(new SFRead(soqlExecutor))
                 // Convert to TableRow
                 .apply(ParDo.of(new TableRowFormatter(getSFRefTableColumns())))
                 // Wiring into BigQuery

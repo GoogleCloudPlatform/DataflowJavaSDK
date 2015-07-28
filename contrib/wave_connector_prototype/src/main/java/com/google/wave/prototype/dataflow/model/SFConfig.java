@@ -1,19 +1,23 @@
 package com.google.wave.prototype.dataflow.model;
 
-import java.io.File;
 import java.io.Serializable;
 
-import org.apache.commons.io.Charsets;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.appengine.repackaged.com.google.gson.Gson;
 import com.google.appengine.repackaged.com.google.gson.GsonBuilder;
 import com.google.cloud.dataflow.sdk.coders.DefaultCoder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
-import com.google.wave.prototype.dataflow.util.GCSFileUtil;
+import com.google.wave.prototype.dataflow.util.FileUtil;
 import com.google.wave.prototype.dataflow.util.SFConstants;
+import com.sforce.soap.enterprise.EnterpriseConnection;
+import com.sforce.soap.partner.Connector;
+import com.sforce.soap.partner.PartnerConnection;
+import com.sforce.ws.ConnectionException;
+import com.sforce.ws.ConnectorConfig;
 
 /**
  * Holds the configuration which will be used by SFSource
@@ -28,13 +32,16 @@ import com.google.wave.prototype.dataflow.util.SFConstants;
 public class SFConfig implements Serializable {
     private static final long serialVersionUID = -5569745252294105529L;
 
+    private static final Logger LOG = LoggerFactory.getLogger(SFConfig.class);
+
     private String userId;
     private String password;
 
     public static SFConfig getInstance(String configFileLocation, PipelineOptions options) throws Exception {
         validate(configFileLocation);
-
-        String json = getContent(configFileLocation, options);
+        // Content will be in JSON
+        // So constructing SFConfig bean using GSON
+        String json = FileUtil.getContent(configFileLocation, options);
         Gson gson = new GsonBuilder().create();
         // Unmarshalling file content into SFConfig
         return gson.fromJson(json, SFConfig.class);
@@ -48,29 +55,32 @@ public class SFConfig implements Serializable {
         return password;
     }
 
-    private static String getContent(String configFileLocation, PipelineOptions options) throws Exception {
-        // Have separate reader for GS files and local files
-        if (configFileLocation.startsWith(SFConstants.GS_FILE_PREFIX)) {
-            return readFromGCS(configFileLocation, options);
-        } else {
-            return readFromLocal(configFileLocation);
+    public PartnerConnection createPartnerConnection() throws Exception {
+        ConnectorConfig config = new ConnectorConfig();
+        LOG.debug("Connecting SF Partner Connection using " + getUserId());
+        config.setUsername(getUserId());
+        config.setPassword(getPassword());
+
+        try {
+            return Connector.newConnection(config);
+        } catch (ConnectionException ce) {
+            LOG.error("Exception while creating connection", ce);
+            throw new Exception(ce);
         }
     }
 
-    private static String readFromLocal(String configFileLocation) throws Exception {
-        // Removing file:// prefix
-        String fileLocation = StringUtils.substringAfter(configFileLocation, SFConstants.LOCAL_FILE_PREFIX);
-        // Using commons-io utility to read the file as String
-        return FileUtils.readFileToString(new File(fileLocation), Charsets.UTF_8);
-    }
+    public EnterpriseConnection createEnterpriseConnection() throws Exception {
+        ConnectorConfig config = new ConnectorConfig();
+        LOG.debug("Connecting SF Partner Connection using " + getUserId());
+        config.setUsername(getUserId());
+        config.setPassword(getPassword());
 
-    private static String readFromGCS(String configFileLocation,
-            PipelineOptions options) throws Exception {
-        GCSFileUtil gcsFileUtil = new GCSFileUtil(options);
-        byte[] contents = gcsFileUtil.read(configFileLocation);
-        // Content will be in JSON
-        // So returning as String which will constructed into this SFConfig bean using GSON
-        return new String(contents);
+        try {
+            return com.sforce.soap.enterprise.Connector.newConnection(config);
+        } catch (ConnectionException ce) {
+            LOG.error("Exception while creating connection", ce);
+            throw new Exception(ce);
+        }
     }
 
     private static void validate(String configFileLocation) throws Exception {
