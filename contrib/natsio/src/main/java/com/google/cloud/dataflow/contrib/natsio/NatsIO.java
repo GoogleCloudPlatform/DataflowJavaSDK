@@ -131,16 +131,16 @@ public class NatsIO {
 			}
 			
 			@Override
-			public NatsReader createReader(PipelineOptions arg0, UnboundedSource.CheckpointMark arg1) {
+			public NatsReader createReader(PipelineOptions options, UnboundedSource.CheckpointMark mark) {
 				return new NatsReader(subject);
 			}
 
 			@Override
 			public List<? extends UnboundedSource<KV<String,String>, UnboundedSource.CheckpointMark>> generateInitialSplits(
-					int arg0, PipelineOptions arg1) throws Exception {
+					int numSplits, PipelineOptions options) throws Exception {
 				List<NatsSource> results = new ArrayList<NatsSource>();
 				// Create a NatsSource instance for each split.
-				int split = arg0 / 3;
+				int split = numSplits / 3;
 				for(int i = 0; i < split; i++)
 					results.add(new NatsSource(subject, props));
 				return results;
