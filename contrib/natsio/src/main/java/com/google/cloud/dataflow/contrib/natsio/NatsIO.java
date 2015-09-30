@@ -31,7 +31,6 @@ import org.nats.MsgHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.cloud.dataflow.contrib.natsio.NatsIO.Read.NatsSource.CommitMark;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
