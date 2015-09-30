@@ -82,7 +82,7 @@ public class NatsIO {
 	private static final Logger LOG = LoggerFactory.getLogger(NatsIO.class);
 	
 	private static final Coder<String> DEFAULT_CODER = StringUtf8Coder.of();
-	private static CommitMark DEFAULT_MARK = new CommitMark();
+	private static Read.NatsSource.CommitMark DEFAULT_MARK = new Read.NatsSource.CommitMark();
 	private static final byte[] DEFAULT_ID = new byte[1];
 
 	public static class Read {

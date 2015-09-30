@@ -2,32 +2,25 @@ package com.google.cloud.dataflow.contrib.natsio.example;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
-import java.util.Random;
 
-import org.junit.Test;
 import org.nats.Connection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.cloud.dataflow.contrib.natsio.NatsIO;
 import com.google.cloud.dataflow.contrib.natsio.NatsIOTest;
-import com.google.cloud.dataflow.contrib.natsio.NatsIO.Read;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
-import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.Partition;
 import com.google.cloud.dataflow.sdk.values.KV;
-import com.google.cloud.dataflow.sdk.values.PCollection;
-import com.google.cloud.dataflow.sdk.values.PDone;
-
-import edu.emory.mathcs.backport.java.util.Arrays;
 
 public class NatsIOBench {
 	private static final Logger LOG = LoggerFactory.getLogger(NatsIOTest.class);	

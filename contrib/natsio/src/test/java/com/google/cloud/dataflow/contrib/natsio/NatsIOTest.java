@@ -2,9 +2,9 @@ package com.google.cloud.dataflow.contrib.natsio;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
-import java.util.Random;
 
 import org.junit.Test;
 import org.nats.Connection;
@@ -21,14 +21,8 @@ import com.google.cloud.dataflow.sdk.runners.BlockingDataflowPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
-import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
-import com.google.cloud.dataflow.sdk.transforms.Partition;
 import com.google.cloud.dataflow.sdk.values.KV;
-import com.google.cloud.dataflow.sdk.values.PCollection;
-import com.google.cloud.dataflow.sdk.values.PDone;
-
-import edu.emory.mathcs.backport.java.util.Arrays;
 
 public class NatsIOTest implements Serializable {
 	private static final Logger LOG = LoggerFactory.getLogger(NatsIOBench.class);	
@@ -121,7 +115,7 @@ public class NatsIOTest implements Serializable {
 					c.output(c.element().getKey() + "," + c.element().getValue());
 				}
 			}));
-		p1.run();	
+		p1.run();
 
 		// Starting a producer
 		BlockingDataflowPipelineOptions producerOptions = buildOptions();
