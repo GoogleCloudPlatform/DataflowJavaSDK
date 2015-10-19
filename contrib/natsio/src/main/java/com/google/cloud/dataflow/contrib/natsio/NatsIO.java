@@ -18,6 +18,7 @@ package com.google.cloud.dataflow.contrib.natsio;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.nio.channels.ClosedByInterruptException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -215,7 +216,7 @@ public class NatsIO {
 						try {
 							conn = Connection.connect(props);
 						} catch (InterruptedException e) {
-							e.printStackTrace();
+							throw new ClosedByInterruptException();
 						}
 					}
 					// Subscribe to a subject and attach an event handler to store updates in a queue.
