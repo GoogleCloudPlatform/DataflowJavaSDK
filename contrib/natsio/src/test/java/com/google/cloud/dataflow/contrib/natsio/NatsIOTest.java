@@ -50,16 +50,16 @@ public class NatsIOTest implements Serializable {
 		project = System.getProperty("project");
 		stagingLocation = System.getProperty("stagingLocation");
 		
-		maxRecords = (System.getProperty("nats.maxRecords") == null ? 100 : Integer.parseInt(System.getProperty("nats.maxRecords")));
+		maxRecords = (System.getProperty("nats.maxRecords") == null ? 30000 : Integer.parseInt(System.getProperty("nats.maxRecords")));
 		maxReadtime = (System.getProperty("nats.maxReadtime") == null ? 100 : Integer.parseInt(System.getProperty("nats.maxReadtime")));
 
-		subjects = Arrays.asList(System.getProperty("subjects").split(","));
+		subjects = (System.getProperty("subjects") == null ? Arrays.asList("test") : Arrays.asList(System.getProperty("subjects").split(",")));
 		subject =  subjects.get(0);
 		
-		loop = Integer.parseInt(System.getProperty("loop"));
-		interval = Integer.parseInt(System.getProperty("interval"));
-		consumers = Integer.parseInt(System.getProperty("consumers"));
-		producers = Integer.parseInt(System.getProperty("producers"));
+		loop = (System.getProperty("loop") == null ? 30000 : Integer.parseInt(System.getProperty("loop")));
+		interval = (System.getProperty("interval") == null ? 0 : Integer.parseInt(System.getProperty("interval")));
+		consumers = (System.getProperty("consumers") == null ? 1 :Integer.parseInt(System.getProperty("consumers")));
+		producers = (System.getProperty("producers") == null ? 1 : Integer.parseInt(System.getProperty("producers")));
 		
 		props = new Properties();
 		props.setProperty("servers", servers);

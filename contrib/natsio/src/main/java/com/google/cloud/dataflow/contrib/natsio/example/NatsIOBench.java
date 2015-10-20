@@ -11,7 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.cloud.dataflow.contrib.natsio.NatsIO;
-import com.google.cloud.dataflow.contrib.natsio.NatsIOTest;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
@@ -23,7 +22,7 @@ import com.google.cloud.dataflow.sdk.transforms.Partition;
 import com.google.cloud.dataflow.sdk.values.KV;
 
 public class NatsIOBench {
-	private static final Logger LOG = LoggerFactory.getLogger(NatsIOTest.class);	
+	private static final Logger LOG = LoggerFactory.getLogger(NatsIOBench.class);	
 	
 	static private String servers;
 	static private String queue;
