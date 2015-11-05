@@ -1,4 +1,4 @@
-package com.google.cloud.dataflow.contrib.natsio;
+package com.google.cloud.dataflow.contrib.natsio.example;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -6,12 +6,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 
-import org.junit.Test;
 import org.nats.Connection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.cloud.dataflow.contrib.natsio.example.NatsIOBench;
+import com.google.cloud.dataflow.contrib.natsio.NatsIO;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.options.BlockingDataflowPipelineOptions;
@@ -25,7 +24,7 @@ import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.values.KV;
 
 public class NatsIOTest implements Serializable {
-	private static final Logger LOG = LoggerFactory.getLogger(NatsIOBench.class);	
+	private static final Logger LOG = LoggerFactory.getLogger(NatsIOTest.class);	
 	
 	private String servers;
 	private String queue;
@@ -43,8 +42,55 @@ public class NatsIOTest implements Serializable {
 	
 	private Properties props;
 	
+	/*
+	 * An instance of this class establishes a connection to Nats server and iteratively publishes updates with a given subject. 
+	 */
+	public static class Publisher extends DoFn<String,String> {
+		private Properties props;
+		private Connection conn;
+		private int loop;
+		private int interval;
+		
+		public Publisher(Properties props, int loop, int interval) {
+			this.props = props;
+			this.loop = loop;
+			this.interval = interval;
+		}
+
+		@Override
+		public void startBundle(DoFn.Context c) throws IOException, InterruptedException {
+			conn = Connection.connect(props);
+		}
+		
+		@Override
+		public void processElement(DoFn<String, String>.ProcessContext c) throws Exception {
+			int failed = 0;
+			for(int i = 0; i < loop; i++) {
+				try {
+					conn.publish(c.element(), Integer.toString(i));
+					Thread.sleep(interval);
+				} catch (IOException ie) {
+					failed++;
+				} catch (InterruptedException e) {
+					throw e;
+				}		
+			}
+			LOG.info("Number of records published : " + Integer.toString(loop - failed) + ", failed : " + Integer.toString(failed) + " for subject " + c.element());
+			c.output("done");
+		}
+		
+		@Override
+		public void finishBundle(DoFn.Context c) throws IOException, InterruptedException {
+			conn.close();;
+		}
+		
+	}
+	
 	public NatsIOTest() {
 		servers = System.getProperty("nats.servers");
+		if (servers == null) {
+			throw new IllegalArgumentException("'servers' parameter is missing.");
+		}
 		queue = System.getProperty("nats.queue");
 
 		project = System.getProperty("project");
@@ -77,26 +123,7 @@ public class NatsIOTest implements Serializable {
 		
 		return options;
 	}
-	
-	@Test
-	public void simplePublish() {
-		BlockingDataflowPipelineOptions options = buildOptions();
-		options.setJobName("simple-publish-" + System.currentTimeMillis());
 		
-		Pipeline p = Pipeline.create(options);
-		p
-			.apply(Create.of(subject)).setCoder(StringUtf8Coder.of())
-			.apply(ParDo.of(new DoFn<String, KV<String,String>>() {
-				@Override
-				public void processElement(DoFn<String, KV<String, String>>.ProcessContext c) throws Exception {
-					c.output(KV.of(c.element(), "hello world!!!"));
-				}
-			}))
-			.apply(NatsIO.Write.to(props));
-		p.run();
-	}
-	
-	@Test
 	public void publishSubscribe() throws InterruptedException {
 		// Starting a consumer
 		DataflowPipelineOptions consumerOptions = PipelineOptionsFactory.create().as(DataflowPipelineOptions.class);
@@ -116,6 +143,9 @@ public class NatsIOTest implements Serializable {
 				}
 			}));
 		p1.run();
+		
+		// Making sure for a consumer job to launch first 
+		Thread.sleep(30000);
 
 		// Starting a producer
 		BlockingDataflowPipelineOptions producerOptions = buildOptions();
@@ -124,22 +154,11 @@ public class NatsIOTest implements Serializable {
 		Pipeline p2 = Pipeline.create(producerOptions);
 		p2
 			.apply(Create.of(subject)).setCoder(StringUtf8Coder.of())
-			.apply(ParDo.of(new DoFn<String, String>() {
-				public void processElement(DoFn<String, String>.ProcessContext c) throws Exception {
-					try {
-						Connection conn = Connection.connect(props);
-						for(int i = 0; i < loop; i++) {
-							conn.publish(subject, Integer.toString(i));
-							Thread.sleep(interval);
-						}
-					} catch (IOException e) {
-						e.printStackTrace();
-					} catch (InterruptedException e) {
-						e.printStackTrace();
-					}		
-					c.output("done");
-				}				
-			}));
+			.apply(ParDo.of(new Publisher(props, loop, interval)));
 		p2.run();				
+	}
+	
+	public static void main(String[] args) throws IOException, InterruptedException {
+		new NatsIOTest().publishSubscribe();
 	}
 }

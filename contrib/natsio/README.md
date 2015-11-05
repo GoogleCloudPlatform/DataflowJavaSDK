@@ -12,12 +12,18 @@ Install and launch [NATS server](http://nats.io/documentation/server/gnatsd-intr
 ```
 
 Run tests with Maven. The following command will launch a producer and consumer job respectively.<BR>
-The producer publishes messages and the consumer will receive them via NATS server.
+The producer publishes messages and the consumer will receive them via NATS server.<BR>
 
+To run as a local application with DirectPipelineRunner
+```bash
+% mvn install
+```
+
+To run as a stand-alone application with Dataflow service<BR>
 "stagingLocation", "project" and "nats.servers" are mandatory properties to run a test.
 ```bash
-% mvn test -Dtest=NatsIOTest#publishSubscribe -DstagingLocation=gs://<bucket> ¥
--Dproject=<project id> -Dnats.servers=nats://<server>:4222 -Dnats.queue=queue1 ¥
+% mvn exec:java -Dexec.mainClass="com.google.cloud.dataflow.contrib.natsio.example.NatsIOTest" ¥
+-DstagingLocation=gs://<bucket> -Dproject=<project id> -Dnats.servers=nats://<server>:4222 -Dnats.queue=queue1 ¥
 -Dloop=30000 -Dinterval=0 -Dsubjects=test1 -Dconsumers=1 -Dproducers=1 -Dnats.maxRecords=20000 ¥
 -Dnats.maxReadtime=30
 ```

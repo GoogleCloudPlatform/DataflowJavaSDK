@@ -127,6 +127,9 @@ public class NatsIO {
 			private String subject;
 			
 			public NatsSource(String subject, Properties props) {
+				if ((subject == null) || (props == null)) {
+					throw new NullPointerException();
+				}
 				this.subject = subject;
 				this.props = props;
 			}
@@ -142,8 +145,9 @@ public class NatsIO {
 				List<NatsSource> results = new ArrayList<NatsSource>();
 				// Create a NatsSource instance for each split.
 				int split = numSplits / 3;
-				for(int i = 0; i < split; i++)
+				for(int i = 0; i < split; i++) {
 					results.add(new NatsSource(subject, props));
+				}
 				return results;
 			}
 
@@ -170,12 +174,15 @@ public class NatsIO {
 			}
 				
 			private class NatsReader extends UnboundedReader<KV<String,String>> {
-				private String subject;
+				private final String subject;
 				private Integer sid;
-				private ConcurrentLinkedQueue<KV<String,String>> queue;
+				private final ConcurrentLinkedQueue<KV<String,String>> queue;
 				private KV<String,String> current;
 				
 				public NatsReader(String subject) {
+					if (subject == null) {
+						throw new NullPointerException();
+					}
 					this.subject = subject;
 					queue = new ConcurrentLinkedQueue<KV<String,String>>();
 				}
@@ -184,8 +191,9 @@ public class NatsIO {
 				public boolean advance() throws IOException {
 					// Polling a queue to check whether an update is available in the queue.
 					current = queue.poll();
-					if (current == null)
+					if (current == null) {
 						return false;
+					}
 					
 					return true;
 				}
