@@ -14,7 +14,7 @@ Install and launch [NATS server](http://nats.io/documentation/server/gnatsd-intr
 Run tests with Maven. The following command will launch a producer and consumer job respectively.<BR>
 The producer publishes messages and the consumer will receive them via NATS server.<BR>
 
-To run as a local application with DirectPipelineRunner
+To build (set "-DskipTests=false" for unit testing)
 ```bash
 % mvn install
 ```

@@ -81,7 +81,7 @@ public class NatsIOTest implements Serializable {
 		
 		@Override
 		public void finishBundle(DoFn.Context c) throws IOException, InterruptedException {
-			conn.close();;
+			conn.close();
 		}
 		
 	}

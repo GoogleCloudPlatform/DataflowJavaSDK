@@ -85,7 +85,7 @@ public class NatsIO {
 	private static final Coder<String> DEFAULT_CODER = StringUtf8Coder.of();
 	private static Read.NatsSource.CommitMark DEFAULT_MARK = new Read.NatsSource.CommitMark();
 	private static final byte[] DEFAULT_ID = new byte[1];
-
+	
 	public static class Read {
 		/**
 		 * Create a unbounded NatsSource instance. 
@@ -117,7 +117,7 @@ public class NatsIO {
 		 */
 		public static PTransform<PInput, PCollection<KV<String,String>>> withMaxReadtime(String subject, long readTime, Properties props) {
 			return from(subject, props).withMaxReadTime(Duration.standardSeconds(readTime));
-		}		
+		}
 		
 		public static class NatsSource extends UnboundedSource<KV<String,String>, UnboundedSource.CheckpointMark> {
 			private static final long serialVersionUID = 1L;
@@ -127,11 +127,29 @@ public class NatsIO {
 			private String subject;
 			
 			public NatsSource(String subject, Properties props) {
-				if ((subject == null) || (props == null)) {
-					throw new NullPointerException();
+				if (subject == null) {
+					throw new NullPointerException("subject");
+				}
+				if (props == null) {
+					throw new NullPointerException("props");
+				}
+				if (props.getProperty("servers") == null) {
+					throw new NullPointerException("servers");
 				}
 				this.subject = subject;
 				this.props = props;
+			}
+			
+			public Properties getProperties() {
+				return props;
+			}
+			
+			public Connection getConnection() {
+				return conn;
+			}
+			
+			public String getSubject() {
+				return subject;
 			}
 			
 			@Override
@@ -144,8 +162,7 @@ public class NatsIO {
 					int numSplits, PipelineOptions options) throws Exception {
 				List<NatsSource> results = new ArrayList<NatsSource>();
 				// Create a NatsSource instance for each split.
-				int split = numSplits / 3;
-				for(int i = 0; i < split; i++) {
+				for(int i = 0; i < numSplits; i++) {
 					results.add(new NatsSource(subject, props));
 				}
 				return results;
@@ -181,7 +198,7 @@ public class NatsIO {
 				
 				public NatsReader(String subject) {
 					if (subject == null) {
-						throw new NullPointerException();
+						throw new NullPointerException("subject");
 					}
 					this.subject = subject;
 					queue = new ConcurrentLinkedQueue<KV<String,String>>();
@@ -227,6 +244,7 @@ public class NatsIO {
 							throw new ClosedByInterruptException();
 						}
 					}
+					
 					// Subscribe to a subject and attach an event handler to store updates in a queue.
 					sid = conn.subscribe(subject, props, new MsgHandler() {
 						@Override
@@ -272,7 +290,17 @@ public class NatsIO {
 			private Properties props = null;
 
 			public NatsSink(Properties props) {
+				if (props == null) {
+					throw new NullPointerException("props");
+				}
+				if (props.getProperty("servers") == null) {
+					throw new NullPointerException("servers");
+				}
 				this.props = props;
+			}
+			
+			public Properties getProperties() {
+				return props;
 			}
 			
 			@Override
@@ -329,7 +357,7 @@ public class NatsIO {
 				
 				@Override
 				public void open(String uId) throws Exception {
-						conn = Connection.connect(props);
+					conn = Connection.connect(props);
 				}
 
 				/**

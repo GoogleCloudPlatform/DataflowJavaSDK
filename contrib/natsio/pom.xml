@@ -16,6 +16,10 @@
 			<distribution>repo</distribution>
 		</license>
 	</licenses>
+	
+	<properties>
+		<skipTests>true</skipTests>
+	</properties>
 
 	<build>
 		<plugins>
@@ -34,6 +38,7 @@
 				<version>2.18.1</version>
 				<configuration>
 					<forkCount>0</forkCount>
+					<skipTests>${skipTests}</skipTests>
 				</configuration>
 			</plugin>
 			<plugin>
