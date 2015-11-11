@@ -33,7 +33,6 @@ public class ChildRemoved<T> extends FirebaseEvent<T> {
       @JsonProperty("key") String key,
       @JsonProperty("data") T data) {
       super(key, data);
-      // TODO Auto-generated constructor stub
   }
 
   public ChildRemoved(DataSnapshot snapshot){

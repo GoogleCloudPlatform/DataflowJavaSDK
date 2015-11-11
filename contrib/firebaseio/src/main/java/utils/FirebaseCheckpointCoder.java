@@ -27,7 +27,7 @@ import contrib.JacksonCoder;
 
 /**
  * @see JacksonCoder
- * Subclassed to allow paramaterized type to behave property
+ * Subclassed to allow parameterized type to behave property
  * @param <T> Type of {@link Record} encoded by {@link FirebaseCheckpoint}
  */
 public class FirebaseCheckpointCoder<T> extends JacksonCoder<FirebaseCheckpoint<T>> {
@@ -59,7 +59,7 @@ public class FirebaseCheckpointCoder<T> extends JacksonCoder<FirebaseCheckpoint<
 
   @Override
   protected Object writeReplace() {
-    // When serialized by Java, instances of AvroCoder should be replaced by
+    // When serialized by Java, instances of FirebaseCheckpointCoder should be replaced by
     // a SerializedAvroCoderProxy.
     return new FirebaseJacksonCoderProxy<>(type, subType);
   }

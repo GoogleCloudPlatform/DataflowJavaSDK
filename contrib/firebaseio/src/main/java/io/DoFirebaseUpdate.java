@@ -35,16 +35,12 @@ public class DoFirebaseUpdate extends FirebaseDoFn<Map<String, Object>, Void> {
     super(url, auther);
   }
 
-
-  /**
-   * @see io.FirebaseDoFn#asyncProcessElement(DoFn.ProcessContext,
-   *  io.FirebaseDoFn.FirebaseListener)
-   **/
   @Override
   public void asyncProcessElement(DoFn<Map<String, Object>, Void>.ProcessContext context,
       FirebaseDoFn<Map<String, Object>, Void>.FirebaseListener listener) {
     root.updateChildren(context.element(), listener);
   }
 
-
 }
+
+

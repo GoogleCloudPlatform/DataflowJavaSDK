@@ -16,11 +16,11 @@
 package io;
 
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
+
 import com.firebase.client.Firebase;
 
 import java.util.Map.Entry;
 import utils.FirebaseAuthenticator;
-
 
 /**
  * Sets a value using {@link Firebase#setValue(Object)} where the {@code String} key is the
@@ -34,10 +34,6 @@ public class DoFirebaseSet extends FirebaseDoFn<Entry<String, Object>, Void> {
     super(url, auther);
   }
 
-  /**
-   * @see io.FirebaseDoFn#asyncProcessElement(
-   * DoFn.ProcessContext, io.FirebaseDoFn.FirebaseListener)
-   **/
   @Override
   public void asyncProcessElement(DoFn<Entry<String, Object>, Void>.ProcessContext context,
       FirebaseDoFn<Entry<String, Object>, Void>.FirebaseListener listener) {
@@ -45,3 +41,5 @@ public class DoFirebaseSet extends FirebaseDoFn<Entry<String, Object>, Void> {
     .setValue(context.element().getValue(), listener);
   }
 }
+
+

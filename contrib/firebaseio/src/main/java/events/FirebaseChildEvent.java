@@ -15,6 +15,8 @@
  */
 package events;
 
+import com.google.api.client.repackaged.com.google.common.base.Objects;
+
 import com.firebase.client.DataSnapshot;
 
 /**
@@ -35,25 +37,12 @@ public class FirebaseChildEvent<T> extends FirebaseEvent<T> {
     this.previousChildName = previousChildName;
   }
 
-
   @Override
   public boolean equals(Object e){
     if (this.getClass().isInstance(e)){
       FirebaseChildEvent<?> other = (FirebaseChildEvent<?>) e;
-      if ((this.previousChildName == null && other.previousChildName != null) ||
-          (other.previousChildName == null && this.previousChildName != null)){
-        return false;
-      }
-      return (this.previousChildName == null  ||
-          this.previousChildName.equals(other.previousChildName)) &&
-          super.equals(e);
+      return Objects.equal(this.previousChildName, other.previousChildName) && super.equals(e);
     }
     return false;
   }
-
-  @Override
-  public String toString(){
-    return "{previousChildName: " + previousChildName + ", " + super.toString() + "}";
-  }
-
 }

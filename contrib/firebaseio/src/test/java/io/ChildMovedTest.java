@@ -33,9 +33,6 @@ public class ChildMovedTest extends FirebaseChildTest {
   Entry<String, Entry<Object, Object>>[] withPriority;
   Entry<String, Entry<Object, Object>>[] shuffle;
 
-  /* (non-Javadoc)
-   * @see io.BaseFirebaseSourceTest#triggerEvents()
-   */
   @Override
   public void triggerEvents(Firebase f) {
     @SuppressWarnings("deprecation")
@@ -47,9 +44,6 @@ public class ChildMovedTest extends FirebaseChildTest {
 
   }
 
-  /* (non-Javadoc)
-   * @see io.BaseFirebaseSourceTest#prepareData(java.util.List)
-   */
   @SuppressWarnings("unchecked")
   @Override
   public void prepareData(List<Map<String, Object>> testData) {
@@ -72,7 +66,5 @@ public class ChildMovedTest extends FirebaseChildTest {
               String.valueOf((i + 1) % entrySet.size())));
       i++;
     }
-
   }
-
 }

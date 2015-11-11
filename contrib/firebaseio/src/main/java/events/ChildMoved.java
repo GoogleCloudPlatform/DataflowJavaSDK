@@ -31,7 +31,6 @@ public class ChildMoved<T> extends FirebaseChildEvent<T> {
       @JsonProperty("data") T data,
       @JsonProperty("previousChildName") String previousChildName) {
       super(key, data, previousChildName);
-      // TODO Auto-generated constructor stub
   }
 
   public ChildMoved(DataSnapshot snapshot, String previousChildName){

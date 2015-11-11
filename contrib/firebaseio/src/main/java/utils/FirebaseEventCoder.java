@@ -60,7 +60,7 @@ public class FirebaseEventCoder<T> extends JacksonCoder<FirebaseEvent<T>> {
 
   @Override
   protected Object writeReplace() {
-    // When serialized by Java, instances of AvroCoder should be replaced by
+    // When serialized by Java, instances of FirebaseEventCoder should be replaced by
     // a SerializedAvroCoderProxy.
     return new FirebaseJacksonCoderProxy<>(type, subType);
   }

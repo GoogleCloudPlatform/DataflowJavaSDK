@@ -29,18 +29,12 @@ public class ChildChangedTest extends FirebaseChildTest {
 
   Map<String, Object>[] usableData;
 
-  /* (non-Javadoc)
-   * @see io.BaseFirebaseSourceTest#prepareData(java.util.List)
-   */
   @SuppressWarnings("unchecked")
   @Override
   public void prepareData(List<Map<String, Object>> testData) {
     usableData = testData.toArray(new Map[testData.size()]);
   }
 
-  /* (non-Javadoc)
-   * @see io.BaseFirebaseSourceTest#triggerEvents(com.firebase.client.Firebase)
-   */
   @Override
   public void triggerEvents(Firebase f) {
     DoFnTester.of(new DoFirebaseUpdate(f.toString(), auther)).processBatch(usableData);

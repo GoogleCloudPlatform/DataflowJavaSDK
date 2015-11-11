@@ -15,6 +15,13 @@
  */
 package events;
 
+import com.google.api.client.repackaged.com.google.common.base.Objects;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper.DefaultTyping;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
 import com.firebase.client.DataSnapshot;
 import com.firebase.client.GenericTypeIndicator;
 
@@ -23,6 +30,10 @@ import com.firebase.client.GenericTypeIndicator;
  * @param <T> type that {@link DataSnapshot} is parsed as.
 **/
 public class FirebaseEvent<T>{
+
+  protected static ObjectMapper mapper = new ObjectMapper()
+      .enableDefaultTyping(DefaultTyping.NON_FINAL)
+      .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
 
   public final String key;
   public final T data;
@@ -43,21 +54,17 @@ public class FirebaseEvent<T>{
   public boolean equals(Object e){
     if (this.getClass().isInstance(e)){
       FirebaseEvent<?> other = (FirebaseEvent<?>) e;
-      if ((this.key == null && other.key != null) || (other.key == null && this.key != null)){
-        return false;
-      }
-      if ((this.data == null && other.data != null) || (other.data == null & this.data != null)){
-        return false;
-      }
-      return (this.key == null || this.key.equals(other.key)) &&
-          (this.data == null || this.data.equals(other.data));
+      return Objects.equal(this.key, other.key) && Objects.equal(this.data, other.data);
     }
     return false;
   }
 
   @Override
   public String toString(){
-    return "{event: " + this.getClass().getName() + ", key:" + key +
-        ", data:" + (data == null ? "null" : data.toString()) + "}";
+    try {
+      return mapper.writeValueAsString(this);
+    } catch (JsonProcessingException e) {
+      return e.toString();
+    }
   }
 }

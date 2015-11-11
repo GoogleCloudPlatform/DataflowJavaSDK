@@ -23,7 +23,6 @@ import java.util.Map.Entry;
 
 import utils.FirebaseAuthenticator;
 
-
 /**
  * Uses {@link Firebase#setValue(Object, Object)} to set an object with a priority.
  * This is a bad pattern, and only used to trigger {@link ChildMovedTest}. Users should prefer
@@ -32,23 +31,14 @@ import utils.FirebaseAuthenticator;
  */
 @Deprecated
 public class DoFirebaseSetWithPriority extends
-  FirebaseDoFn<Entry<String, Entry<Object, Object>>, Void> {
+FirebaseDoFn<Entry<String, Entry<Object, Object>>, Void> {
 
   private static final long serialVersionUID = 1321447767620652932L;
 
-  /**
-   * @param url
-   * @param auther
-   */
   public DoFirebaseSetWithPriority(String url, FirebaseAuthenticator auther) {
     super(url, auther);
   }
 
-  /**
-   * @see io.FirebaseDoFn#asyncProcessElement(
-   * DoFn.ProcessContext,
-   *  io.FirebaseDoFn.FirebaseListener)
-   **/
   @Override
   public void asyncProcessElement(
       DoFn<Entry<String, Entry<Object, Object>>, Void>.ProcessContext context,
@@ -59,5 +49,5 @@ public class DoFirebaseSetWithPriority extends
         context.element().getValue().getValue(),
         listener);
   }
-
 }
+

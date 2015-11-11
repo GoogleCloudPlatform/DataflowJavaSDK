@@ -39,9 +39,6 @@ public class Record<T> implements Comparable<Record<T>>{
     this.data = event;
   }
 
-  /* (non-Javadoc)
-   * @see java.lang.Comparable#compareTo(java.lang.Object)
-   */
   @Override
   public int compareTo(Record<T> o) {
     return this.timestamp.compareTo(o.timestamp);

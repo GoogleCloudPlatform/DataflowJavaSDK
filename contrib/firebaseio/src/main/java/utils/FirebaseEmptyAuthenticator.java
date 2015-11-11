@@ -26,9 +26,6 @@ public class FirebaseEmptyAuthenticator extends FirebaseAuthenticator {
 
   private static final long serialVersionUID = 7664558699766082532L;
 
-  /* (non-Javadoc)
-   * @see utils.FirebaseAuthenticator#authenticate(com.firebase.client.Firebase)
-   */
   @Override
   public AuthData authenticate(Firebase firebase) throws FirebaseException {
     return new AuthData(null, 0, null, null, null, null);
