@@ -65,6 +65,14 @@ public class JacksonCoder<T> extends StandardCoder<T> {
     return of(clazz);
   }
 
+  /**
+   * JacksonCoder will encode any type that can be serialized/deserialized by Jackson.
+   * This can be achieved by using either Jackson annotations (as seen in this library), or
+   * implementing @see <a href=http://wiki.fasterxml.com/JacksonHowToCustomSerializers>
+   * custom serializers</a>.
+   * @param clazz Type to encode
+   * @return A JacksonCoder parameterized with type {@code clazz}
+   */
   public static <K> JacksonCoder<K> of(Class<K> clazz){
     return new JacksonCoder<K>(clazz);
   }
@@ -76,7 +84,7 @@ public class JacksonCoder<T> extends StandardCoder<T> {
     return new JacksonCoder(Class.forName(classType));
   }
 
-  public JacksonCoder(Class<T> clazz){
+  protected JacksonCoder(Class<T> clazz){
     this.type = clazz;
     writer = MAPPER.writer();
     reader = MAPPER.reader(type);
@@ -111,7 +119,7 @@ public class JacksonCoder<T> extends StandardCoder<T> {
 
   protected Object writeReplace() {
     // When serialized by Java, instances of AvroCoder should be replaced by
-    // a SerializedAvroCoderProxy.
+    // a SerializedJacksonCoderProxy.
     return new SerializedJacksonCoderProxy<>(type);
   }
 
@@ -135,7 +143,7 @@ public class JacksonCoder<T> extends StandardCoder<T> {
 
     private Object readResolve() {
       // When deserialized, instances of this object should be replaced by
-      // constructing an AvroCoder.
+      // constructing an JacksonCoder.
       return new JacksonCoder<T>(type);
     }
   }
