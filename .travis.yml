@@ -20,7 +20,10 @@ env:
     - CUSTOM_JDK="default"
     - CUSTOM_JDK="oraclejdk8"
     - CUSTOM_JDK="oraclejdk7"
-    - CUSTOM_JDK="openjdk7"
+
+# Disable OpenJDK7 temporarily because of Travis bug.
+# https://github.com/travis-ci/travis-ci/issues/5227
+# - CUSTOM_JDK="openjdk7"
 
 matrix:
   exclude:
