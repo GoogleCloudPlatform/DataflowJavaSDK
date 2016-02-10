@@ -23,12 +23,16 @@ import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import com.google.cloud.dataflow.contrib.hadoop.HadoopFileSource.HadoopFileReader;
+import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.io.BoundedSource;
+import com.google.cloud.dataflow.sdk.io.BoundedSource.BoundedReader;
 import com.google.cloud.dataflow.sdk.io.Source;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.testing.SourceTestUtils;
 import com.google.cloud.dataflow.sdk.values.KV;
+import com.google.common.collect.ImmutableMap;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -37,14 +41,18 @@ import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.SequenceFile.Writer;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.lib.input.SequenceFileInputFormat;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 /**
@@ -56,6 +64,14 @@ public class HadoopFileSourceTest {
 
   @Rule
   public TemporaryFolder tmpFolder = new TemporaryFolder();
+
+  @Mock private PipelineOptions options;
+  @Mock private Coder<KV<IntWritable, Text>> overrideCoder;
+
+  @Before
+  public void setup() {
+    MockitoAnnotations.initMocks(this);
+  }
 
   @Test
   public void testFullyReadSingleFile() throws Exception {
@@ -150,6 +166,41 @@ public class HadoopFileSourceTest {
       }
     }
     assertTrue(nonEmptySplits > 2);
+  }
+
+  /**
+   * Verifies that a {@link HadoopFileSource} created by the full factory method
+   * ({@link HadoopFileSource#from(String, Class, Class, Class, Coder, Map)}) is initialized
+   * correctly.
+   */
+  @Test
+  public void testFullFactoryMethod() throws Exception {
+    HadoopFileSource<IntWritable, Text> source = HadoopFileSource.from(
+        "UNUSED", SequenceFileInputFormat.class, IntWritable.class, Text.class, overrideCoder,
+        ImmutableMap.<String, String>of());
+    assertEquals(source.getDefaultOutputCoder(), overrideCoder);
+  }
+
+  /**
+   * Verifies that a {@link HadoopFileSource} created by the full factory method
+   * ({@link HadoopFileSource#from(String, Class, Class, Class, Coder, Map)}) is initialized
+   * correctly when properties for the deserializer are present.
+   */
+  @Test
+  public void testFullFactoryMethod_withSerializerProperty() throws Exception {
+    final String testPropertyName = "test_property_name";
+    final String testPropertyValue = "test_property_value";
+    HadoopFileSource<IntWritable, Text> source = HadoopFileSource.from(
+        "UNUSED", SequenceFileInputFormat.class, IntWritable.class, Text.class, overrideCoder,
+        ImmutableMap.of(testPropertyName, testPropertyValue));
+
+    assertEquals(source.getDefaultOutputCoder(), overrideCoder);
+    // Verify a reader created by the source.
+    BoundedReader<KV<IntWritable, Text>> reader = source.createReader(options);
+    assertTrue(reader instanceof HadoopFileReader);
+    assertEquals(
+        ((HadoopFileReader) reader).getDeserializerConfiguration().get(testPropertyName),
+        testPropertyValue);
   }
 
   private File createFileWithData(String filename, List<KV<IntWritable, Text>> records)
