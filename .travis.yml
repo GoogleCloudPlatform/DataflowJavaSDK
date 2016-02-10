@@ -1,6 +1,8 @@
 language: java
 
-sudo: false
+# Disable container build because of unresolved Travis+JVM issues
+#   See: https://github.com/travis-ci/travis-ci/issues/3396
+# sudo: false
 
 notifications:
   email:
