@@ -19,6 +19,7 @@ package com.google.cloud.dataflow.contrib.hadoop;
 import com.google.cloud.dataflow.sdk.testing.CoderProperties;
 
 import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.NullWritable;
 import org.junit.Test;
 
 /**
@@ -33,4 +34,13 @@ public class WritableCoderTest {
 
     CoderProperties.coderDecodeEncodeEqual(coder, value);
   }
+
+  @Test
+  public void testNullWritableEncoding() throws Exception {
+    NullWritable value = NullWritable.get();
+    WritableCoder<NullWritable> coder = WritableCoder.of(NullWritable.class);
+
+    CoderProperties.coderDecodeEncodeEqual(coder, value);
+  }
+
 }
