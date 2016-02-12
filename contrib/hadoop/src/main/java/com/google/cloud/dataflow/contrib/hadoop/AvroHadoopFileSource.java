@@ -98,9 +98,9 @@ public class AvroHadoopFileSource<T> extends HadoopFileSource<AvroKey<T>, NullWr
 
   }
 
-  private static class ClassUtil {
+  static class ClassUtil {
     @SuppressWarnings("unchecked")
-    private static <T> Class<T> castClass(Class<?> aClass) {
+    static <T> Class<T> castClass(Class<?> aClass) {
       return (Class<T>)aClass;
     }
   }
