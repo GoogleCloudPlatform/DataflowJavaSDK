@@ -35,7 +35,7 @@
   <url>http://cloud.google.com/dataflow</url>
   <inceptionYear>2013</inceptionYear>
 
-  <version>1.5.0-SNAPSHOT</version>
+  <version>1.4.1</version>
 
   <licenses>
     <license>
@@ -88,6 +88,7 @@
     <module>sdk</module>
     <module>worker</module>
     <module>examples</module>
+    <module>integration</module>
     <module>maven-archetypes/starter</module>
     <module>maven-archetypes/examples</module>
   </modules>
