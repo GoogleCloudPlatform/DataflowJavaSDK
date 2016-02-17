@@ -48,7 +48,7 @@ import javax.annotation.Nullable;
  *
  * @param <W> The kind of {@link BoundedWindow} the hold is for.
  */
-class WatermarkHold<W extends BoundedWindow> implements Serializable {
+public class WatermarkHold<W extends BoundedWindow> implements Serializable {
   /**
    * Return tag for state containing the output watermark hold
    * used for elements.
