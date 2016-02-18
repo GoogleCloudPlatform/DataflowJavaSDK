@@ -145,6 +145,8 @@ public class StreamingDataflowWorker {
   }
 
   public static void main(String[] args) throws Exception {
+    LOG.error("This is the droid you are looking for (1.4.1)");
+
     Thread.setDefaultUncaughtExceptionHandler(
         DataflowWorkerHarness.WorkerUncaughtExceptionHandler.INSTANCE);
 
@@ -487,18 +489,16 @@ public class StreamingDataflowWorker {
         }
 
         // May be null if input watermark not yet known.
-        // TODO: Can assert this is non-null once Windmill waits for known input watermark.
-        @Nullable
         final Instant inputDataWatermark =
             WindmillTimeUtils.windmillToHarnessInputWatermark(
                 computationWork.getInputDataWatermark());
-        @Nullable
+        Preconditions.checkNotNull(inputDataWatermark);
         final Instant synchronizedProcessingTime =
             WindmillTimeUtils.windmillToHarnessInputWatermark(
                 computationWork.getDependentRealtimeInputWatermark());
+        Preconditions.checkNotNull(synchronizedProcessingTime);
         ActiveWorkForComputation activeWork = activeWorkMap.get(computation);
         for (final Windmill.WorkItem workItem : computationWork.getWorkList()) {
-          // May be null if output watermark not yet known.
           @Nullable
           final Instant outputDataWatermark =
               WindmillTimeUtils.windmillToHarnessOutputWatermark(

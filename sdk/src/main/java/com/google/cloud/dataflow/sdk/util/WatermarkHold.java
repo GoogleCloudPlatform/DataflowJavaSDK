@@ -379,6 +379,19 @@ public class WatermarkHold<W extends BoundedWindow> implements Serializable {
   }
 
   /**
+   * Result of {@link #extractAndRelease}.
+   */
+  public static class OldAndNewHolds {
+    public final Instant oldHold;
+    @Nullable public final Instant newHold;
+
+    public OldAndNewHolds(Instant oldHold, @Nullable Instant newHold) {
+      this.oldHold = oldHold;
+      this.newHold = newHold;
+    }
+  }
+
+  /**
    * Return (a future for) the earliest hold for {@code context}. Clear all the holds after
    * reading, but add/restore an end-of-window or garbage collection hold if required.
    *
@@ -391,8 +404,10 @@ public class WatermarkHold<W extends BoundedWindow> implements Serializable {
    * be reestablished in one of the target windows alread in use for this window. Otherwise,
    * the holds will be placed in this window itself.
    */
-  public StateContents<Instant> extractAndRelease(final ReduceFn<?, ?, ?, W>.Context context,
-      final boolean isFinal, final boolean willStillBeActive) {
+  public StateContents<OldAndNewHolds> extractAndRelease(
+      final ReduceFn<?, ?, ?, W>.Context context,
+      final boolean isFinal,
+      final boolean willStillBeActive) {
     WindowTracing.debug(
         "extractAndRelease: for key:{}; window:{}; inputWatermark:{}; outputWatermark:{}",
         context.key(), context.window(), timerInternals.currentInputWatermarkTime(),
@@ -405,31 +420,31 @@ public class WatermarkHold<W extends BoundedWindow> implements Serializable {
     final WatermarkStateInternal extraHoldState =
         context.state().accessAcrossMergedWindows(EXTRA_HOLD_TAG);
     final StateContents<Instant> extraHoldFuture = extraHoldState.get();
-    return new StateContents<Instant>() {
+    return new StateContents<OldAndNewHolds>() {
       @Override
-      public Instant read() {
+      public OldAndNewHolds read() {
         // Read both the element and extra holds.
-        Instant elementHold = elementHoldFuture.read();
-        Instant extraHold = extraHoldFuture.read();
-        Instant hold;
+        Instant oldElementHold = elementHoldFuture.read();
+        Instant oldExtraHold = extraHoldFuture.read();
+        Instant oldHold;
         // Find the minimum, accounting for null.
-        if (elementHold == null) {
-          hold = extraHold;
-        } else if (extraHold == null) {
-          hold = elementHold;
-        } else if (elementHold.isBefore(extraHold)) {
-          hold = elementHold;
+        if (oldElementHold == null) {
+          oldHold = oldExtraHold;
+        } else if (oldExtraHold == null) {
+          oldHold = oldElementHold;
+        } else if (oldElementHold.isBefore(oldExtraHold)) {
+          oldHold = oldElementHold;
         } else {
-          hold = extraHold;
+          oldHold = oldExtraHold;
         }
-        if (hold == null || hold.isAfter(context.window().maxTimestamp())) {
+        if (oldHold == null || oldHold.isAfter(context.window().maxTimestamp())) {
           // If no hold (eg because all elements came in behind the output watermark), or
           // the hold was for garbage collection, take the end of window as the result.
           WindowTracing.debug(
               "WatermarkHold.extractAndRelease.read: clipping from {} to end of window "
               + "for key:{}; window:{}",
-              hold, context.key(), context.window());
-          hold = context.window().maxTimestamp();
+              oldHold, context.key(), context.window());
+          oldHold = context.window().maxTimestamp();
         }
         WindowTracing.debug("WatermarkHold.extractAndRelease.read: clearing for key:{}; window:{}",
             context.key(), context.window());
@@ -438,11 +453,12 @@ public class WatermarkHold<W extends BoundedWindow> implements Serializable {
         elementHoldState.clear();
         extraHoldState.clear();
 
+        @Nullable Instant newHold = null;
         if (!isFinal) {
-          addEndOfWindowOrGarbageCollectionHolds(context, willStillBeActive);
+          newHold = addEndOfWindowOrGarbageCollectionHolds(context, willStillBeActive);
         }
 
-        return hold;
+        return new OldAndNewHolds(oldHold, newHold);
       }
     };
   }

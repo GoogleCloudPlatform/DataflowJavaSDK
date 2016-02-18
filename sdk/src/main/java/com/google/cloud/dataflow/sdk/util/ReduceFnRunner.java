@@ -26,6 +26,7 @@ import com.google.cloud.dataflow.sdk.transforms.windowing.WindowFn;
 import com.google.cloud.dataflow.sdk.util.ActiveWindowSet.MergeCallback;
 import com.google.cloud.dataflow.sdk.util.ReduceFnContextFactory.OnTriggerCallbacks;
 import com.google.cloud.dataflow.sdk.util.TimerInternals.TimerData;
+import com.google.cloud.dataflow.sdk.util.WatermarkHold.OldAndNewHolds;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
 import com.google.cloud.dataflow.sdk.util.state.StateContents;
 import com.google.cloud.dataflow.sdk.util.state.StateNamespaces.WindowNamespace;
@@ -660,9 +661,11 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
    */
   private void onTrigger(final ReduceFn<K, InputT, OutputT, W>.Context context,
       boolean isWatermarkTrigger, boolean isFinished, boolean willStillBeActive) {
+    Instant inputWM = timerInternals.currentInputWatermarkTime();
+
     // Collect state.
-    StateContents<Instant> outputTimestampFuture = watermarkHold.extractAndRelease(
-        context, isFinished, willStillBeActive);
+    StateContents<OldAndNewHolds> outputTimestampAndNewHoldFuture =
+        watermarkHold.extractAndRelease(context, isFinished, willStillBeActive);
     StateContents<PaneInfo> paneFuture = paneInfoTracker.getNextPaneInfo(
         context, isWatermarkTrigger, isFinished);
     StateContents<Boolean> isEmptyFuture = nonEmptyPanes.isEmpty(context);
@@ -673,7 +676,29 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
     // Calculate the pane info.
     final PaneInfo pane = paneFuture.read();
     // Extract the window hold, and as a side effect clear it.
-    final Instant outputTimestamp = outputTimestampFuture.read();
+    OldAndNewHolds pair = outputTimestampAndNewHoldFuture.read();
+    final Instant outputTimestamp = pair.oldHold;
+    @Nullable Instant newHold = pair.newHold;
+
+    if (newHold != null && inputWM != null) {
+      // The hold cannot be behind the input watermark.
+      Preconditions.checkState(
+          !newHold.isBefore(inputWM), "new hold %s is before input watermark %s", newHold, inputWM);
+      if (newHold.isAfter(context.window().maxTimestamp())) {
+        // The hold must be for garbage collection, which can't have happened yet.
+        Preconditions.checkState(
+            newHold.isEqual(
+                context.window().maxTimestamp().plus(windowingStrategy.getAllowedLateness())),
+            "new hold %s should be at garbage collection for window %s plus %s",
+            newHold, context.window(), windowingStrategy.getAllowedLateness());
+      } else {
+        // The hold must be for the end-of-window, which can't have happened yet.
+        Preconditions.checkState(
+            newHold.isEqual(context.window().maxTimestamp()),
+            "new hold %s should be at end of window %s",
+            newHold, context.window());
+      }
+    }
 
     // Only emit a pane if it has data or empty panes are observable.
     if (needToEmit(isEmptyFuture.read(), isWatermarkTrigger, isFinished, pane.getTiming())) {
