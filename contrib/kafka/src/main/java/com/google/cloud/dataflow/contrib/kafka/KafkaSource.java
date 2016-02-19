@@ -17,7 +17,6 @@
 package com.google.cloud.dataflow.contrib.kafka;
 
 import java.io.IOException;
-import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
@@ -52,7 +51,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.io.Closeables;
 
@@ -133,7 +131,7 @@ public class KafkaSource {
      * Set Kafka bootstrap servers (alternately, set "bootstrap.servers" Consumer property).
      */
     public Builder<K, V> withBootstrapServers(String bootstrapServers) {
-      return withConsumerConfig("bootstrap.servers", bootstrapServers);
+      return withConsumerProperty("bootstrap.servers", bootstrapServers);
     }
 
     /**
@@ -148,10 +146,20 @@ public class KafkaSource {
      * Set a {@KafkaConsumer} configuration properties.
      * @see ConsumerConfig
      */
-    public Builder<K, V> withConsumerConfig(String configKey, Object configValue) {
+    public Builder<K, V> withConsumerProperty(String configKey, Object configValue) {
       Preconditions.checkArgument(ignoredConsumerProperties.containsKey(configKey),
           "No need to configure '%s'. %s", configKey, ignoredConsumerProperties.get(configKey));
       consumerConfigBuilder.put(configKey, configValue);
+      return this;
+    }
+
+    /**
+     * Update consumer config properties. Note that this does not not discard already configurured.
+     * Same as invoking #withConsumerProperty() with each entry.
+     */
+    public Builder<K, V> withConsumerProperties(Map<String, Object> configToUpdate) {
+      configToUpdate.entrySet().stream().forEach(
+        e -> withConsumerProperty(e.getKey(), e.getValue()));
       return this;
     }
 
@@ -325,17 +333,40 @@ public class KafkaSource {
     private final UnboundedKafkaSource<K, V> source;
     private KafkaConsumer<byte[], byte[]> consumer;
 
-    private final boolean isRawSource; // i.e. if key and value decoders are identity functions
-    private final long[] consumedOffsets; // consumed offset of each of the partitions,
-                                          // initialized to offset from checkpoint or -1.
+    // maintains state of each assigned partition
 
-    // <topic, partitionId> --> index into consumerOffsets for this TopicPartition.
-    private final Map<String, Map<Integer, Integer>> offsetIndexMap;
+    private static class PartitionState implements Iterator<PartitionState> {
+      private final TopicPartition topicPartition;
+
+      private Iterator<ConsumerRecord<byte[], byte[]>> recordIter = Iterators.emptyIterator();
+      private ConsumerRecord<byte[], byte[]> record = null;
+
+      private long consumedOffset;
+
+      PartitionState(TopicPartition partition, long offset) {
+        this.topicPartition = partition;
+        this.consumedOffset = offset;
+      }
+
+      @Override
+      public boolean hasNext() {
+        return recordIter.hasNext();
+      }
+
+      @Override
+      public PartitionState next() {
+        record = recordIter.next();
+        return this;
+      }
+    }
+
+    private final boolean isRawSource; // i.e. if key and value decoders are identity functions
+    List<PartitionState> partitionStates;
 
     private ConsumerRecord<K, V> curRecord;
     private Instant curTimestamp;
 
-    private Iterator<ConsumerRecord<byte[], byte[]>> curBatch = Iterators.emptyIterator();
+    private Iterator<PartitionState> curBatch = Iterators.emptyIterator();
 
     public UnboundedKafkaReader(
         UnboundedKafkaSource<K, V> source,
@@ -344,7 +375,10 @@ public class KafkaSource {
       this.isRawSource = source.keyDecoderFn instanceof IdentityFn
           && source.valueDecoderFn instanceof IdentityFn;
 
-      consumedOffsets = new long[source.assignedPartitions.size()];
+      partitionStates = ImmutableList.copyOf(source.assignedPartitions
+          .stream()
+          .map(tp -> new PartitionState(tp, -1L))
+          .iterator());
 
       // a) verify that assigned and check-pointed partitions match
       // b) set consumed offsets
@@ -354,7 +388,7 @@ public class KafkaSource {
             "checkPointMark and assignedPartitions should match");
         // we could consider allowing a mismatch, though it is not expected in current Dataflow
 
-        for (int i=0; i < consumedOffsets.length; i++) {
+        for (int i=0; i < source.assignedPartitions.size(); i++) {
           KafkaCheckpointMark.PartitionMark ckptMark = checkpointMark.getPartitions().get(i);
           TopicPartition assigned = source.assignedPartitions.get(i);
 
@@ -363,21 +397,23 @@ public class KafkaSource {
               ckptMark.getTopicPartition(), assigned, i);
 
 
-          consumedOffsets[i] = checkpointMark.getPartitions().get(i).getOffset();
+          partitionStates.get(i).consumedOffset = checkpointMark.getPartitions().get(i).getOffset();
         }
-      } else {
-        Arrays.fill(consumedOffsets, -1L);
       }
+    }
 
-      //make ImmutableMap(topic -> ImmutableMap(paritionId -> index in offsets array))
-      offsetIndexMap = ImmutableMap.copyOf(IntStream
-          .range(0, source.assignedPartitions.size())
-          .mapToObj(idx -> KV.of(source.assignedPartitions.get(idx), idx))
-          .collect(Collectors.groupingBy(e -> e.getKey().topic(),
-                   Collectors.toMap(e -> e.getKey().partition(), e -> e.getValue())))
-          .entrySet() // Entry<topic -> Map<partition -> index>>
-          .stream()
-          .collect(Collectors.toMap(e -> e.getKey(), e -> ImmutableMap.copyOf(e.getValue()))));
+    private void readNextBatch() {
+      // read one batch of records. one consumer.poll()
+
+      ConsumerRecords<byte[], byte[]> records = consumer.poll(10); // what should the timeout be?
+
+      partitionStates.stream().forEach(p -> {
+        p.recordIter = records.records(p.topicPartition).iterator();
+        p.record = null;
+      });
+
+      curBatch = Iterators.concat(partitionStates.iterator());
+      curRecord = null;
     }
 
     @Override
@@ -386,20 +422,17 @@ public class KafkaSource {
       consumer = new KafkaConsumer<>(source.consumerConfig);
       consumer.assign(source.assignedPartitions);
 
-      // seek to offset if resuming
-      for(int i=0; i<consumedOffsets.length; i++) {
-        long offset = consumedOffsets[i];
-        TopicPartition partition = source.assignedPartitions.get(i);
-
-        if (offset >= 0) {
-          LOG.info("Reader: resuming %s at %d", partition, offset+1);
-          consumer.seek(partition, offset+1);
+      // seek to next offset if consumedOffset is set
+      partitionStates.stream().forEach(p -> {
+        if (p.consumedOffset >= 0) {
+          LOG.info("Reader: resuming %s at %d", p.topicPartition, p.consumedOffset + 1);
+          consumer.seek(p.topicPartition, p.consumedOffset);
         } else {
-          LOG.info("Reader: resuming from default offset for " + partition);
+          LOG.info("Reader: resuming from default offset for " + p.topicPartition);
         }
-      }
+      });
 
-      curBatch = consumer.poll(10).iterator();
+      readNextBatch();
 
       return curBatch.hasNext();
     }
@@ -409,26 +442,26 @@ public class KafkaSource {
     public boolean advance() throws IOException {
       while (true) {
         if (curBatch.hasNext()) {
-          ConsumerRecord<byte[], byte[]> rawRecord = curBatch.next();
+          PartitionState pState = curBatch.next();
 
-          int idx = offsetIndexMap.get(rawRecord.topic()).get(rawRecord.partition());
-          long consumedOffset = consumedOffsets[idx];
+          ConsumerRecord<byte[], byte[]> rawRecord = pState.record;
+          long consumed = pState.consumedOffset;
 
-          if (consumedOffsets[idx] >= 0 && rawRecord.offset() <= consumedOffset) {
-            // this can happen when compression is enabled in kafka
+          if (consumed >= 0 && rawRecord.offset() <= consumed) {
+            // this can happen when compression is enabled in Kafka
             // should we check if the offset is way off from consumedOffset (say 1M more or less)
+            LOG.info("ignoring already consumed offset %d for %s",
+                rawRecord.offset(), pState.topicPartition);
 
-            LOG.info("ignoring already consumed offset %d for %s", rawRecord.offset(),
-                source.assignedPartitions.get(idx));
             // TODO: increment a counter?
-
             continue;
+
           } else {
 
             // apply user decoders
             if (isRawSource) {
               // is shortcut this worth it? mostly not.
-              curRecord = (ConsumerRecord<K, V>) rawRecord;
+              curRecord = (ConsumerRecord<K, V>) pState.record;
             } else {
               curRecord = new ConsumerRecord<K, V>(
                   rawRecord.topic(),
@@ -439,13 +472,13 @@ public class KafkaSource {
             }
 
             curTimestamp = source.timestampFn.apply(curRecord);
-            consumedOffsets[idx] = rawRecord.offset();
+            pState.consumedOffset = rawRecord.offset();
 
             return true;
           }
         } else {
-          // try to read next batch
-          curBatch = consumer.poll(10).iterator(); // what should the timeout be 0 or something large?
+          readNextBatch();
+
           if (!curBatch.hasNext())
             return false;
         }
@@ -459,16 +492,15 @@ public class KafkaSource {
 
     @Override
     public CheckpointMark getCheckpointMark() {
-      return new KafkaCheckpointMark(IntStream
-          .range(0, consumedOffsets.length)
-          .mapToObj(i -> new KafkaCheckpointMark.PartitionMark(
-              source.assignedPartitions.get(i), consumedOffsets[i]))
+      return new KafkaCheckpointMark(partitionStates
+          .stream()
+          .map(p -> new KafkaCheckpointMark.PartitionMark(p.topicPartition, p.consumedOffset))
           .collect(Collectors.toList()));
     }
 
     @Override
     public UnboundedSource<ConsumerRecord<K, V>, ?> getCurrentSource() {
-      return null;
+      return source;
     }
 
     @Override
