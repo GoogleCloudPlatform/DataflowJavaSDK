@@ -17,7 +17,6 @@
 package com.google.cloud.dataflow.contrib.kafka;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -45,7 +44,6 @@ import com.google.cloud.dataflow.sdk.io.UnboundedSource.CheckpointMark;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource.UnboundedReader;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
-import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
@@ -382,6 +380,7 @@ public class KafkaSource {
 
       // a) verify that assigned and check-pointed partitions match
       // b) set consumed offsets
+
       if (checkpointMark != null) {
         Preconditions.checkState(
             checkpointMark.getPartitions().size() == source.assignedPartitions.size(),
@@ -396,8 +395,7 @@ public class KafkaSource {
               "checkpointed partition %s and assinged partition %s don't match at position %d",
               ckptMark.getTopicPartition(), assigned, i);
 
-
-          partitionStates.get(i).consumedOffset = checkpointMark.getPartitions().get(i).getOffset();
+          partitionStates.get(i).consumedOffset = ckptMark.getOffset();
         }
       }
     }
