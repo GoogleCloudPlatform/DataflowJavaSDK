@@ -55,7 +55,9 @@ public class TopHashtagsExample {
         .build();
 
     pipeline
-      .apply(Read.from(kafkaSource).named("sample_tweets"))
+      .apply(Read.from(kafkaSource)
+          .named("sample_tweets")
+          .withMaxNumRecords(10000)) // XXX work around for DirectRunner
       .apply(MapElements
           .<ConsumerRecord<String, String>, Integer>via(r -> 1)
           .withOutputType(new TypeDescriptor<Integer>(){}))
