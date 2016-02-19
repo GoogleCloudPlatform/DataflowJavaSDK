@@ -17,6 +17,8 @@
 package com.google.cloud.dataflow.contrib.kafka;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -37,13 +39,17 @@ import org.joda.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.api.client.util.Maps;
 import com.google.cloud.dataflow.sdk.coders.AvroCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
+import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource.CheckpointMark;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource.UnboundedReader;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
+import com.google.cloud.dataflow.sdk.util.CloudObject;
+import com.google.cloud.dataflow.sdk.util.common.ElementByteSizeObserver;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
@@ -104,12 +110,7 @@ public class KafkaSource {
     private SerializableFunction<ConsumerRecord<K, V>, Instant> timestampFn =
         new NowTimestampFn<ConsumerRecord<K, V>>(); // default processing timestamp
 
-    private ImmutableMap.Builder<String, Object> consumerConfigBuilder = ImmutableMap
-        .<String, Object>builder()
-        .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName())
-        .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName())
-        .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest") // default to latest offset when last offset is unknown.
-        .put("enable.auto.commit", false); // disable auto commit (may be enabled by the user)
+    private Map<String, Object> mutableConsumerConfig = Maps.newHashMap();
 
     /**
      * set of properties that are not required or don't make sense
@@ -123,7 +124,14 @@ public class KafkaSource {
         );
 
 
-    private Builder() {}
+    private Builder() {
+      // set config defaults
+      mutableConsumerConfig.putAll(ImmutableMap.of(
+          ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
+          ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
+          ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest", // default to latest offset when last offset is unknown.
+          "enable.auto.commit", false)); // disable auto commit (may be enabled by the user)
+    }
 
     /**
      * Set Kafka bootstrap servers (alternately, set "bootstrap.servers" Consumer property).
@@ -147,7 +155,7 @@ public class KafkaSource {
     public Builder<K, V> withConsumerProperty(String configKey, Object configValue) {
       Preconditions.checkArgument(!ignoredConsumerProperties.containsKey(configKey),
           "No need to configure '%s'. %s", configKey, ignoredConsumerProperties.get(configKey));
-      consumerConfigBuilder.put(configKey, configValue);
+      mutableConsumerConfig.put(configKey, configValue);
       return this;
     }
 
@@ -185,7 +193,7 @@ public class KafkaSource {
 
     public UnboundedSource<ConsumerRecord<K, V>, KafkaCheckpointMark> build() {
 
-      ImmutableMap<String, Object> consumerConfig = consumerConfigBuilder.build();
+      ImmutableMap<String, Object> consumerConfig = ImmutableMap.copyOf(mutableConsumerConfig);
 
       Preconditions.checkNotNull(
           consumerConfig.get(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG),
@@ -232,13 +240,30 @@ public class KafkaSource {
       this.keyDecoderFn = keyDecoderFn;
       this.valueDecoderFn = valueDecoderFn;
       this.timestampFn = timestampFn;
-      this.assignedPartitions = ImmutableList.copyOf(assignedPartitions);
+
+      if (assignedPartitions.size() == 0) {
+        // XXX Temp workaround for DirectRunner. Fetch partitions.
+        KafkaConsumer<K, V> consumer = new KafkaConsumer<K, V>(consumerConfig);
+        this.assignedPartitions = topics
+            .stream()
+            .flatMap(topic -> consumer.partitionsFor(topic).stream())
+            .map(partInfo -> new TopicPartition(partInfo.topic(), partInfo.partition()))
+            .sorted((p1, p2) -> ComparisonChain.start() // sort by <partition, topic>
+                .compare(p1.partition(), p2.partition())
+                .compare(p1.topic(), p2.topic())
+                .result())
+            .collect(Collectors.toList());
+        consumer.close();
+      } else {
+        this.assignedPartitions = ImmutableList.copyOf(assignedPartitions);
+      }
     }
 
     @Override
     public List<? extends UnboundedSource<ConsumerRecord<K, V>, KafkaCheckpointMark>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
 
+      // XXX : not invoked by DirectRunner
       // XXX : I was checking various Java 8 streams and collectors.. thats is the reason for heavy use them here :)
 
       KafkaConsumer<K, V> consumer = new KafkaConsumer<K, V>(consumerConfig);
@@ -321,7 +346,75 @@ public class KafkaSource {
     @Override
     public Coder<ConsumerRecord<K, V>> getDefaultOutputCoder() {
       // no coder required. user explicitly provides functions to decode key and value
-      return null;
+      // XXX Source needs to provide OutputCoder?
+      return new Coder<ConsumerRecord<K,V>>() {
+
+        @Override
+        public void encode(ConsumerRecord<K, V> value, OutputStream outStream,
+            com.google.cloud.dataflow.sdk.coders.Coder.Context context)
+                throws CoderException, IOException {
+        }
+
+        @Override
+        public ConsumerRecord<K, V> decode(InputStream inStream,
+            com.google.cloud.dataflow.sdk.coders.Coder.Context context)
+                throws CoderException, IOException {
+          return null;
+        }
+
+        @Override
+        public List<? extends Coder<?>> getCoderArguments() {
+          return null;
+        }
+
+        @Override
+        public CloudObject asCloudObject() {
+          return null;
+        }
+
+        @Override
+        public void verifyDeterministic()
+            throws com.google.cloud.dataflow.sdk.coders.Coder.NonDeterministicException {
+        }
+
+        @Override
+        public boolean consistentWithEquals() {
+          return false;
+        }
+
+        @Override
+        public Object structuralValue(ConsumerRecord<K, V> value) throws Exception {
+          return null;
+        }
+
+        @Override
+        public boolean isRegisterByteSizeObserverCheap(ConsumerRecord<K, V> value,
+            com.google.cloud.dataflow.sdk.coders.Coder.Context context) {
+          // TODO Auto-generated method stub
+          return false;
+        }
+
+        @Override
+        public void registerByteSizeObserver(ConsumerRecord<K, V> value,
+            ElementByteSizeObserver observer,
+            com.google.cloud.dataflow.sdk.coders.Coder.Context context) throws Exception {
+          // TODO Auto-generated method stub
+
+        }
+
+        @Override
+        public String getEncodingId() {
+          // TODO Auto-generated method stub
+          return null;
+        }
+
+        @Override
+        public Collection<String> getAllowedEncodings() {
+          // TODO Auto-generated method stub
+          return null;
+        }
+
+      };
     }
   }
 
@@ -404,6 +497,10 @@ public class KafkaSource {
 
       ConsumerRecords<byte[], byte[]> records = consumer.poll(10); // what should the timeout be?
 
+      if (records.count() > 0) {
+        LOG.info("XXX : read " + records.count() + " records");
+      }
+
       partitionStates.stream().forEach(p -> {
         p.recordIter = records.records(p.topicPartition).iterator();
         p.record = null;
@@ -425,7 +522,7 @@ public class KafkaSource {
           LOG.info("Reader: resuming %s at %d", p.topicPartition, p.consumedOffset + 1);
           consumer.seek(p.topicPartition, p.consumedOffset);
         } else {
-          LOG.info("Reader: resuming from default offset for " + p.topicPartition);
+          LOG.info("Reader: resuming from default offset for %s", p.topicPartition);
         }
       });
 

@@ -50,6 +50,7 @@ public class TopHashtagsExample {
         .<String, String>unboundedSourceBuilder()
         .withBootstrapServers("localhost:9092")
         .withTopics(ImmutableList.of("sample_tweets_json"))
+        //.withConsumerProperty("auto.offset.reset", "earliest") // XXX Temp
         .withKeyDecoderFn(  bytes -> (bytes == null) ? null : new String(bytes, Charsets.UTF_8))
         .withValueDecoderFn(bytes -> (bytes == null) ? null : new String(bytes, Charsets.UTF_8))
         .build();
@@ -57,13 +58,13 @@ public class TopHashtagsExample {
     pipeline
       .apply(Read.from(kafkaSource)
           .named("sample_tweets")
-          .withMaxNumRecords(10000)) // XXX work around for DirectRunner
+          .withMaxNumRecords(1000)) // XXX work around for DirectRunner
       .apply(MapElements
           .<ConsumerRecord<String, String>, Integer>via(r -> 1)
           .withOutputType(new TypeDescriptor<Integer>(){}))
       .apply(Window.<Integer>into(SlidingWindows
           .of(Duration.standardMinutes(options.getSlidingWindowSize()))
-          .every(Duration.standardMinutes(options.getSlidingWindowPeriod()))))
+          .every(Duration.standardSeconds(options.getSlidingWindowPeriod()))))
       .apply(Count.<Integer>globally().withoutDefaults())
       .apply(FlatMapElements
           .<Long, Long>via(count -> {
