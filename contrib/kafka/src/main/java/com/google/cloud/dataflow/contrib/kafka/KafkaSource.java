@@ -129,7 +129,7 @@ public class KafkaSource {
      * Set Kafka bootstrap servers (alternately, set "bootstrap.servers" Consumer property).
      */
     public Builder<K, V> withBootstrapServers(String bootstrapServers) {
-      return withConsumerProperty("bootstrap.servers", bootstrapServers);
+      return withConsumerProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
     }
 
     /**
@@ -145,7 +145,7 @@ public class KafkaSource {
      * @see ConsumerConfig
      */
     public Builder<K, V> withConsumerProperty(String configKey, Object configValue) {
-      Preconditions.checkArgument(ignoredConsumerProperties.containsKey(configKey),
+      Preconditions.checkArgument(!ignoredConsumerProperties.containsKey(configKey),
           "No need to configure '%s'. %s", configKey, ignoredConsumerProperties.get(configKey));
       consumerConfigBuilder.put(configKey, configValue);
       return this;
@@ -332,7 +332,6 @@ public class KafkaSource {
     private KafkaConsumer<byte[], byte[]> consumer;
 
     // maintains state of each assigned partition
-
     private static class PartitionState implements Iterator<PartitionState> {
       private final TopicPartition topicPartition;
 
