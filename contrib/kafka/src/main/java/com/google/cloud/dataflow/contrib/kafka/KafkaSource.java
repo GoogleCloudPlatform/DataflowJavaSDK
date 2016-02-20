@@ -17,8 +17,6 @@
 package com.google.cloud.dataflow.contrib.kafka;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -42,14 +40,13 @@ import org.slf4j.LoggerFactory;
 import com.google.api.client.util.Maps;
 import com.google.cloud.dataflow.sdk.coders.AvroCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
-import com.google.cloud.dataflow.sdk.coders.CoderException;
+import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource.CheckpointMark;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource.UnboundedReader;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
-import com.google.cloud.dataflow.sdk.util.CloudObject;
-import com.google.cloud.dataflow.sdk.util.common.ElementByteSizeObserver;
+import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
@@ -107,8 +104,8 @@ public class KafkaSource {
     // future: let users specify subset of partitions to read
     private SerializableFunction<byte[], K> keyDecoderFn;
     private SerializableFunction<byte[], V> valueDecoderFn;
-    private SerializableFunction<ConsumerRecord<K, V>, Instant> timestampFn =
-        new NowTimestampFn<ConsumerRecord<K, V>>(); // default processing timestamp
+    private SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn =
+        new NowTimestampFn<KafkaRecord<K, V>>(); // default processing timestamp
 
     private Map<String, Object> mutableConsumerConfig = Maps.newHashMap();
 
@@ -186,12 +183,12 @@ public class KafkaSource {
      * by {@UnboundedReader#advance()}
      */
     public Builder<K, V> withTimestampFn(
-        SerializableFunction<ConsumerRecord<K, V>, Instant> timestampFn) {
+        SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn) {
       this.timestampFn = timestampFn;
       return this;
     }
 
-    public UnboundedSource<ConsumerRecord<K, V>, KafkaCheckpointMark> build() {
+    public UnboundedSource<KafkaRecord<K, V>, KafkaCheckpointMark> build() {
 
       ImmutableMap<String, Object> consumerConfig = ImmutableMap.copyOf(mutableConsumerConfig);
 
@@ -218,13 +215,13 @@ public class KafkaSource {
   private KafkaSource() {}
 
   private static class UnboundedKafkaSource<K, V>
-      extends UnboundedSource<ConsumerRecord<K, V>, KafkaCheckpointMark> {
+      extends UnboundedSource<KafkaRecord<K, V>, KafkaCheckpointMark> {
 
     private final ImmutableMap<String, Object> consumerConfig;
     private final List<String> topics;
     private final SerializableFunction<byte[], K> keyDecoderFn;
     private final SerializableFunction<byte[], V> valueDecoderFn;
-    private final SerializableFunction<ConsumerRecord<K, V>, Instant> timestampFn;
+    private final SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn;
     private final List<TopicPartition> assignedPartitions;
 
     public UnboundedKafkaSource(
@@ -232,7 +229,7 @@ public class KafkaSource {
         List<String> topics,
         SerializableFunction<byte[], K> keyDecoderFn,
         SerializableFunction<byte[], V> valueDecoderFn,
-        SerializableFunction<ConsumerRecord<K, V>, Instant> timestampFn,
+        SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn,
         List<TopicPartition> assignedPartitions) {
 
       this.consumerConfig = consumerConfig;
@@ -260,7 +257,7 @@ public class KafkaSource {
     }
 
     @Override
-    public List<? extends UnboundedSource<ConsumerRecord<K, V>, KafkaCheckpointMark>> generateInitialSplits(
+    public List<? extends UnboundedSource<KafkaRecord<K, V>, KafkaCheckpointMark>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
 
       // XXX : not invoked by DirectRunner
@@ -322,7 +319,7 @@ public class KafkaSource {
     }
 
     @Override
-    public UnboundedReader<ConsumerRecord<K, V>> createReader(
+    public UnboundedReader<KafkaRecord<K, V>> createReader(
         PipelineOptions options,
         KafkaCheckpointMark checkpointMark) {
       return new UnboundedKafkaReader<K, V>(this, checkpointMark);
@@ -344,82 +341,15 @@ public class KafkaSource {
     }
 
     @Override
-    public Coder<ConsumerRecord<K, V>> getDefaultOutputCoder() {
+    public Coder<KafkaRecord<K, V>> getDefaultOutputCoder() {
       // no coder required. user explicitly provides functions to decode key and value
       // XXX Source needs to provide OutputCoder?
-      return new Coder<ConsumerRecord<K,V>>() {
-
-        @Override
-        public void encode(ConsumerRecord<K, V> value, OutputStream outStream,
-            com.google.cloud.dataflow.sdk.coders.Coder.Context context)
-                throws CoderException, IOException {
-        }
-
-        @Override
-        public ConsumerRecord<K, V> decode(InputStream inStream,
-            com.google.cloud.dataflow.sdk.coders.Coder.Context context)
-                throws CoderException, IOException {
-          return null;
-        }
-
-        @Override
-        public List<? extends Coder<?>> getCoderArguments() {
-          return null;
-        }
-
-        @Override
-        public CloudObject asCloudObject() {
-          return null;
-        }
-
-        @Override
-        public void verifyDeterministic()
-            throws com.google.cloud.dataflow.sdk.coders.Coder.NonDeterministicException {
-        }
-
-        @Override
-        public boolean consistentWithEquals() {
-          return false;
-        }
-
-        @Override
-        public Object structuralValue(ConsumerRecord<K, V> value) throws Exception {
-          return null;
-        }
-
-        @Override
-        public boolean isRegisterByteSizeObserverCheap(ConsumerRecord<K, V> value,
-            com.google.cloud.dataflow.sdk.coders.Coder.Context context) {
-          // TODO Auto-generated method stub
-          return false;
-        }
-
-        @Override
-        public void registerByteSizeObserver(ConsumerRecord<K, V> value,
-            ElementByteSizeObserver observer,
-            com.google.cloud.dataflow.sdk.coders.Coder.Context context) throws Exception {
-          // TODO Auto-generated method stub
-
-        }
-
-        @Override
-        public String getEncodingId() {
-          // TODO Auto-generated method stub
-          return null;
-        }
-
-        @Override
-        public Collection<String> getAllowedEncodings() {
-          // TODO Auto-generated method stub
-          return null;
-        }
-
-      };
+      return SerializableCoder.of(new TypeDescriptor<KafkaRecord<K,V>>() {});
     }
   }
 
   private static class UnboundedKafkaReader<K, V>
-             extends UnboundedReader<ConsumerRecord<K, V>> {
+             extends UnboundedReader<KafkaRecord<K, V>> {
 
     private final UnboundedKafkaSource<K, V> source;
     private KafkaConsumer<byte[], byte[]> consumer;
@@ -450,10 +380,9 @@ public class KafkaSource {
       }
     }
 
-    private final boolean isRawSource; // i.e. if key and value decoders are identity functions
-    List<PartitionState> partitionStates;
+    private List<PartitionState> partitionStates;
 
-    private ConsumerRecord<K, V> curRecord;
+    private KafkaRecord<K, V> curRecord;
     private Instant curTimestamp;
 
     private Iterator<PartitionState> curBatch = Iterators.emptyIterator();
@@ -461,9 +390,8 @@ public class KafkaSource {
     public UnboundedKafkaReader(
         UnboundedKafkaSource<K, V> source,
         @Nullable KafkaCheckpointMark checkpointMark) {
+
       this.source = source;
-      this.isRawSource = source.keyDecoderFn instanceof IdentityFn
-          && source.valueDecoderFn instanceof IdentityFn;
 
       partitionStates = ImmutableList.copyOf(source.assignedPartitions
           .stream()
@@ -531,7 +459,6 @@ public class KafkaSource {
       return curBatch.hasNext();
     }
 
-    @SuppressWarnings("unchecked") // for rawRecord to curRecord cast below
     @Override
     public boolean advance() throws IOException {
       while (true) {
@@ -553,17 +480,12 @@ public class KafkaSource {
           } else {
 
             // apply user decoders
-            if (isRawSource) {
-              // is shortcut this worth it? mostly not.
-              curRecord = (ConsumerRecord<K, V>) pState.record;
-            } else {
-              curRecord = new ConsumerRecord<K, V>(
-                  rawRecord.topic(),
-                  rawRecord.partition(),
-                  rawRecord.offset(),
-                  source.keyDecoderFn.apply(rawRecord.key()),
-                  source.valueDecoderFn.apply(rawRecord.value()));
-            }
+            curRecord = new KafkaRecord<K, V>(
+                rawRecord.topic(),
+                rawRecord.partition(),
+                rawRecord.offset(),
+                source.keyDecoderFn.apply(rawRecord.key()),
+                source.valueDecoderFn.apply(rawRecord.value()));
 
             curTimestamp = source.timestampFn.apply(curRecord);
             pState.consumedOffset = rawRecord.offset();
@@ -593,12 +515,12 @@ public class KafkaSource {
     }
 
     @Override
-    public UnboundedSource<ConsumerRecord<K, V>, ?> getCurrentSource() {
+    public UnboundedSource<KafkaRecord<K, V>, ?> getCurrentSource() {
       return source;
     }
 
     @Override
-    public ConsumerRecord<K, V> getCurrent() throws NoSuchElementException {
+    public KafkaRecord<K, V> getCurrent() throws NoSuchElementException {
       // TODO: should we delay updating consumed offset till now?
       return curRecord;
     }

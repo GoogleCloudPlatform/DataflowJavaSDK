@@ -1,6 +1,5 @@
 package com.google.cloud.dataflow.contrib.kafka;
 
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.joda.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,7 +45,7 @@ public class TopHashtagsExample {
 
     Pipeline pipeline = Pipeline.create(options);
 
-    UnboundedSource<ConsumerRecord<String, String>, ?> kafkaSource = KafkaSource
+    UnboundedSource<KafkaRecord<String, String>, ?> kafkaSource = KafkaSource
         .<String, String>unboundedSourceBuilder()
         .withBootstrapServers("localhost:9092")
         .withTopics(ImmutableList.of("sample_tweets_json"))
@@ -60,7 +59,7 @@ public class TopHashtagsExample {
           .named("sample_tweets")
           .withMaxNumRecords(1000)) // XXX work around for DirectRunner
       .apply(MapElements
-          .<ConsumerRecord<String, String>, Integer>via(r -> 1)
+          .<KafkaRecord<String, String>, Integer>via(r -> 1)
           .withOutputType(new TypeDescriptor<Integer>(){}))
       .apply(Window.<Integer>into(SlidingWindows
           .of(Duration.standardMinutes(options.getSlidingWindowSize()))
@@ -68,7 +67,7 @@ public class TopHashtagsExample {
       .apply(Count.<Integer>globally().withoutDefaults())
       .apply(FlatMapElements
           .<Long, Long>via(count -> {
-            LOG.info("Tweets in last 5 minutes : %d", count);
+            LOG.info("Tweets in last 5 minutes : " + count);
             return ImmutableList.<Long>of();})
           .withOutputType(new TypeDescriptor<Long>(){}));
 
