@@ -70,11 +70,7 @@ public class KafkaSource {
    *    - confirm non-blocking behavior in advance()
    */
 
-  private static class IdentityFn<T> implements SerializableFunction<T, T> {
-    public T apply(T input) {
-      return input;
-    }
-  }
+  private static SerializableFunction<byte[], byte[]> identityFn = bytes -> bytes;
 
   /**
    * A function that returns {@link Instant#now} as the timestamp for each generated element.
@@ -92,8 +88,8 @@ public class KafkaSource {
 
   public static Builder<byte[], byte[]> unboundedByteSourceBuilder() {
     return new Builder<byte[], byte[]>()
-      .withKeyDecoderFn(new IdentityFn<byte[]>())
-      .withValueDecoderFn(new IdentityFn<byte[]>());
+      .withKeyDecoderFn(identityFn)
+      .withValueDecoderFn(identityFn);
   }
 
   /**
@@ -103,7 +99,7 @@ public class KafkaSource {
   public static <T extends Serializable> ValueSourceBuilder<T> unboundedValueSourceBuilder() {
     return new ValueSourceBuilder<T>(
        new Builder<byte[], T>()
-       .withKeyDecoderFn(new IdentityFn<byte[]>()));
+       .withKeyDecoderFn(identityFn));
   }
 
   public static class Builder<K, V> {
