@@ -17,6 +17,7 @@
 package com.google.cloud.dataflow.contrib.kafka;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -64,12 +65,9 @@ public class KafkaSource {
 
   private static final Logger LOG = LoggerFactory.getLogger(KafkaSource.class);
 
-  /* TODO:
-   *  - abstract out kafka interactions
-   *  - should we let user specify key and value deserializers in kafka. I don't think so. key
-   *    matters to Kafka only at the producer (hashCode is used for partition). the consumer does
-   *    not care. We could use DataFlow coder or SerializableFunction.
-   *  - leave a comment about optionally storing
+  /* TODO: Overall todos:
+   *    - javadoc at many places
+   *    - confirm non-blocking behavior in advance()
    */
 
   private static class IdentityFn<T> implements SerializableFunction<T, T> {
@@ -96,6 +94,16 @@ public class KafkaSource {
     return new Builder<byte[], byte[]>()
       .withKeyDecoderFn(new IdentityFn<byte[]>())
       .withValueDecoderFn(new IdentityFn<byte[]>());
+  }
+
+  /**
+   * Similar to {@link #unboundedSourceBuilder()}, except the the source strips KafkaRecord wrapper
+   * and returns just the value.
+   */
+  public static <T extends Serializable> ValueSourceBuilder<T> unboundedValueSourceBuilder() {
+    return new ValueSourceBuilder<T>(
+       new Builder<byte[], T>()
+       .withKeyDecoderFn(new IdentityFn<byte[]>()));
   }
 
   public static class Builder<K, V> {
@@ -257,7 +265,7 @@ public class KafkaSource {
     }
 
     @Override
-    public List<? extends UnboundedSource<KafkaRecord<K, V>, KafkaCheckpointMark>> generateInitialSplits(
+    public List<UnboundedKafkaSource<K, V>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
 
       // XXX : not invoked by DirectRunner
@@ -319,9 +327,8 @@ public class KafkaSource {
     }
 
     @Override
-    public UnboundedReader<KafkaRecord<K, V>> createReader(
-        PipelineOptions options,
-        KafkaCheckpointMark checkpointMark) {
+    public UnboundedKafkaReader<K, V> createReader(PipelineOptions options,
+                                                   KafkaCheckpointMark checkpointMark) {
       return new UnboundedKafkaReader<K, V>(this, checkpointMark);
     }
 
@@ -535,4 +542,141 @@ public class KafkaSource {
       Closeables.closeQuietly(consumer);
     }
   }
+
+  // Builder, Source, Reader wrappers when user is only interested in Value in KafkaRecord :
+
+  public static class ValueSourceBuilder<T extends Serializable> {
+    // TODO : remove 'extends Serializable' restriction or improve it to just require a Coder<T>
+
+    private Builder<byte[], T> underlying;
+
+    private ValueSourceBuilder(Builder<byte[], T> underlying) {
+      this.underlying = underlying;
+    }
+
+    public ValueSourceBuilder<T> withBootstrapServers(String bootstrapServers) {
+      return new ValueSourceBuilder<T>(underlying.withBootstrapServers(bootstrapServers));
+    }
+
+    public ValueSourceBuilder<T> withTopics(Collection<String> topics) {
+      return new ValueSourceBuilder<T>(underlying.withTopics(topics));
+    }
+
+    public ValueSourceBuilder<T> withConsumerProperty(String configKey, Object configValue) {
+      return new ValueSourceBuilder<T>(underlying.withConsumerProperty(configKey, configValue));
+    }
+
+    public ValueSourceBuilder<T> withConsumerProperties(Map<String, Object> configToUpdate) {
+      return new ValueSourceBuilder<T>(underlying.withConsumerProperties(configToUpdate));
+    }
+
+    public ValueSourceBuilder<T> withValueDecoderFn(SerializableFunction<byte[], T> valueDecoderFn) {
+      return new ValueSourceBuilder<T>(underlying.withValueDecoderFn(valueDecoderFn));
+    }
+
+    public ValueSourceBuilder<T> withTimestampFn(SerializableFunction<T, Instant> timestampFn) {
+      return new ValueSourceBuilder<T>(
+          underlying.withTimestampFn(record -> timestampFn.apply(record.getValue())));
+    }
+
+    public UnboundedSource<T, KafkaCheckpointMark> build() {
+      return new UnboundedKafkaValueSource<T>((UnboundedKafkaSource<byte[], T>) underlying.build());
+    }
+  }
+
+  /**
+   * Usually the users are only interested in value in KafkaRecord. This is a convenient class
+   * to strip out other fields in KafkaRecord returned by UnboundedKafkaValueSource
+   */
+  private static class UnboundedKafkaValueSource<T extends Serializable> extends UnboundedSource<T, KafkaCheckpointMark> {
+
+    private final UnboundedKafkaSource<?, T> underlying;
+
+    public UnboundedKafkaValueSource(UnboundedKafkaSource<?, T> underlying) {
+      this.underlying = underlying;
+    }
+
+    @Override
+    public List<UnboundedKafkaValueSource<T>> generateInitialSplits(
+        int desiredNumSplits, PipelineOptions options) throws Exception {
+      return underlying
+          .generateInitialSplits(desiredNumSplits, options)
+          .stream()
+          .map(s -> new UnboundedKafkaValueSource<T>(s))
+          .collect(Collectors.toList());
+    }
+
+    @Override
+    public UnboundedReader<T> createReader(PipelineOptions options, KafkaCheckpointMark checkpointMark) {
+      return new UnboundedKafkaValueReader<T>(this, underlying.createReader(options, checkpointMark));
+    }
+
+    @Override
+    public Coder<KafkaCheckpointMark> getCheckpointMarkCoder() {
+      return underlying.getCheckpointMarkCoder();
+    }
+
+    @Override
+    public void validate() {
+      underlying.validate();
+    }
+
+    @Override
+    public Coder<T> getDefaultOutputCoder() {
+      return SerializableCoder.of(new TypeDescriptor<T>() {});
+    }
+  }
+
+  private static class UnboundedKafkaValueReader<T extends Serializable> extends UnboundedReader<T> {
+
+    private final UnboundedKafkaValueSource<T> source;
+    private final UnboundedKafkaReader<?, T> underlying;
+
+    public UnboundedKafkaValueReader(UnboundedKafkaValueSource<T> source,
+                                     UnboundedKafkaReader<?, T> underlying) {
+      this.source = source;
+      this.underlying = underlying;
+    }
+
+    @Override
+    public boolean start() throws IOException {
+      return underlying.start();
+    }
+
+    @Override
+    public boolean advance() throws IOException {
+      return underlying.advance();
+    }
+
+    @Override
+    public Instant getWatermark() {
+      return underlying.getWatermark();
+    }
+
+    @Override
+    public CheckpointMark getCheckpointMark() {
+      return underlying.getCheckpointMark();
+    }
+
+    @Override
+    public UnboundedKafkaValueSource<T> getCurrentSource() {
+      return source;
+    }
+
+    @Override
+    public T getCurrent() throws NoSuchElementException {
+      return underlying.getCurrent().getValue();
+    }
+
+    @Override
+    public Instant getCurrentTimestamp() throws NoSuchElementException {
+      return underlying.getCurrentTimestamp();
+    }
+
+    @Override
+    public void close() throws IOException {
+      underlying.close();
+    }
+  }
+
 }

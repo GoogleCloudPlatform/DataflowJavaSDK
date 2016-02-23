@@ -147,6 +147,14 @@
       <version>[0.9,)</version>
     </dependency>
 
+    <!-- include full kafka dependency for old consumer in provided scope -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka_2.11</artifactId>
+      <version>0.9.0.0</version>
+      <scope>provided</scope>
+    </dependency>
+
     <!-- XXX Temp move these to Examples directory -->
     <dependency>
       <groupId>log4j</groupId>
