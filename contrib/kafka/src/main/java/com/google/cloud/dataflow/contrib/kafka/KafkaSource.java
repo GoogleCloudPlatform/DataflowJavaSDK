@@ -243,8 +243,9 @@ public class KafkaSource {
       this.timestampFn = timestampFn;
 
       if (assignedPartitions.size() == 0) {
-        // XXX Temp workaround for DirectRunner. Fetch partitions.
+        // XXX workaround for DirectRunner. Fetch partitions since it does not call generateInitialSplits()
         KafkaConsumer<K, V> consumer = new KafkaConsumer<K, V>(consumerConfig);
+        LOG.info("XXX local runner hack");
         this.assignedPartitions = topics
             .stream()
             .flatMap(topic -> consumer.partitionsFor(topic).stream())
@@ -264,8 +265,7 @@ public class KafkaSource {
     public List<UnboundedKafkaSource<K, V>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
 
-      // XXX : not invoked by DirectRunner
-      // XXX : I was checking various Java 8 streams and collectors.. thats is the reason for heavy use them here :)
+      LOG.info("XXX generateInitialSplits()");
 
       KafkaConsumer<K, V> consumer = new KafkaConsumer<K, V>(consumerConfig);
 
@@ -301,16 +301,15 @@ public class KafkaSource {
       // create a new source for each split with the assigned partitions for the split
       return IntStream.range(0, numSplits)
           .mapToObj(split -> {
-
             List<TopicPartition> assignedToSplit = assignments.get(split)
                 .stream()
                 .map(i -> partitions.get(i))
                 .collect(Collectors.toList());
 
-            LOG.info("Partitions assigned for split %d : %s",
+            LOG.info("Partitions assigned for split {} : {}",
                 split, Joiner.on(",").join(assignedToSplit));
 
-            // copy of 'this', except for assignedPartitions, which is replaced by assignedToSplit
+            // copy of 'this' with assignedPartitions replaced with assignedToSplit
             return new UnboundedKafkaSource<K, V>(
                 this.consumerConfig,
                 this.topics,
@@ -345,7 +344,7 @@ public class KafkaSource {
 
     @Override
     public Coder<KafkaRecord<K, V>> getDefaultOutputCoder() {
-      // no coder required. user explicitly provides functions to decode key and value
+      // no coder is logically needed. user explicitly provides functions to decode key and value
       // XXX Source needs to provide OutputCoder?
       return SerializableCoder.of(new TypeDescriptor<KafkaRecord<K,V>>() {});
     }
@@ -428,9 +427,7 @@ public class KafkaSource {
 
       ConsumerRecords<byte[], byte[]> records = consumer.poll(10); // what should the timeout be?
 
-      if (records.count() > 0) {
-        LOG.info("XXX : read " + records.count() + " records");
-      }
+      // TODO: increment a counter or stat (for histogram) by records.count()?
 
       partitionStates.stream().forEach(p -> {
         p.recordIter = records.records(p.topicPartition).iterator();
@@ -450,10 +447,10 @@ public class KafkaSource {
       // seek to next offset if consumedOffset is set
       partitionStates.stream().forEach(p -> {
         if (p.consumedOffset >= 0) {
-          LOG.info("Reader: resuming %s at %d", p.topicPartition, p.consumedOffset + 1);
+          LOG.info("Reader: resuming {} at {}", p.topicPartition, p.consumedOffset + 1);
           consumer.seek(p.topicPartition, p.consumedOffset);
         } else {
-          LOG.info("Reader: resuming from default offset for %s", p.topicPartition);
+          LOG.info("Reader: resuming from default offset for {}", p.topicPartition);
         }
       });
 
@@ -474,7 +471,7 @@ public class KafkaSource {
           if (consumed >= 0 && rawRecord.offset() <= consumed) {
             // this can happen when compression is enabled in Kafka
             // should we check if the offset is way off from consumedOffset (say 1M more or less)
-            LOG.info("ignoring already consumed offset %d for %s",
+            LOG.info("ignoring already consumed offset {} for {}",
                 rawRecord.offset(), pState.topicPartition);
 
             // TODO: increment a counter?

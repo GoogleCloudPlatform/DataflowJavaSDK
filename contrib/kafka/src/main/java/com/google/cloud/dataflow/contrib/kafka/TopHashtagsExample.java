@@ -1,9 +1,13 @@
 package com.google.cloud.dataflow.contrib.kafka;
 
+import java.util.List;
+
 import org.joda.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
@@ -12,10 +16,13 @@ import com.google.cloud.dataflow.sdk.options.Description;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.transforms.Count;
+import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.FlatMapElements;
-import com.google.cloud.dataflow.sdk.transforms.MapElements;
+import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.cloud.dataflow.sdk.transforms.Top;
 import com.google.cloud.dataflow.sdk.transforms.windowing.SlidingWindows;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
+import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
@@ -37,6 +44,31 @@ public class TopHashtagsExample {
     @Default.Integer(1)
     Integer getSlidingWindowPeriod();
     void setSlidingWindowPeriod(Integer value);
+
+    @Description("Bootstarp Server(s) for Kafka")
+    String getBootstrapServers();
+    void setBootstrapServers(String servers);
+
+    @Description("Num of Top hashtags")
+    @Default.Integer(10)
+    Integer getNumTopHashtags();
+    void setNumTopHashtags(Integer count);
+  }
+
+  /**
+   * Emit each of the hashtags in tweet json
+   */
+  static class ExtractHashtagsFn extends DoFn<String, String> {
+    private final ObjectMapper jsonMapper = new ObjectMapper();
+
+    @Override
+    public void processElement(ProcessContext ctx) throws Exception {
+      for (JsonNode hashtag : jsonMapper.readTree(ctx.element())
+                                        .with("entities")
+                                        .withArray("hashtags")) {
+        ctx.output(hashtag.get("text").asText());
+      }
+    }
   }
 
   public static void main(String args[]) {
@@ -45,29 +77,30 @@ public class TopHashtagsExample {
 
     Pipeline pipeline = Pipeline.create(options);
 
-    UnboundedSource<KafkaRecord<String, String>, ?> kafkaSource = KafkaSource
-        .<String, String>unboundedSourceBuilder()
-        .withBootstrapServers("localhost:9092")
+    final int windowSize = options.getSlidingWindowSize();
+    final int windowPeriod = options.getSlidingWindowPeriod();
+
+    UnboundedSource<String, ?> kafkaSource = KafkaSource
+        .<String>unboundedValueSourceBuilder()
+        .withBootstrapServers(options.getBootstrapServers())
         .withTopics(ImmutableList.of("sample_tweets_json"))
         //.withConsumerProperty("auto.offset.reset", "earliest") // XXX Temp
-        .withKeyDecoderFn(  bytes -> (bytes == null) ? null : new String(bytes, Charsets.UTF_8))
         .withValueDecoderFn(bytes -> (bytes == null) ? null : new String(bytes, Charsets.UTF_8))
         .build();
 
     pipeline
       .apply(Read.from(kafkaSource)
-          .named("sample_tweets")
-          .withMaxNumRecords(1000)) // XXX work around for DirectRunner
-      .apply(MapElements
-          .<KafkaRecord<String, String>, Integer>via(r -> 1)
-          .withOutputType(new TypeDescriptor<Integer>(){}))
-      .apply(Window.<Integer>into(SlidingWindows
-          .of(Duration.standardMinutes(options.getSlidingWindowSize()))
-          .every(Duration.standardSeconds(options.getSlidingWindowPeriod()))))
-      .apply(Count.<Integer>globally().withoutDefaults())
+          //.withMaxNumRecords(1000)// needed for local runner
+          .named("sample_tweets"))
+      .apply(ParDo.of(new ExtractHashtagsFn()))
+      .apply(Window.<String>into(SlidingWindows
+          .of(Duration.standardMinutes(windowSize))
+          .every(Duration.standardSeconds(windowPeriod))))
+      .apply(Count.<String>perElement())
+      .apply(Top.of(options.getNumTopHashtags(), new KV.OrderByValue<String, Long>()).withoutDefaults())
       .apply(FlatMapElements
-          .<Long, Long>via(count -> {
-            LOG.info("Tweets in last 5 minutes : " + count);
+          .via((List<KV<String, Long>> top) -> {
+            LOG.info("Top Hashtags in {} minutes : {}", windowSize, top);
             return ImmutableList.<Long>of();})
           .withOutputType(new TypeDescriptor<Long>(){}));
 

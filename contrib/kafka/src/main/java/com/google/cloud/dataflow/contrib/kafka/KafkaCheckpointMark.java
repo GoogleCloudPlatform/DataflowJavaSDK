@@ -1,12 +1,13 @@
 package com.google.cloud.dataflow.contrib.kafka;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.List;
 
 import org.apache.kafka.common.TopicPartition;
 
-import com.google.cloud.dataflow.sdk.coders.AvroCoder;
 import com.google.cloud.dataflow.sdk.coders.DefaultCoder;
+import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
 
 /**
@@ -15,18 +16,13 @@ import com.google.cloud.dataflow.sdk.io.UnboundedSource;
  *
  * @author rangadi
  */
-@DefaultCoder(AvroCoder.class)
-public class KafkaCheckpointMark implements UnboundedSource.CheckpointMark {
+@DefaultCoder(SerializableCoder.class)
+public class KafkaCheckpointMark implements UnboundedSource.CheckpointMark, Serializable {
 
   private final List<PartitionMark> partitions;
 
   public KafkaCheckpointMark(List<PartitionMark> partitions) {
     this.partitions = partitions;
-  }
-
-  @SuppressWarnings("unused") // for AvroCoder
-  private KafkaCheckpointMark() {
-    partitions = null;
   }
 
   public List<PartitionMark> getPartitions() {
@@ -46,17 +42,10 @@ public class KafkaCheckpointMark implements UnboundedSource.CheckpointMark {
      */
   }
 
-  public static class PartitionMark {
+  public static class PartitionMark implements Serializable {
     private final TopicPartition topicPartition;
     private final long offset;
 
-    /**
-     * TODO
-     * @param topic
-     * @param partition
-     * @param offset
-     * @param consumed
-     */
     public PartitionMark(TopicPartition topicPartition, long offset) {
       this.topicPartition = topicPartition;
       this.offset = offset;
