@@ -39,7 +39,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.api.client.util.Maps;
-import com.google.cloud.dataflow.sdk.coders.AvroCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
@@ -329,7 +328,7 @@ public class KafkaSource {
 
     @Override
     public Coder<KafkaCheckpointMark> getCheckpointMarkCoder() {
-      return AvroCoder.of(KafkaCheckpointMark.class);
+      return SerializableCoder.of(KafkaCheckpointMark.class);
     }
 
     @Override
