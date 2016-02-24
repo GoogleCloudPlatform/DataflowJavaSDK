@@ -447,7 +447,7 @@ public class KafkaSource {
       partitionStates.stream().forEach(p -> {
         if (p.consumedOffset >= 0) {
           LOG.info("Reader: resuming {} at {}", p.topicPartition, p.consumedOffset + 1);
-          consumer.seek(p.topicPartition, p.consumedOffset);
+          consumer.seek(p.topicPartition, p.consumedOffset + 1);
         } else {
           LOG.info("Reader: resuming from default offset for {}", p.topicPartition);
         }
