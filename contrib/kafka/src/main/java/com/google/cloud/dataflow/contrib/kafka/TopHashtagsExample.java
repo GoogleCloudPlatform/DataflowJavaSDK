@@ -3,6 +3,7 @@ package com.google.cloud.dataflow.contrib.kafka;
 import java.util.List;
 
 import org.joda.time.Duration;
+import org.joda.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,10 +16,12 @@ import com.google.cloud.dataflow.sdk.options.Default;
 import com.google.cloud.dataflow.sdk.options.Description;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
+import com.google.cloud.dataflow.sdk.options.Validation.Required;
 import com.google.cloud.dataflow.sdk.transforms.Count;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.FlatMapElements;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.transforms.Top;
 import com.google.cloud.dataflow.sdk.transforms.windowing.SlidingWindows;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
@@ -46,20 +49,27 @@ public class TopHashtagsExample {
     void setSlidingWindowPeriod(Integer value);
 
     @Description("Bootstarp Server(s) for Kafka")
+    @Required
     String getBootstrapServers();
     void setBootstrapServers(String servers);
 
-    @Description("Num of Top hashtags")
+    @Description("One or more topics to read from")
+    @Required
+    List<String> getTopics();
+    void setTopics(List<String> topics);
+
+    @Description("Number of Top Hashtags")
     @Default.Integer(10)
     Integer getNumTopHashtags();
     void setNumTopHashtags(Integer count);
   }
 
+  private static final ObjectMapper jsonMapper = new ObjectMapper();
+
   /**
    * Emit each of the hashtags in tweet json
    */
   static class ExtractHashtagsFn extends DoFn<String, String> {
-    private final ObjectMapper jsonMapper = new ObjectMapper();
 
     @Override
     public void processElement(ProcessContext ctx) throws Exception {
@@ -70,6 +80,19 @@ public class TopHashtagsExample {
       }
     }
   }
+
+  // return timestamp from "timestamp_ms" field.
+  static SerializableFunction<String, Instant> timestampFn = json -> {
+    try {
+      long timestamp_ms = jsonMapper
+          .readTree(json)
+          .path("timestamp_ms")
+          .asLong();
+      return timestamp_ms == 0 ? Instant.now() : new Instant(timestamp_ms);
+    } catch (Exception e) {
+      throw new RuntimeException("Incorrect json", e);
+    }
+  };
 
   public static void main(String args[]) {
 
@@ -83,20 +106,18 @@ public class TopHashtagsExample {
     UnboundedSource<String, ?> kafkaSource = KafkaSource
         .<String>unboundedValueSourceBuilder()
         .withBootstrapServers(options.getBootstrapServers())
-        .withTopics(ImmutableList.of("sample_tweets_json"))
-        //.withConsumerProperty("auto.offset.reset", "earliest") // XXX Temp
+        .withTopics(options.getTopics())
         .withValueDecoderFn(bytes -> (bytes == null) ? null : new String(bytes, Charsets.UTF_8))
+        .withTimestampFn(timestampFn)
         .build();
 
     pipeline
-      .apply(Read.from(kafkaSource)
-          //.withMaxNumRecords(1000)// needed for local runner
-          .named("sample_tweets"))
+      .apply(Read.from(kafkaSource).named("sample_tweets"))
       .apply(ParDo.of(new ExtractHashtagsFn()))
       .apply(Window.<String>into(SlidingWindows
           .of(Duration.standardMinutes(windowSize))
           .every(Duration.standardSeconds(windowPeriod))))
-      .apply(Count.<String>perElement())
+      .apply(Count.perElement())
       .apply(Top.of(options.getNumTopHashtags(), new KV.OrderByValue<String, Long>()).withoutDefaults())
       .apply(FlatMapElements
           .via((List<KV<String, Long>> top) -> {

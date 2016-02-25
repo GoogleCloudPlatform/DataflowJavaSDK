@@ -34,6 +34,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,16 +72,6 @@ public class KafkaSource {
 
   private static SerializableFunction<byte[], byte[]> identityFn = bytes -> bytes;
 
-  /**
-   * A function that returns {@link Instant#now} as the timestamp for each generated element.
-   */
-  private static class NowTimestampFn<T extends Object> implements SerializableFunction<T, Instant> {
-    @Override
-    public Instant apply(T input) {
-      return Instant.now();
-    }
-  }
-
   public static <K, V> Builder<K, V> unboundedSourceBuilder() {
     return new Builder<K, V>();
   }
@@ -107,8 +98,7 @@ public class KafkaSource {
     // future: let users specify subset of partitions to read
     private SerializableFunction<byte[], K> keyDecoderFn;
     private SerializableFunction<byte[], V> valueDecoderFn;
-    private SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn =
-        new NowTimestampFn<KafkaRecord<K, V>>(); // default processing timestamp
+    private SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn = input -> Instant.now();
 
     private Map<String, Object> mutableConsumerConfig = Maps.newHashMap();
 
@@ -240,31 +230,12 @@ public class KafkaSource {
       this.keyDecoderFn = keyDecoderFn;
       this.valueDecoderFn = valueDecoderFn;
       this.timestampFn = timestampFn;
-
-      if (assignedPartitions.size() == 0) {
-        // XXX workaround for DirectRunner. Fetch partitions since it does not call generateInitialSplits()
-        KafkaConsumer<K, V> consumer = new KafkaConsumer<K, V>(consumerConfig);
-        LOG.info("XXX local runner hack");
-        this.assignedPartitions = topics
-            .stream()
-            .flatMap(topic -> consumer.partitionsFor(topic).stream())
-            .map(partInfo -> new TopicPartition(partInfo.topic(), partInfo.partition()))
-            .sorted((p1, p2) -> ComparisonChain.start() // sort by <partition, topic>
-                .compare(p1.partition(), p2.partition())
-                .compare(p1.topic(), p2.topic())
-                .result())
-            .collect(Collectors.toList());
-        consumer.close();
-      } else {
-        this.assignedPartitions = ImmutableList.copyOf(assignedPartitions);
-      }
+      this.assignedPartitions = ImmutableList.copyOf(assignedPartitions);
     }
 
     @Override
     public List<UnboundedKafkaSource<K, V>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
-
-      LOG.info("XXX generateInitialSplits()");
 
       KafkaConsumer<K, V> consumer = new KafkaConsumer<K, V>(consumerConfig);
 
@@ -344,7 +315,7 @@ public class KafkaSource {
     @Override
     public Coder<KafkaRecord<K, V>> getDefaultOutputCoder() {
       // no coder is logically needed. user explicitly provides functions to decode key and value
-      // XXX Source needs to provide OutputCoder?
+      // sdk requires a Coder.
       return SerializableCoder.of(new TypeDescriptor<KafkaRecord<K,V>>() {});
     }
   }
@@ -426,7 +397,7 @@ public class KafkaSource {
 
       ConsumerRecords<byte[], byte[]> records = consumer.poll(10); // what should the timeout be?
 
-      // TODO: increment a counter or stat (for histogram) by records.count()?
+      // increment a counter or stat?
 
       partitionStates.stream().forEach(p -> {
         p.recordIter = records.records(p.topicPartition).iterator();
@@ -434,7 +405,6 @@ public class KafkaSource {
       });
 
       curBatch = Iterators.concat(partitionStates.iterator());
-      curRecord = null;
     }
 
     @Override
@@ -466,8 +436,9 @@ public class KafkaSource {
 
           ConsumerRecord<byte[], byte[]> rawRecord = pState.record;
           long consumed = pState.consumedOffset;
+          long offset = rawRecord.offset();
 
-          if (consumed >= 0 && rawRecord.offset() <= consumed) {
+          if (consumed >= 0 && offset <= consumed) {
             // this can happen when compression is enabled in Kafka
             // should we check if the offset is way off from consumedOffset (say 1M more or less)
             LOG.info("ignoring already consumed offset {} for {}",
@@ -477,6 +448,11 @@ public class KafkaSource {
             continue;
 
           } else {
+            // sanity check
+            if (consumed >= 0 && (offset - consumed) != 1) {
+              LOG.warn("gap in offsets for {} after {}. {} records missing.",
+                  pState.topicPartition, consumed, offset - consumed - 1);
+            }
 
             // apply user decoders
             curRecord = new KafkaRecord<K, V>(
@@ -502,7 +478,16 @@ public class KafkaSource {
 
     @Override
     public Instant getWatermark() {
-      return source.timestampFn.apply(curRecord);
+      //XXX what should do? why is curRecord is null? return source.timestampFn.apply(curRecord);
+      if (curRecord == null) {
+        LOG.warn("Why is curRecord null? curTimestamp : {}, numPartitions {} : maxOffset : {}",
+            curTimestamp, partitionStates.size(),
+            partitionStates.stream().collect(Collectors.summarizingLong(s -> s.consumedOffset)).getMax());
+        return Instant.now().minus(Duration.standardMinutes(2));
+      } else {
+        return curTimestamp.minus(Duration.standardMinutes(2));
+      }
+
     }
 
     @Override
