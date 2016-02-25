@@ -479,15 +479,15 @@ public class KafkaSource {
     @Override
     public Instant getWatermark() {
       //XXX what should do? why is curRecord is null? return source.timestampFn.apply(curRecord);
+      LOG.warn("curRec is {}? curTimestamp : {}, numPartitions {} : maxOffset : {}",
+          (curRecord == null) ? "null" : "not null", curTimestamp, partitionStates.size(),
+          partitionStates.stream().collect(Collectors.summarizingLong(s -> s.consumedOffset)).getMax());
+
       if (curRecord == null) {
-        LOG.warn("Why is curRecord null? curTimestamp : {}, numPartitions {} : maxOffset : {}",
-            curTimestamp, partitionStates.size(),
-            partitionStates.stream().collect(Collectors.summarizingLong(s -> s.consumedOffset)).getMax());
-        return Instant.now().minus(Duration.standardMinutes(2));
+        return null;
       } else {
         return curTimestamp.minus(Duration.standardMinutes(2));
       }
-
     }
 
     @Override
