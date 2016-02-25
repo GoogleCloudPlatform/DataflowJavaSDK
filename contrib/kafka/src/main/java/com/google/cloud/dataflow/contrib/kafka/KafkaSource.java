@@ -264,20 +264,21 @@ public class KafkaSource {
 
       int numSplits = Math.min(desiredNumSplits, partitions.size());
 
+      // Map of : split index -> List of indices of partitions assigned to it
       Map<Integer, List<Integer>> assignments = IntStream.range(0, partitions.size())
           .mapToObj(i -> i)
           .collect(Collectors.groupingBy(i -> i % numSplits)); // groupingBy preserves order.
 
       // create a new source for each split with the assigned partitions for the split
       return IntStream.range(0, numSplits)
-          .mapToObj(split -> {
-            List<TopicPartition> assignedToSplit = assignments.get(split)
+          .mapToObj(splitIdx -> {
+            List<TopicPartition> assignedToSplit = assignments.get(splitIdx)
                 .stream()
                 .map(i -> partitions.get(i))
                 .collect(Collectors.toList());
 
             LOG.info("Partitions assigned for split {} : {}",
-                split, Joiner.on(",").join(assignedToSplit));
+                splitIdx, Joiner.on(",").join(assignedToSplit));
 
             // copy of 'this' with assignedPartitions replaced with assignedToSplit
             return new UnboundedKafkaSource<K, V>(
@@ -479,7 +480,7 @@ public class KafkaSource {
     @Override
     public Instant getWatermark() {
       //XXX what should do? why is curRecord is null? return source.timestampFn.apply(curRecord);
-      LOG.warn("curRec is {}. curTimestamp : {}, numPartitions {} : maxOffset : {}",
+      LOG.info("curRec is {}. curTimestamp : {}, numPartitions {} : maxOffset : {}",
           (curRecord == null) ? "null" : "not null", curTimestamp, partitionStates.size(),
           partitionStates.stream().collect(Collectors.summarizingLong(s -> s.consumedOffset)).getMax());
 
