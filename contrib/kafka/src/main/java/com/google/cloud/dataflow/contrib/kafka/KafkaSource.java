@@ -532,7 +532,7 @@ public class KafkaSource {
           }));
 
       if (curRecord == null) // XXX TEMP
-        return curTimestamp;
+        return Instant.now();
 
       if (source.watermarkFn.isPresent())
         return source.watermarkFn.get().apply(curRecord);
