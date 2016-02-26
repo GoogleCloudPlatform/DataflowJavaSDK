@@ -44,9 +44,22 @@ import com.google.common.collect.Lists;
  * containing <a href="https://dev.twitter.com/overview/api/tweets">JSON Tweets</a>, calculates top
  * hashtags in 10 minute window. The results are written back to a Kafka topic.
  *
+ * <pre>
+ * Usage:
+ *   $ java -cp jar_with_dependencies.jar                                   \
+ *          com.google.cloud.dataflow.contrib.kafka.TopHashtagsExample      \
+ *          --project=GCP_PROJECT                                           \
+ *          --stagingLocation=GS_STAGING_DIRECTORY                          \
+ *          --runner=BlockingDataflowPipelineRunner                         \
+ *          --bootstrapServers="a_kafka_server:9092"                        \
+ *          --topics="sample_tweets_json"                                   \
+ *          --outputTopic="top_hashtags"
+ * </pre>
+ *
  * TODO: Move this out this directory.
  */
 public class TopHashtagsExample {
+
   private static final Logger LOG = LoggerFactory.getLogger(TopHashtagsExample.class);
 
   public static interface Options extends PipelineOptions {
