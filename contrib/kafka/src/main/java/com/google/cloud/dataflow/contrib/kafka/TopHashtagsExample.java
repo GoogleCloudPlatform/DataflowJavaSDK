@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.google.cloud.dataflow.sdk.Pipeline;
+import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
 import com.google.cloud.dataflow.sdk.options.Default;
@@ -34,7 +35,6 @@ import com.google.cloud.dataflow.sdk.transforms.windowing.IntervalWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.SlidingWindows;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
 import com.google.cloud.dataflow.sdk.values.KV;
-import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
@@ -107,7 +107,7 @@ public class TopHashtagsExample {
         .<String>unboundedValueSourceBuilder()
         .withBootstrapServers(options.getBootstrapServers())
         .withTopics(options.getTopics())
-        .withValueDecoderFn(bytes -> (bytes == null) ? null : new String(bytes, Charsets.UTF_8))
+        .withValueCoder(StringUtf8Coder.of())
         .withTimestampFn(timestampFn)
         .build();
 
@@ -214,21 +214,21 @@ public class TopHashtagsExample {
 
       ctx.output(json);
     }
-   }
+  }
 
-   private static class KafkaWriter extends DoFn<String, Void> {
+  private static class KafkaWriter extends DoFn<String, Void> {
 
-     private final String topic;
-     private final Map<String, Object> config;
-     private transient KafkaProducer<String, String> producer = null;
+    private final String topic;
+    private final Map<String, Object> config;
+    private transient KafkaProducer<String, String> producer = null;
 
-     public KafkaWriter(Options options) {
-       this.topic = options.getOutputTopic();
-       this.config = ImmutableMap.of(
-           "bootstrap.servers", options.getBootstrapServers(),
-           "key.serializer",    StringSerializer.class.getName(),
-           "value.serializer",  StringSerializer.class.getName());
-     }
+    public KafkaWriter(Options options) {
+      this.topic = options.getOutputTopic();
+      this.config = ImmutableMap.of(
+          "bootstrap.servers", options.getBootstrapServers(),
+          "key.serializer",    StringSerializer.class.getName(),
+          "value.serializer",  StringSerializer.class.getName());
+    }
 
     @Override
     public void processElement(ProcessContext ctx) throws Exception {
@@ -238,5 +238,5 @@ public class TopHashtagsExample {
       LOG.info("Top Hashtags : " + ctx.element());
       producer.send(new ProducerRecord<>(topic, ctx.element()));
     }
-   }
+  }
 }

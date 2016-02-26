@@ -46,4 +46,19 @@ public class KafkaRecord<K, V> implements Serializable {
   public V getValue() {
     return value;
   }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (obj instanceof KafkaRecord) {
+      @SuppressWarnings("unchecked")
+      KafkaRecord<Object, Object> other = (KafkaRecord<Object, Object>) obj;
+      return topic.equals(other.topic)
+          && partition == other.partition
+          && offset == other.offset
+          && key.equals(other.key)
+          && value.equals(other.value);
+    } else {
+      return false;
+    }
+  }
 }

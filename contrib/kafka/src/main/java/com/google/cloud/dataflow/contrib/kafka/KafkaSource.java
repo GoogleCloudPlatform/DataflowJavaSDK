@@ -40,6 +40,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.api.client.util.Maps;
+import com.google.cloud.dataflow.sdk.coders.ByteArrayCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
@@ -47,7 +48,7 @@ import com.google.cloud.dataflow.sdk.io.UnboundedSource.CheckpointMark;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource.UnboundedReader;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
-import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
+import com.google.cloud.dataflow.sdk.util.ExposedByteArrayInputStream;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
@@ -68,7 +69,12 @@ public class KafkaSource {
    *    - confirm non-blocking behavior in advance()
    */
 
-  private static SerializableFunction<byte[], byte[]> identityFn = bytes -> bytes;
+  private static class NowTimestampFn<T> implements SerializableFunction<T, Instant> {
+    @Override
+    public Instant apply(T input) {
+      return Instant.now();
+    }
+  }
 
   public static <K, V> Builder<K, V> unboundedSourceBuilder() {
     return new Builder<K, V>();
@@ -76,8 +82,8 @@ public class KafkaSource {
 
   public static Builder<byte[], byte[]> unboundedByteSourceBuilder() {
     return new Builder<byte[], byte[]>()
-      .withKeyDecoderFn(identityFn)
-      .withValueDecoderFn(identityFn);
+      .withKeyCoder(ByteArrayCoder.of())
+      .withValueCoder(ByteArrayCoder.of());
   }
 
   /**
@@ -87,16 +93,16 @@ public class KafkaSource {
   public static <T extends Serializable> ValueSourceBuilder<T> unboundedValueSourceBuilder() {
     return new ValueSourceBuilder<T>(
        new Builder<byte[], T>()
-       .withKeyDecoderFn(identityFn));
+       .withKeyCoder(ByteArrayCoder.of()));
   }
 
   public static class Builder<K, V> {
 
     private List<String> topics;
     // future: let users specify subset of partitions to read
-    private SerializableFunction<byte[], K> keyDecoderFn;
-    private SerializableFunction<byte[], V> valueDecoderFn;
-    private SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn = input -> Instant.now();
+    private Coder<K> keyCoder;
+    private Coder<V> valueCoder;
+    private SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn = new NowTimestampFn<>();
 
     private Map<String, Object> mutableConsumerConfig = Maps.newHashMap();
 
@@ -157,15 +163,13 @@ public class KafkaSource {
       return this;
     }
 
-    public Builder<K, V> withKeyDecoderFn(
-        SerializableFunction<byte[], K> keyDecoderFn) {
-        this.keyDecoderFn = keyDecoderFn;
+    public Builder<K, V> withKeyCoder(Coder<K> keyCoder) {
+        this.keyCoder = keyCoder;
         return this;
     }
 
-    public Builder<K, V> withValueDecoderFn(
-        SerializableFunction<byte[], V> valueDecoderFn) {
-        this.valueDecoderFn = valueDecoderFn;
+    public Builder<K, V> withValueCoder(Coder<V> valueCoder) {
+        this.valueCoder = valueCoder;
         return this;
     }
 
@@ -188,14 +192,14 @@ public class KafkaSource {
           "Kafka bootstrap servers should be set");
       Preconditions.checkNotNull(topics, "Kafka topics should be set");
       Preconditions.checkArgument(!topics.isEmpty(), "At least one topic is required");
-      Preconditions.checkNotNull(keyDecoderFn, "Decoder for Kafka key bytes should be set");
-      Preconditions.checkNotNull(valueDecoderFn, "Decoder for Kafka values bytes should be set");
+      Preconditions.checkNotNull(keyCoder, "Coder for Kafka key bytes is required");
+      Preconditions.checkNotNull(valueCoder, "Coder for Kafka values bytes is required");
 
       return new UnboundedKafkaSource<K, V>(
           consumerConfig,
           topics,
-          keyDecoderFn,
-          valueDecoderFn,
+          keyCoder,
+          valueCoder,
           timestampFn,
           ImmutableList.of() // no assigned partitions yet
           );
@@ -210,23 +214,23 @@ public class KafkaSource {
 
     private final ImmutableMap<String, Object> consumerConfig;
     private final List<String> topics;
-    private final SerializableFunction<byte[], K> keyDecoderFn;
-    private final SerializableFunction<byte[], V> valueDecoderFn;
+    private final Coder<K> keyCoder;
+    private final Coder<V> valueCoder;
     private final SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn;
     private final List<TopicPartition> assignedPartitions;
 
     public UnboundedKafkaSource(
         ImmutableMap<String, Object> consumerConfig,
         List<String> topics,
-        SerializableFunction<byte[], K> keyDecoderFn,
-        SerializableFunction<byte[], V> valueDecoderFn,
+        Coder<K> keyCoder,
+        Coder<V> valueCoder,
         SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn,
         List<TopicPartition> assignedPartitions) {
 
       this.consumerConfig = consumerConfig;
       this.topics = topics;
-      this.keyDecoderFn = keyDecoderFn;
-      this.valueDecoderFn = valueDecoderFn;
+      this.keyCoder = keyCoder;
+      this.valueCoder = valueCoder;
       this.timestampFn = timestampFn;
       this.assignedPartitions = ImmutableList.copyOf(assignedPartitions);
     }
@@ -282,8 +286,8 @@ public class KafkaSource {
             return new UnboundedKafkaSource<K, V>(
                 this.consumerConfig,
                 this.topics,
-                this.keyDecoderFn,
-                this.valueDecoderFn,
+                this.keyCoder,
+                this.valueCoder,
                 this.timestampFn,
                 assignedToSplit);
           })
@@ -313,9 +317,7 @@ public class KafkaSource {
 
     @Override
     public Coder<KafkaRecord<K, V>> getDefaultOutputCoder() {
-      // no coder is logically needed. user explicitly provides functions to decode key and value
-      // sdk requires a Coder.
-      return SerializableCoder.of(new TypeDescriptor<KafkaRecord<K,V>>() {});
+      return KafkaRecordCoder.of(keyCoder, valueCoder);
     }
   }
 
@@ -370,7 +372,7 @@ public class KafkaSource {
           .map(tp -> new PartitionState(tp, -1L))
           .iterator());
 
-      // a) verify that assigned and check-pointed partitions match
+      // a) verify that assigned and check-pointed partitions match exactly
       // b) set consumed offsets
 
       if (checkpointMark != null) {
@@ -440,33 +442,28 @@ public class KafkaSource {
           if (consumed >= 0 && offset <= consumed) {
             // this can happen when compression is enabled in Kafka
             // should we check if the offset is way off from consumedOffset (say 1M more or less)
-            LOG.info("ignoring already consumed offset {} for {}",
-                rawRecord.offset(), pState.topicPartition);
-
-            // TODO: increment a counter?
+            LOG.info("ignoring already consumed offset {} for {}", offset, pState.topicPartition);
             continue;
-
-          } else {
-            // sanity check
-            if (consumed >= 0 && (offset - consumed) != 1) {
-              LOG.warn("gap in offsets for {} after {}. {} records missing.",
-                  pState.topicPartition, consumed, offset - consumed - 1);
-            }
-
-            // Ben Chambers... XXX Remove
-            // apply user decoders
-            curRecord = new KafkaRecord<K, V>(
-                rawRecord.topic(),
-                rawRecord.partition(),
-                rawRecord.offset(),
-                source.keyDecoderFn.apply(rawRecord.key()), // TODO: use coders rather than functions.
-                source.valueDecoderFn.apply(rawRecord.value()));
-
-            curTimestamp = source.timestampFn.apply(curRecord);
-            pState.consumedOffset = rawRecord.offset();
-
-            return true;
           }
+
+          // sanity check
+          if (consumed >= 0 && (offset - consumed) != 1) {
+            LOG.warn("gap in offsets for {} after {}. {} records missing.",
+                pState.topicPartition, consumed, offset - consumed - 1);
+          }
+
+          // decode with user coders
+          curRecord = new KafkaRecord<K, V>(
+              rawRecord.topic(),
+              rawRecord.partition(),
+              rawRecord.offset(),
+              decode(rawRecord.key(), source.keyCoder),
+              decode(rawRecord.value(), source.valueCoder));
+
+          curTimestamp = source.timestampFn.apply(curRecord);
+          pState.consumedOffset = rawRecord.offset();
+
+          return true;
         } else {
           readNextBatch();
 
@@ -474,6 +471,12 @@ public class KafkaSource {
             return false;
         }
       }
+    }
+
+    private static <T> T decode(byte[] bytes, Coder<T> coder) throws IOException {
+      if (bytes == null)
+        return null;
+      return coder.decode(new ExposedByteArrayInputStream(bytes), Coder.Context.OUTER);
     }
 
     @Override
@@ -524,42 +527,41 @@ public class KafkaSource {
 
   // Builder, Source, Reader wrappers when user is only interested in Value in KafkaRecord :
 
-  public static class ValueSourceBuilder<T extends Serializable> {
-    // TODO : remove 'extends Serializable' restriction or improve it to just require a Coder<T>
+  public static class ValueSourceBuilder<V> {
 
-    private Builder<byte[], T> underlying;
+    private Builder<byte[], V> underlying;
 
-    private ValueSourceBuilder(Builder<byte[], T> underlying) {
+    private ValueSourceBuilder(Builder<byte[], V> underlying) {
       this.underlying = underlying;
     }
 
-    public ValueSourceBuilder<T> withBootstrapServers(String bootstrapServers) {
-      return new ValueSourceBuilder<T>(underlying.withBootstrapServers(bootstrapServers));
+    public ValueSourceBuilder<V> withBootstrapServers(String bootstrapServers) {
+      return new ValueSourceBuilder<V>(underlying.withBootstrapServers(bootstrapServers));
     }
 
-    public ValueSourceBuilder<T> withTopics(Collection<String> topics) {
-      return new ValueSourceBuilder<T>(underlying.withTopics(topics));
+    public ValueSourceBuilder<V> withTopics(Collection<String> topics) {
+      return new ValueSourceBuilder<V>(underlying.withTopics(topics));
     }
 
-    public ValueSourceBuilder<T> withConsumerProperty(String configKey, Object configValue) {
-      return new ValueSourceBuilder<T>(underlying.withConsumerProperty(configKey, configValue));
+    public ValueSourceBuilder<V> withConsumerProperty(String configKey, Object configValue) {
+      return new ValueSourceBuilder<V>(underlying.withConsumerProperty(configKey, configValue));
     }
 
-    public ValueSourceBuilder<T> withConsumerProperties(Map<String, Object> configToUpdate) {
-      return new ValueSourceBuilder<T>(underlying.withConsumerProperties(configToUpdate));
+    public ValueSourceBuilder<V> withConsumerProperties(Map<String, Object> configToUpdate) {
+      return new ValueSourceBuilder<V>(underlying.withConsumerProperties(configToUpdate));
     }
 
-    public ValueSourceBuilder<T> withValueDecoderFn(SerializableFunction<byte[], T> valueDecoderFn) {
-      return new ValueSourceBuilder<T>(underlying.withValueDecoderFn(valueDecoderFn));
+    public ValueSourceBuilder<V> withValueCoder(Coder<V> valueCoder) {
+      return new ValueSourceBuilder<V>(underlying.withValueCoder(valueCoder));
     }
 
-    public ValueSourceBuilder<T> withTimestampFn(SerializableFunction<T, Instant> timestampFn) {
-      return new ValueSourceBuilder<T>(
+    public ValueSourceBuilder<V> withTimestampFn(SerializableFunction<V, Instant> timestampFn) {
+      return new ValueSourceBuilder<V>(
           underlying.withTimestampFn(record -> timestampFn.apply(record.getValue())));
     }
 
-    public UnboundedSource<T, KafkaCheckpointMark> build() {
-      return new UnboundedKafkaValueSource<T>((UnboundedKafkaSource<byte[], T>) underlying.build());
+    public UnboundedSource<V, KafkaCheckpointMark> build() {
+      return new UnboundedKafkaValueSource<V>((UnboundedKafkaSource<byte[], V>) underlying.build());
     }
   }
 
@@ -567,27 +569,27 @@ public class KafkaSource {
    * Usually the users are only interested in value in KafkaRecord. This is a convenient class
    * to strip out other fields in KafkaRecord returned by UnboundedKafkaValueSource
    */
-  private static class UnboundedKafkaValueSource<T extends Serializable> extends UnboundedSource<T, KafkaCheckpointMark> {
+  private static class UnboundedKafkaValueSource<V> extends UnboundedSource<V, KafkaCheckpointMark> {
 
-    private final UnboundedKafkaSource<?, T> underlying;
+    private final UnboundedKafkaSource<?, V> underlying;
 
-    public UnboundedKafkaValueSource(UnboundedKafkaSource<?, T> underlying) {
+    public UnboundedKafkaValueSource(UnboundedKafkaSource<?, V> underlying) {
       this.underlying = underlying;
     }
 
     @Override
-    public List<UnboundedKafkaValueSource<T>> generateInitialSplits(
+    public List<UnboundedKafkaValueSource<V>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
       return underlying
           .generateInitialSplits(desiredNumSplits, options)
           .stream()
-          .map(s -> new UnboundedKafkaValueSource<T>(s))
+          .map(s -> new UnboundedKafkaValueSource<V>(s))
           .collect(Collectors.toList());
     }
 
     @Override
-    public UnboundedReader<T> createReader(PipelineOptions options, KafkaCheckpointMark checkpointMark) {
-      return new UnboundedKafkaValueReader<T>(this, underlying.createReader(options, checkpointMark));
+    public UnboundedReader<V> createReader(PipelineOptions options, KafkaCheckpointMark checkpointMark) {
+      return new UnboundedKafkaValueReader<V>(this, underlying.createReader(options, checkpointMark));
     }
 
     @Override
@@ -601,18 +603,18 @@ public class KafkaSource {
     }
 
     @Override
-    public Coder<T> getDefaultOutputCoder() {
-      return SerializableCoder.of(new TypeDescriptor<T>() {});
+    public Coder<V> getDefaultOutputCoder() {
+      return underlying.valueCoder;
     }
   }
 
-  private static class UnboundedKafkaValueReader<T extends Serializable> extends UnboundedReader<T> {
+  private static class UnboundedKafkaValueReader<V> extends UnboundedReader<V> {
 
-    private final UnboundedKafkaValueSource<T> source;
-    private final UnboundedKafkaReader<?, T> underlying;
+    private final UnboundedKafkaValueSource<V> source;
+    private final UnboundedKafkaReader<?, V> underlying;
 
-    public UnboundedKafkaValueReader(UnboundedKafkaValueSource<T> source,
-                                     UnboundedKafkaReader<?, T> underlying) {
+    public UnboundedKafkaValueReader(UnboundedKafkaValueSource<V> source,
+                                     UnboundedKafkaReader<?, V> underlying) {
       this.source = source;
       this.underlying = underlying;
     }
@@ -638,12 +640,12 @@ public class KafkaSource {
     }
 
     @Override
-    public UnboundedKafkaValueSource<T> getCurrentSource() {
+    public UnboundedKafkaValueSource<V> getCurrentSource() {
       return source;
     }
 
     @Override
-    public T getCurrent() throws NoSuchElementException {
+    public V getCurrent() throws NoSuchElementException {
       return underlying.getCurrent().getValue();
     }
 
