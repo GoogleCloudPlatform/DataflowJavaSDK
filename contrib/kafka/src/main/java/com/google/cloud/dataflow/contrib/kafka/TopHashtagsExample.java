@@ -117,7 +117,7 @@ public class TopHashtagsExample {
       .apply(Window.<String>into(SlidingWindows
           .of(Duration.standardMinutes(windowSize))
           .every(Duration.standardMinutes(windowPeriod))))
-      .apply(Count.perElement())
+      .apply(Count.<String>perElement())
       .apply(Top.of(options.getNumTopHashtags(), new KV.OrderByValue<String, Long>()).withoutDefaults())
       .apply(ParDo.of(new OutputFormatter()))
       .apply(ParDo.of(new KafkaWriter(options)));
@@ -224,7 +224,7 @@ public class TopHashtagsExample {
 
     public KafkaWriter(Options options) {
       this.topic = options.getOutputTopic();
-      this.config = ImmutableMap.of(
+      this.config = ImmutableMap.<String, Object>of(
           "bootstrap.servers", options.getBootstrapServers(),
           "key.serializer",    StringSerializer.class.getName(),
           "value.serializer",  StringSerializer.class.getName());
@@ -236,7 +236,7 @@ public class TopHashtagsExample {
         producer = new KafkaProducer<String, String>(config);
       }
       LOG.info("Top Hashtags : " + ctx.element());
-      producer.send(new ProducerRecord<>(topic, ctx.element()));
+      producer.send(new ProducerRecord<String, String>(topic, ctx.element()));
     }
   }
 }

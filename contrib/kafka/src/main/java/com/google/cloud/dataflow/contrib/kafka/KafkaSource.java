@@ -19,12 +19,13 @@ package com.google.cloud.dataflow.contrib.kafka;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.NoSuchElementException;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 import javax.annotation.Nullable;
 
@@ -32,14 +33,15 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
-import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.api.client.util.Maps;
+import com.google.cloud.dataflow.contrib.kafka.KafkaCheckpointMark.PartitionMark;
 import com.google.cloud.dataflow.sdk.coders.ByteArrayCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
@@ -49,12 +51,15 @@ import com.google.cloud.dataflow.sdk.io.UnboundedSource.UnboundedReader;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.util.ExposedByteArrayInputStream;
+import com.google.common.base.Function;
 import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterators;
+import com.google.common.collect.Lists;
 import com.google.common.io.Closeables;
 
 /**
@@ -103,6 +108,7 @@ public class KafkaSource {
     private Coder<K> keyCoder;
     private Coder<V> valueCoder;
     private SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn = new NowTimestampFn<>();
+    private Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn = Optional.absent();
 
     private Map<String, Object> mutableConsumerConfig = Maps.newHashMap();
 
@@ -154,12 +160,13 @@ public class KafkaSource {
     }
 
     /**
-     * Update consumer config properties. Note that this does not not discard already configurured.
+     * Update consumer config properties. Note that this does not not discard already configured.
      * Same as invoking #withConsumerProperty() with each entry.
      */
     public Builder<K, V> withConsumerProperties(Map<String, Object> configToUpdate) {
-      configToUpdate.entrySet().stream().forEach(
-        e -> withConsumerProperty(e.getKey(), e.getValue()));
+      for(Entry<String, Object> e : configToUpdate.entrySet()) {
+        withConsumerProperty(e.getKey(), e.getValue());
+      }
       return this;
     }
 
@@ -174,12 +181,21 @@ public class KafkaSource {
     }
 
     /**
-     * Set a timestamp function. Default is the timestamp when the ConsumerRecord is processed
-     * by {@UnboundedReader#advance()}
+     * A function to assign a timestamp to a record. Default is the timestamp when the
+     * record is processed by {@UnboundedReader#advance()}
      */
     public Builder<K, V> withTimestampFn(
         SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn) {
       this.timestampFn = timestampFn;
+      return this;
+    }
+
+    /**
+     * A function to calculate watermark. When this is not set, last record timestamp is returned
+     * in {@link UnboundedReader#getWatermark()}.
+     */
+    public Builder<K, V> withWatermarkFn(SerializableFunction<KafkaRecord<K, V>, Instant> watermarkFn) {
+      this.watermarkFn = Optional.of(watermarkFn);
       return this;
     }
 
@@ -201,7 +217,8 @@ public class KafkaSource {
           keyCoder,
           valueCoder,
           timestampFn,
-          ImmutableList.of() // no assigned partitions yet
+          watermarkFn,
+          ImmutableList.<TopicPartition>of() // no assigned partitions yet
           );
     }
   }
@@ -217,6 +234,8 @@ public class KafkaSource {
     private final Coder<K> keyCoder;
     private final Coder<V> valueCoder;
     private final SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn;
+    // would it be a good idea to pass currentTimestamp to watermarkFn?
+    private final Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn;
     private final List<TopicPartition> assignedPartitions;
 
     public UnboundedKafkaSource(
@@ -225,6 +244,7 @@ public class KafkaSource {
         Coder<K> keyCoder,
         Coder<V> valueCoder,
         SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn,
+        Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn,
         List<TopicPartition> assignedPartitions) {
 
       this.consumerConfig = consumerConfig;
@@ -232,6 +252,7 @@ public class KafkaSource {
       this.keyCoder = keyCoder;
       this.valueCoder = valueCoder;
       this.timestampFn = timestampFn;
+      this.watermarkFn = watermarkFn;
       this.assignedPartitions = ImmutableList.copyOf(assignedPartitions);
     }
 
@@ -241,24 +262,31 @@ public class KafkaSource {
 
       KafkaConsumer<K, V> consumer = new KafkaConsumer<K, V>(consumerConfig);
 
-      List<TopicPartition> partitions;
+      List<TopicPartition> partitions = Lists.newArrayList();
+
+      // fetch partitions for each topic
+      // sort them in <topic, partition> order
+      // round-robin assign the partition to splits
 
       try {
-        // fetch partitions for each topic and sort them in <paritionId, topic> order.
-        // sort by partitionId so that topics are evenly distributed among the splits.
-
-        partitions = topics
-          .stream()
-          .flatMap(topic -> consumer.partitionsFor(topic).stream())
-          .map(partInfo -> new TopicPartition(partInfo.topic(), partInfo.partition()))
-          .sorted((p1, p2) -> ComparisonChain.start() // sort by <partition, topic>
-              .compare(p1.partition(), p2.partition())
-              .compare(p1.topic(), p2.topic())
-              .result())
-          .collect(Collectors.toList());
+        for (String topic : topics) {
+          for (PartitionInfo p : consumer.partitionsFor(topic)) {
+            partitions.add(new TopicPartition(p.topic(), p.partition()));
+          }
+        }
       } finally {
         consumer.close();
       }
+
+      Collections.sort(partitions, new Comparator<TopicPartition>() {
+        public int compare(TopicPartition tp1, TopicPartition tp2) {
+          return ComparisonChain
+              .start()
+              .compare(tp1.topic(), tp2.topic())
+              .compare(tp1.partition(), tp2.partition())
+              .result();
+        }
+      });
 
       Preconditions.checkArgument(desiredNumSplits > 0);
       Preconditions.checkState(partitions.size() > 0,
@@ -266,32 +294,34 @@ public class KafkaSource {
 
       int numSplits = Math.min(desiredNumSplits, partitions.size());
 
-      // Map of : split index -> List of indices of partitions assigned to it
-      Map<Integer, List<Integer>> assignments = IntStream.range(0, partitions.size())
-          .mapToObj(i -> i)
-          .collect(Collectors.groupingBy(i -> i % numSplits)); // groupingBy preserves order.
+      List<List<TopicPartition>> assignments = Lists.newArrayList();
 
-      // create a new source for each split with the assigned partitions for the split
-      return IntStream.range(0, numSplits)
-          .mapToObj(splitIdx -> {
-            List<TopicPartition> assignedToSplit = assignments.get(splitIdx)
-                .stream()
-                .map(i -> partitions.get(i))
-                .collect(Collectors.toList());
+      for (int i=0; i<numSplits; i++) {
+        assignments.add(Lists.<TopicPartition>newArrayList());
+      }
 
-            LOG.info("Partitions assigned for split {} : {}",
-                splitIdx, Joiner.on(",").join(assignedToSplit));
+      for (int i=0; i<partitions.size(); i++) {
+        assignments.get(i % numSplits).add(partitions.get(i));
+      }
 
-            // copy of 'this' with assignedPartitions replaced with assignedToSplit
-            return new UnboundedKafkaSource<K, V>(
+      List<UnboundedKafkaSource<K, V>> result = Lists.newArrayList();
+
+      for (int i=0; i<numSplits; i++) {
+
+        LOG.info("Partitions assigned to split {} : {}", i, Joiner.on(",").join(assignments.get(i)));
+
+        result.add(
+            new UnboundedKafkaSource<K, V>(
                 this.consumerConfig,
                 this.topics,
                 this.keyCoder,
                 this.valueCoder,
                 this.timestampFn,
-                assignedToSplit);
-          })
-          .collect(Collectors.toList());
+                this.watermarkFn,
+                assignments.get(i)));
+      }
+
+      return result;
     }
 
     @Override
@@ -328,11 +358,10 @@ public class KafkaSource {
     private KafkaConsumer<byte[], byte[]> consumer;
 
     // maintains state of each assigned partition
-    private static class PartitionState implements Iterator<PartitionState> {
+    private static class PartitionState {
       private final TopicPartition topicPartition;
 
       private Iterator<ConsumerRecord<byte[], byte[]>> recordIter = Iterators.emptyIterator();
-      private ConsumerRecord<byte[], byte[]> record = null;
 
       private long consumedOffset;
       // might need to keep track of per partition watermark. not decided yet about the semantics
@@ -340,17 +369,6 @@ public class KafkaSource {
       PartitionState(TopicPartition partition, long offset) {
         this.topicPartition = partition;
         this.consumedOffset = offset;
-      }
-
-      @Override
-      public boolean hasNext() {
-        return recordIter.hasNext();
-      }
-
-      @Override
-      public PartitionState next() {
-        record = recordIter.next();
-        return this;
       }
     }
 
@@ -367,10 +385,12 @@ public class KafkaSource {
 
       this.source = source;
 
-      partitionStates = ImmutableList.copyOf(source.assignedPartitions
-          .stream()
-          .map(tp -> new PartitionState(tp, -1L))
-          .iterator());
+      partitionStates = ImmutableList.copyOf(Lists.transform(source.assignedPartitions,
+          new Function<TopicPartition, PartitionState>() {
+            public PartitionState apply(TopicPartition tp) {
+              return new PartitionState(tp, -1L);
+            }
+        }));
 
       // a) verify that assigned and check-pointed partitions match exactly
       // b) set consumed offsets
@@ -395,19 +415,23 @@ public class KafkaSource {
     }
 
     private void readNextBatch() {
-      // read one batch of records. one consumer.poll()
+      // read one batch of records with single consumer.poll() (may not have any records)
 
-      ConsumerRecords<byte[], byte[]> records = consumer.poll(10); // what should the timeout be?
+      ConsumerRecords<byte[], byte[]> records = consumer.poll(10);
 
-      // increment a counter or stat?
+      List<PartitionState> withRecords = Lists.newLinkedList();
 
-      partitionStates.stream().forEach(p -> {
-        p.recordIter = records.records(p.topicPartition).iterator();
-        p.record = null;
-      });
+      for (PartitionState pState : partitionStates) {
+        List<ConsumerRecord<byte[], byte[]>> pRecords = records.records(pState.topicPartition);
 
-      // TODO : should we round-robin between different partitions...
-      curBatch = Iterators.concat(partitionStates.iterator());
+        if (pRecords.size() > 0) {
+          pState.recordIter = pRecords.iterator();
+          withRecords.add(pState);
+        }
+      };
+
+      // cycle through these partitions so that we round-robin among them while returning records
+      curBatch = Iterators.cycle(withRecords);
     }
 
     @Override
@@ -417,31 +441,43 @@ public class KafkaSource {
       consumer.assign(source.assignedPartitions);
 
       // seek to next offset if consumedOffset is set
-      partitionStates.stream().forEach(p -> {
+      for(PartitionState p : partitionStates) {
         if (p.consumedOffset >= 0) {
           LOG.info("Reader: resuming {} at {}", p.topicPartition, p.consumedOffset + 1);
           consumer.seek(p.topicPartition, p.consumedOffset + 1);
         } else {
           LOG.info("Reader: resuming from default offset for {}", p.topicPartition);
         }
-      });
+      }
 
       return advance();
     }
 
     @Override
     public boolean advance() throws IOException {
+      /* Read first record (if any). we need to loop here because :
+       *  - (a) some records initially need to be skipped since they are before consumedOffset
+       *  - (b) when the current batch empty, we want to readNextBatch() and then advance.
+       *  - (c) curBatch is an iterator of iterators and we want to interleave the records from each.
+       *    curBatch.next() might return an empty iterator.
+       */
       while (true) {
         if (curBatch.hasNext()) {
           PartitionState pState = curBatch.next();
 
-          ConsumerRecord<byte[], byte[]> rawRecord = pState.record;
+          if (!pState.recordIter.hasNext()) { // -- (c)
+            pState.recordIter = Iterators.emptyIterator(); // drop ref
+            curBatch.remove();
+            continue;
+          }
+
+          ConsumerRecord<byte[], byte[]> rawRecord = pState.recordIter.next();
           long consumed = pState.consumedOffset;
           long offset = rawRecord.offset();
 
-          if (consumed >= 0 && offset <= consumed) {
+          if (consumed >= 0 && offset <= consumed) { // -- (a)
             // this can happen when compression is enabled in Kafka
-            // should we check if the offset is way off from consumedOffset (say 1M more or less)
+            // should we check if the offset is way off from consumedOffset (say > 1M)?
             LOG.info("ignoring already consumed offset {} for {}", offset, pState.topicPartition);
             continue;
           }
@@ -452,7 +488,7 @@ public class KafkaSource {
                 pState.topicPartition, consumed, offset - consumed - 1);
           }
 
-          // decode with user coders
+          // apply user coders
           curRecord = new KafkaRecord<K, V>(
               rawRecord.topic(),
               rawRecord.partition(),
@@ -464,7 +500,7 @@ public class KafkaSource {
           pState.consumedOffset = rawRecord.offset();
 
           return true;
-        } else {
+        } else { // -- (b)
           readNextBatch();
 
           if (!curBatch.hasNext())
@@ -475,7 +511,7 @@ public class KafkaSource {
 
     private static <T> T decode(byte[] bytes, Coder<T> coder) throws IOException {
       if (bytes == null)
-        return null;
+        return null; // is this the right thing to do?
       return coder.decode(new ExposedByteArrayInputStream(bytes), Coder.Context.OUTER);
     }
 
@@ -486,21 +522,34 @@ public class KafkaSource {
       // return min of all the timestamps. what if some topics don't have any data?
       // for now we will let users handle this, we can return to it
 
-      //XXX what should do? why is curRecord is null? return source.timestampFn.apply(curRecord);
-      LOG.info("curRec is {}. curTimestamp : {}, numPartitions {} : maxOffset : {}",
+      //XXX what should we do? why is curRecord is null? return source.timestampFn.apply(curRecord);
+      LOG.info("XXX curRec is {}. curTimestamp : {}, numPartitions {} : maxOffset : {}",
           (curRecord == null) ? "null" : "not null", curTimestamp, partitionStates.size(),
-          partitionStates.stream().collect(Collectors.summarizingLong(s -> s.consumedOffset)).getMax());
+          Collections.max(partitionStates, new Comparator<PartitionState>() {
+            public int compare(PartitionState p1, PartitionState p2) {
+              return (int) (p1.consumedOffset - p2.consumedOffset);
+            }
+          }));
 
-      Instant timestamp = curRecord == null ? Instant.now() : curTimestamp;
-      return timestamp.minus(Duration.standardMinutes(2));
+      if (curRecord == null) // XXX TEMP
+        return curTimestamp;
+
+      if (source.watermarkFn.isPresent())
+        return source.watermarkFn.get().apply(curRecord);
+      else
+        return curTimestamp;
     }
 
     @Override
     public CheckpointMark getCheckpointMark() {
-      return new KafkaCheckpointMark(partitionStates
-          .stream()
-          .map(p -> new KafkaCheckpointMark.PartitionMark(p.topicPartition, p.consumedOffset))
-          .collect(Collectors.toList()));
+      return new KafkaCheckpointMark(
+          ImmutableList.copyOf(Lists.transform(partitionStates, // avoid lazy (consumedOffset can change)
+              new Function<PartitionState, PartitionMark>() {
+                public PartitionMark apply(PartitionState p) {
+                  return new PartitionMark(p.topicPartition, p.consumedOffset);
+                }
+              }
+          )));
     }
 
     @Override
@@ -516,7 +565,7 @@ public class KafkaSource {
 
     @Override
     public Instant getCurrentTimestamp() throws NoSuchElementException {
-      return curTimestamp; //TODO: how is this related to getWatermark();
+      return curTimestamp;
     }
 
     @Override
@@ -557,11 +606,29 @@ public class KafkaSource {
 
     public ValueSourceBuilder<V> withTimestampFn(SerializableFunction<V, Instant> timestampFn) {
       return new ValueSourceBuilder<V>(
-          underlying.withTimestampFn(record -> timestampFn.apply(record.getValue())));
+          underlying.withTimestampFn(unwrapKafkaAndThen(timestampFn)));
+    }
+
+    /**
+     * A function to calculate watermark. When this is not set, last record timestamp is returned
+     * in {@link UnboundedReader#getWatermark()}.
+     */
+    public ValueSourceBuilder<V> withWatermarkFn(SerializableFunction<V, Instant> watermarkFn) {
+      return new ValueSourceBuilder<V>(
+          underlying.withTimestampFn(unwrapKafkaAndThen(watermarkFn)));
     }
 
     public UnboundedSource<V, KafkaCheckpointMark> build() {
       return new UnboundedKafkaValueSource<V>((UnboundedKafkaSource<byte[], V>) underlying.build());
+    }
+
+    private static <I, O>
+    SerializableFunction<KafkaRecord<byte[], I>, O> unwrapKafkaAndThen(final SerializableFunction<I, O> fn) {
+      return new SerializableFunction<KafkaRecord<byte[], I>, O>() {
+        public O apply(KafkaRecord<byte[], I> record) {
+          return fn.apply(record.getValue());
+        }
+      };
     }
   }
 
@@ -571,20 +638,21 @@ public class KafkaSource {
    */
   private static class UnboundedKafkaValueSource<V> extends UnboundedSource<V, KafkaCheckpointMark> {
 
-    private final UnboundedKafkaSource<?, V> underlying;
+    private final UnboundedKafkaSource<byte[], V> underlying;
 
-    public UnboundedKafkaValueSource(UnboundedKafkaSource<?, V> underlying) {
+    public UnboundedKafkaValueSource(UnboundedKafkaSource<byte[], V> underlying) {
       this.underlying = underlying;
     }
 
     @Override
     public List<UnboundedKafkaValueSource<V>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
-      return underlying
-          .generateInitialSplits(desiredNumSplits, options)
-          .stream()
-          .map(s -> new UnboundedKafkaValueSource<V>(s))
-          .collect(Collectors.toList());
+      return Lists.transform(underlying.generateInitialSplits(desiredNumSplits, options),
+          new Function<UnboundedKafkaSource<byte[], V>, UnboundedKafkaValueSource<V>>() {
+            public UnboundedKafkaValueSource<V> apply(UnboundedKafkaSource<byte[], V> input) {
+              return new UnboundedKafkaValueSource<V>(input);
+            }
+          });
     }
 
     @Override
@@ -659,5 +727,4 @@ public class KafkaSource {
       underlying.close();
     }
   }
-
 }
