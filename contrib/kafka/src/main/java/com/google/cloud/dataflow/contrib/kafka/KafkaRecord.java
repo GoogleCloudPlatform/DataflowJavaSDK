@@ -3,8 +3,7 @@ package com.google.cloud.dataflow.contrib.kafka;
 import java.io.Serializable;
 
 /**
- * TODO(rangadi)
- * @author rangadi
+ * TODO(rangadi): JavaDoc
  */
 public class KafkaRecord<K, V> implements Serializable {
 

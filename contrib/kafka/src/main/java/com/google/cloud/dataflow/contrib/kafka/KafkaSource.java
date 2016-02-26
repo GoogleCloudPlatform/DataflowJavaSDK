@@ -57,9 +57,7 @@ import com.google.common.collect.Iterators;
 import com.google.common.io.Closeables;
 
 /**
- * TODO(rangadi)
- *
- * @author rangadi
+ * TODO(rangadi): JavaDoc
  */
 public class KafkaSource {
 
@@ -335,6 +333,7 @@ public class KafkaSource {
       private ConsumerRecord<byte[], byte[]> record = null;
 
       private long consumedOffset;
+      // might need to keep track of per partition watermark. not decided yet about the semantics
 
       PartitionState(TopicPartition partition, long offset) {
         this.topicPartition = partition;
@@ -405,6 +404,7 @@ public class KafkaSource {
         p.record = null;
       });
 
+      // TODO : should we round-robin between different partitions...
       curBatch = Iterators.concat(partitionStates.iterator());
     }
 
@@ -424,9 +424,7 @@ public class KafkaSource {
         }
       });
 
-      readNextBatch();
-
-      return curBatch.hasNext();
+      return advance();
     }
 
     @Override
@@ -455,12 +453,13 @@ public class KafkaSource {
                   pState.topicPartition, consumed, offset - consumed - 1);
             }
 
+            // Ben Chambers... XXX Remove
             // apply user decoders
             curRecord = new KafkaRecord<K, V>(
                 rawRecord.topic(),
                 rawRecord.partition(),
                 rawRecord.offset(),
-                source.keyDecoderFn.apply(rawRecord.key()),
+                source.keyDecoderFn.apply(rawRecord.key()), // TODO: use coders rather than functions.
                 source.valueDecoderFn.apply(rawRecord.value()));
 
             curTimestamp = source.timestampFn.apply(curRecord);
@@ -479,6 +478,11 @@ public class KafkaSource {
 
     @Override
     public Instant getWatermark() {
+      // TODO : keep track of per-partition watermark
+      // user provides watermark fn per partition.
+      // return min of all the timestamps. what if some topics don't have any data?
+      // for now we will let users handle this, we can return to it
+
       //XXX what should do? why is curRecord is null? return source.timestampFn.apply(curRecord);
       LOG.info("curRec is {}. curTimestamp : {}, numPartitions {} : maxOffset : {}",
           (curRecord == null) ? "null" : "not null", curTimestamp, partitionStates.size(),
