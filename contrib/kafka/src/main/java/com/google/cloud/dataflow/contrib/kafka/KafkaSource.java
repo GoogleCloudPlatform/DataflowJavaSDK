@@ -269,7 +269,7 @@ public class KafkaSource {
       List<TopicPartition> partitions = Lists.newArrayList();
 
       // fetch partitions for each topic
-      // sort them in <topic, partition> order
+      // sort by <topic, partition>
       // round-robin assign the partition to splits
 
       try {
@@ -316,16 +316,15 @@ public class KafkaSource {
         LOG.info("Partitions assigned to split {} (total {}): {}",
             i, assignedToSplit.size(), Joiner.on(",").join(assignedToSplit));
 
-        result.add(
-            new UnboundedKafkaSource<K, V>(
-                i,
-                this.consumerConfig,
-                this.topics,
-                this.keyCoder,
-                this.valueCoder,
-                this.timestampFn,
-                this.watermarkFn,
-                assignedToSplit));
+        result.add(new UnboundedKafkaSource<K, V>(
+            i,
+            this.consumerConfig,
+            this.topics,
+            this.keyCoder,
+            this.valueCoder,
+            this.timestampFn,
+            this.watermarkFn,
+            assignedToSplit));
       }
 
       return result;
@@ -362,6 +361,7 @@ public class KafkaSource {
              extends UnboundedReader<KafkaRecord<K, V>> {
 
     private final UnboundedKafkaSource<K, V> source;
+    private final String name;
     private KafkaConsumer<byte[], byte[]> consumer;
 
     // maintains state of each assigned partition
@@ -384,15 +384,18 @@ public class KafkaSource {
     private KafkaRecord<K, V> curRecord;
     private Instant curTimestamp;
 
-    private long numRecordsRead = 0;
-
     private Iterator<PartitionState> curBatch = Iterators.emptyIterator();
+
+    public String toString() {
+      return name;
+    }
 
     public UnboundedKafkaReader(
         UnboundedKafkaSource<K, V> source,
         @Nullable KafkaCheckpointMark checkpointMark) {
 
       this.source = source;
+      this.name = "Reader-" + source.id;
 
       partitionStates = ImmutableList.copyOf(Lists.transform(source.assignedPartitions,
           new Function<TopicPartition, PartitionState>() {
@@ -405,6 +408,8 @@ public class KafkaSource {
       // b) set consumed offsets
 
       if (checkpointMark != null) {
+        // set consumed offset
+
         Preconditions.checkState(
             checkpointMark.getPartitions().size() == source.assignedPartitions.size(),
             "checkPointMark and assignedPartitions should match");
@@ -423,46 +428,45 @@ public class KafkaSource {
       }
     }
 
-    private void readNextBatch() {
+    private void readNextBatch(boolean isFirstFetch) {
       // read one batch of records with single consumer.poll() (may not return any records)
 
-      // longer timeout during initialization. Consumer does not seem to handle short polls very
-      // well during initialization. It takes much longer to read first record with short timeouts.
-      long timeout_ms = numRecordsRead > 0 ? 100 : 3000;
-
+      // Use a longer timeout for first fetch. Kafka consumer seems to do better with poll() with
+      // longer timeout initially. Looks like it does not handle initial connection setup properly
+      // with short polls. In my tests it took ~5 seconds before first record was read with this
+      // hack and 20-30 seconds with out.
+      long timeout_ms = isFirstFetch ? 4000 : 100;
       ConsumerRecords<byte[], byte[]> records = consumer.poll(timeout_ms);
 
       List<PartitionState> nonEmpty = Lists.newLinkedList();
 
-      for (PartitionState pState : partitionStates) {
-        List<ConsumerRecord<byte[], byte[]>> pRecords = records.records(pState.topicPartition);
-
-        if (pRecords.size() > 0) {
-          pState.recordIter = pRecords.iterator();
-          nonEmpty.add(pState);
+      for (PartitionState p : partitionStates) {
+        p.recordIter = records.records(p.topicPartition).iterator();
+        if (p.recordIter.hasNext()) {
+          nonEmpty.add(p);
         }
-      };
+      }
 
-      // cycle through the partitions in order to interleave records from each of them.
+      // cycle through the partitions in order to interleave records from each.
       curBatch = Iterators.cycle(nonEmpty);
     }
 
     @Override
     public boolean start() throws IOException {
-
       consumer = new KafkaConsumer<>(source.consumerConfig);
       consumer.assign(source.assignedPartitions);
 
       // seek to next offset if consumedOffset is set
       for(PartitionState p : partitionStates) {
         if (p.consumedOffset >= 0) {
-          LOG.info("Reader {} : resuming {} at {}",  source.id, p.topicPartition, p.consumedOffset + 1);
+          LOG.info("{}: resuming {} at {}", name, p.topicPartition, p.consumedOffset + 1);
           consumer.seek(p.topicPartition, p.consumedOffset + 1);
         } else {
-          LOG.info("Reader {} : resuming {} at default offset", source.id, p.topicPartition);
+          LOG.info("{} : resuming {} at default offset", name, p.topicPartition);
         }
       }
 
+      readNextBatch(true);
       return advance();
     }
 
@@ -488,6 +492,11 @@ public class KafkaSource {
           long consumed = pState.consumedOffset;
           long offset = rawRecord.offset();
 
+          if (curRecord == null) {
+            LOG.info("{} : first record offset {}", name, offset); // helps with latency to first record
+          }
+
+          // apply user coders
           if (consumed >= 0 && offset <= consumed) { // -- (a)
             // this can happen when compression is enabled in Kafka
             // should we check if the offset is way off from consumedOffset (say > 1M)?
@@ -511,13 +520,10 @@ public class KafkaSource {
 
           curTimestamp = source.timestampFn.apply(curRecord);
           pState.consumedOffset = offset;
-
-          numRecordsRead++;
           return true;
 
         } else { // -- (b)
-
-          readNextBatch();
+          readNextBatch(false);
 
           if (!curBatch.hasNext()) {
             return false;
@@ -534,9 +540,10 @@ public class KafkaSource {
 
     @Override
     public Instant getWatermark() {
-      if (numRecordsRead == 0) {
+      if (curRecord == null) {
         // haven't read any record yet. what is the right thing to do here?
-        // may be better to invoke user provided watermarkFn with null and let user decide?
+        // may be better to invoke watermarkFn with null and let the user decide?
+        LOG.warn("{} : Returning current time for watermark as no records have been read yet", name);
         return Instant.now();
       }
 
@@ -580,7 +587,7 @@ public class KafkaSource {
     }
   }
 
-  // Builder, Source, Reader wrappers when user is only interested in Value in KafkaRecord :
+  // Builder, Source, and Reader wrappers. Often user is only interested in Value in KafkaRecord :
 
   public static class ValueSourceBuilder<V> {
 
