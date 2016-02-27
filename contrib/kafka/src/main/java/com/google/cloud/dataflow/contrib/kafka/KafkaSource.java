@@ -507,7 +507,7 @@ public class KafkaSource {
           }
 
           if (curRecord == null) {
-            LOG.info("{} : first record offset {}", name, offset); // helps with latency to first record
+            LOG.info("{} : first record offset {}", name, offset); // measure of latency to first record
           }
 
           // apply user coders
