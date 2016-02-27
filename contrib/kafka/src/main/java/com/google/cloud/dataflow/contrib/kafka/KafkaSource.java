@@ -492,10 +492,6 @@ public class KafkaSource {
           long consumed = pState.consumedOffset;
           long offset = rawRecord.offset();
 
-          if (curRecord == null) {
-            LOG.info("{} : first record offset {}", name, offset); // helps with latency to first record
-          }
-
           // apply user coders
           if (consumed >= 0 && offset <= consumed) { // -- (a)
             // this can happen when compression is enabled in Kafka
@@ -508,6 +504,10 @@ public class KafkaSource {
           if (consumed >= 0 && (offset - consumed) != 1) {
             LOG.warn("gap in offsets for {} after {}. {} records missing.",
                 pState.topicPartition, consumed, offset - consumed - 1);
+          }
+
+          if (curRecord == null) {
+            LOG.info("{} : first record offset {}", name, offset); // helps with latency to first record
           }
 
           // apply user coders
