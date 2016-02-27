@@ -212,6 +212,7 @@ public class KafkaSource {
       Preconditions.checkNotNull(valueCoder, "Coder for Kafka values bytes is required");
 
       return new UnboundedKafkaSource<K, V>(
+          -1,
           consumerConfig,
           topics,
           keyCoder,
@@ -229,6 +230,7 @@ public class KafkaSource {
   private static class UnboundedKafkaSource<K, V>
       extends UnboundedSource<KafkaRecord<K, V>, KafkaCheckpointMark> {
 
+    private final int id; // split id, mainly for debugging
     private final ImmutableMap<String, Object> consumerConfig;
     private final List<String> topics;
     private final Coder<K> keyCoder;
@@ -239,6 +241,7 @@ public class KafkaSource {
     private final List<TopicPartition> assignedPartitions;
 
     public UnboundedKafkaSource(
+        int id,
         ImmutableMap<String, Object> consumerConfig,
         List<String> topics,
         Coder<K> keyCoder,
@@ -247,6 +250,7 @@ public class KafkaSource {
         Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn,
         List<TopicPartition> assignedPartitions) {
 
+      this.id = id;
       this.consumerConfig = consumerConfig;
       this.topics = topics;
       this.keyCoder = keyCoder;
@@ -307,18 +311,21 @@ public class KafkaSource {
       List<UnboundedKafkaSource<K, V>> result = Lists.newArrayList();
 
       for (int i=0; i<numSplits; i++) {
+        List<TopicPartition> assignedToSplit = assignments.get(i);
 
-        LOG.info("Partitions assigned to split {} : {}", i, Joiner.on(",").join(assignments.get(i)));
+        LOG.info("Partitions assigned to split {} (total {}): {}",
+            i, assignedToSplit.size(), Joiner.on(",").join(assignedToSplit));
 
         result.add(
             new UnboundedKafkaSource<K, V>(
+                i,
                 this.consumerConfig,
                 this.topics,
                 this.keyCoder,
                 this.valueCoder,
                 this.timestampFn,
                 this.watermarkFn,
-                assignments.get(i)));
+                assignedToSplit));
       }
 
       return result;
@@ -377,6 +384,8 @@ public class KafkaSource {
     private KafkaRecord<K, V> curRecord;
     private Instant curTimestamp;
 
+    private long numRecordsRead = 0;
+
     private Iterator<PartitionState> curBatch = Iterators.emptyIterator();
 
     public UnboundedKafkaReader(
@@ -415,23 +424,27 @@ public class KafkaSource {
     }
 
     private void readNextBatch() {
-      // read one batch of records with single consumer.poll() (may not have any records)
+      // read one batch of records with single consumer.poll() (may not return any records)
 
-      ConsumerRecords<byte[], byte[]> records = consumer.poll(10);
+      // longer timeout during initialization. Consumer does not seem to handle short polls very
+      // well during initialization. It takes much longer to read first record with short timeouts.
+      long timeout_ms = numRecordsRead > 0 ? 100 : 3000;
 
-      List<PartitionState> withRecords = Lists.newLinkedList();
+      ConsumerRecords<byte[], byte[]> records = consumer.poll(timeout_ms);
+
+      List<PartitionState> nonEmpty = Lists.newLinkedList();
 
       for (PartitionState pState : partitionStates) {
         List<ConsumerRecord<byte[], byte[]>> pRecords = records.records(pState.topicPartition);
 
         if (pRecords.size() > 0) {
           pState.recordIter = pRecords.iterator();
-          withRecords.add(pState);
+          nonEmpty.add(pState);
         }
       };
 
-      // cycle through these partitions so that we round-robin among them while returning records
-      curBatch = Iterators.cycle(withRecords);
+      // cycle through the partitions in order to interleave records from each of them.
+      curBatch = Iterators.cycle(nonEmpty);
     }
 
     @Override
@@ -443,10 +456,10 @@ public class KafkaSource {
       // seek to next offset if consumedOffset is set
       for(PartitionState p : partitionStates) {
         if (p.consumedOffset >= 0) {
-          LOG.info("Reader: resuming {} at {}", p.topicPartition, p.consumedOffset + 1);
+          LOG.info("Reader {} : resuming {} at {}",  source.id, p.topicPartition, p.consumedOffset + 1);
           consumer.seek(p.topicPartition, p.consumedOffset + 1);
         } else {
-          LOG.info("Reader: resuming from default offset for {}", p.topicPartition);
+          LOG.info("Reader {} : resuming {} at default offset", source.id, p.topicPartition);
         }
       }
 
@@ -497,14 +510,18 @@ public class KafkaSource {
               decode(rawRecord.value(), source.valueCoder));
 
           curTimestamp = source.timestampFn.apply(curRecord);
-          pState.consumedOffset = rawRecord.offset();
+          pState.consumedOffset = offset;
 
+          numRecordsRead++;
           return true;
+
         } else { // -- (b)
+
           readNextBatch();
 
-          if (!curBatch.hasNext())
+          if (!curBatch.hasNext()) {
             return false;
+          }
         }
       }
     }
@@ -517,22 +534,11 @@ public class KafkaSource {
 
     @Override
     public Instant getWatermark() {
-      // TODO : keep track of per-partition watermark
-      // user provides watermark fn per partition.
-      // return min of all the timestamps. what if some topics don't have any data?
-      // for now we will let users handle this, we can return to it
-
-      //XXX what should we do? why is curRecord is null? return source.timestampFn.apply(curRecord);
-      LOG.info("XXX curRec is {}. curTimestamp : {}, numPartitions {} : maxOffset : {}",
-          (curRecord == null) ? "null" : "not null", curTimestamp, partitionStates.size(),
-          Collections.max(partitionStates, new Comparator<PartitionState>() {
-            public int compare(PartitionState p1, PartitionState p2) {
-              return (int) (p1.consumedOffset - p2.consumedOffset);
-            }
-          }));
-
-      if (curRecord == null) // XXX TEMP
+      if (numRecordsRead == 0) {
+        // haven't read any record yet. what is the right thing to do here?
+        // may be better to invoke user provided watermarkFn with null and let user decide?
         return Instant.now();
+      }
 
       if (source.watermarkFn.isPresent())
         return source.watermarkFn.get().apply(curRecord);
