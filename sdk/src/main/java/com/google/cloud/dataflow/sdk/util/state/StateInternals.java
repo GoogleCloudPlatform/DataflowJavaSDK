@@ -18,7 +18,6 @@ package com.google.cloud.dataflow.sdk.util.state;
 import com.google.cloud.dataflow.sdk.annotations.Experimental;
 import com.google.cloud.dataflow.sdk.annotations.Experimental.Kind;
 import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
-import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 
 /**
  * {@code StateInternals} describes the functionality a runner needs to provide for the
@@ -37,25 +36,20 @@ import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
  * used directly, and is highly likely to change.
  */
 @Experimental(Kind.STATE)
-public interface StateInternals  {
+public interface StateInternals<K> {
+
+  /** The key for this {@link StateInternals}. */
+  K getKey();
 
   /**
    * Return the state associated with {@code address} in the specified {@code namespace}.
    */
-  <T extends State> T state(StateNamespace namespace, StateTag<T> address);
+  <T extends State> T state(StateNamespace namespace, StateTag<? super K, T> address);
 
   /**
-   * Return state that reads from all the source namespaces. Only required to ensure that
-   * resultNamespace contains all the data that is added.
-   *
-   * <p>Merging state is potentially destructive, in that it may move information from the
-   * {@code sourceNamespaces} to {@code resultNamespace}. As a result, after calling this all
-   * future calls should include as their namespaces a superset of
-   * {@code sourceNamespaces} and {@code resultNamespace}.
+   * Return the state associated with {@code address} in the specified {@code namespace}
+   * with the {@link StateContext}.
    */
-  <T extends MergeableState<?, ?>> T mergedState(
-      Iterable<StateNamespace> sourceNamespaces,
-      StateNamespace resultNamespace,
-      StateTag<T> address,
-      BoundedWindow resultWindow);
+  <T extends State> T state(
+      StateNamespace namespace, StateTag<? super K, T> address, StateContext<?> c);
 }

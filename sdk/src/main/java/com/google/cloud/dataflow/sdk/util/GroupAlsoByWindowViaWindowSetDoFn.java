@@ -21,6 +21,7 @@ import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.util.DoFnRunner.ReduceFnExecutor;
 import com.google.cloud.dataflow.sdk.util.TimerInternals.TimerData;
+import com.google.cloud.dataflow.sdk.util.state.StateInternals;
 import com.google.cloud.dataflow.sdk.values.KV;
 
 /**
@@ -32,11 +33,10 @@ public class GroupAlsoByWindowViaWindowSetDoFn<
         K, InputT, OutputT, W extends BoundedWindow, RinT extends KeyedWorkItem<K, InputT>>
     extends DoFn<RinT, KV<K, OutputT>> implements ReduceFnExecutor<K, InputT, OutputT, W> {
 
-  public static <K, InputT, OutputT, W extends BoundedWindow,
-          RinputsT extends KeyedWorkItem<K, InputT>>
-      DoFn<RinputsT, KV<K, OutputT>> create(
-          WindowingStrategy<?, W> strategy, SystemReduceFn.Factory<K, InputT, OutputT, W> factory) {
-    return new GroupAlsoByWindowViaWindowSetDoFn<>(strategy, factory);
+  public static <K, InputT, OutputT, W extends BoundedWindow>
+      DoFn<KeyedWorkItem<K, InputT>, KV<K, OutputT>> create(
+          WindowingStrategy<?, W> strategy, SystemReduceFn<K, InputT, ?, OutputT, W> reduceFn) {
+    return new GroupAlsoByWindowViaWindowSetDoFn<>(strategy, reduceFn);
   }
 
   protected final Aggregator<Long, Long> droppedDueToClosedWindow =
@@ -46,15 +46,15 @@ public class GroupAlsoByWindowViaWindowSetDoFn<
       createAggregator(GroupAlsoByWindowsDoFn.DROPPED_DUE_TO_LATENESS_COUNTER, new Sum.SumLongFn());
 
   private final WindowingStrategy<Object, W> windowingStrategy;
-  private SystemReduceFn.Factory<K, InputT, OutputT, W> reduceFnFactory;
+  private SystemReduceFn<K, InputT, ?, OutputT, W> reduceFn;
 
   private GroupAlsoByWindowViaWindowSetDoFn(
       WindowingStrategy<?, W> windowingStrategy,
-      SystemReduceFn.Factory<K, InputT, OutputT, W> reduceFnFactory) {
+      SystemReduceFn<K, InputT, ?, OutputT, W> reduceFn) {
     @SuppressWarnings("unchecked")
     WindowingStrategy<Object, W> noWildcard = (WindowingStrategy<Object, W>) windowingStrategy;
     this.windowingStrategy = noWildcard;
-    this.reduceFnFactory = reduceFnFactory;
+    this.reduceFn = reduceFn;
   }
 
   @Override
@@ -63,20 +63,28 @@ public class GroupAlsoByWindowViaWindowSetDoFn<
 
     K key = c.element().key();
     TimerInternals timerInternals = c.windowingInternals().timerInternals();
-    ReduceFnRunner<K, InputT, OutputT, W> runner =
+
+    // It is the responsibility of the user of GroupAlsoByWindowsViaWindowSet to only
+    // provide a WindowingInternals instance with the appropriate key type for StateInternals.
+    @SuppressWarnings("unchecked")
+    StateInternals<K> stateInternals = (StateInternals<K>) c.windowingInternals().stateInternals();
+
+    ReduceFnRunner<K, InputT, OutputT, W> reduceFnRunner =
         new ReduceFnRunner<>(
             key,
             windowingStrategy,
+            stateInternals,
             timerInternals,
             c.windowingInternals(),
             droppedDueToClosedWindow,
-            reduceFnFactory.create(key));
+            reduceFn,
+            c.getPipelineOptions());
 
     for (TimerData timer : element.timersIterable()) {
-      runner.onTimer(timer);
+      reduceFnRunner.onTimer(timer);
     }
-    runner.processElements(element.elementsIterable());
-    runner.persist();
+    reduceFnRunner.processElements(element.elementsIterable());
+    reduceFnRunner.persist();
   }
 
   @Override

@@ -20,9 +20,10 @@ import com.google.cloud.dataflow.sdk.annotations.Experimental;
 import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
 import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger.OnceTrigger;
-import com.google.cloud.dataflow.sdk.util.ReduceFn.MergingStateContext;
-import com.google.cloud.dataflow.sdk.util.ReduceFn.StateContext;
-import com.google.cloud.dataflow.sdk.util.state.CombiningValueState;
+import com.google.cloud.dataflow.sdk.util.state.AccumulatorCombiningState;
+import com.google.cloud.dataflow.sdk.util.state.MergingStateAccessor;
+import com.google.cloud.dataflow.sdk.util.state.StateAccessor;
+import com.google.cloud.dataflow.sdk.util.state.StateMerging;
 import com.google.cloud.dataflow.sdk.util.state.StateTag;
 import com.google.cloud.dataflow.sdk.util.state.StateTags;
 
@@ -40,7 +41,8 @@ import java.util.Objects;
 @Experimental(Experimental.Kind.TRIGGER)
 public class AfterPane<W extends BoundedWindow> extends OnceTrigger<W>{
 
-  private static final StateTag<CombiningValueState<Long, Long>> ELEMENTS_IN_PANE_TAG =
+private static final StateTag<Object, AccumulatorCombiningState<Long, long[], Long>>
+      ELEMENTS_IN_PANE_TAG =
       StateTags.makeSystemTagInternal(StateTags.combiningValueFromInputInternal(
           "count", VarLongCoder.of(), new Sum.SumLongFn()));
 
@@ -64,31 +66,33 @@ public class AfterPane<W extends BoundedWindow> extends OnceTrigger<W>{
   }
 
   @Override
-  public void prefetchOnMerge(MergingStateContext state) {
-    state.mergingAccess(ELEMENTS_IN_PANE_TAG).get();
+  public void prefetchOnMerge(MergingStateAccessor<?, W> state) {
+    super.prefetchOnMerge(state);
+    StateMerging.prefetchCombiningValues(state, ELEMENTS_IN_PANE_TAG);
   }
 
   @Override
   public void onMerge(OnMergeContext context) throws Exception {
+    // If we've already received enough elements and finished in some window,
+    // then this trigger is just finished.
     if (context.trigger().finishedInAnyMergingWindow()) {
       context.trigger().setFinished(true);
+      StateMerging.clear(context.state(), ELEMENTS_IN_PANE_TAG);
       return;
     }
 
-    // Eagerly merge
-    long count = context.state().mergingAccess(ELEMENTS_IN_PANE_TAG).get().read();
-    context.state().mergingAccess(ELEMENTS_IN_PANE_TAG).clear();
-    context.state().access(ELEMENTS_IN_PANE_TAG).add(count);
+    // Otherwise, compute the sum of elements in all the active panes.
+    StateMerging.mergeCombiningValues(context.state(), ELEMENTS_IN_PANE_TAG);
   }
 
   @Override
-  public void prefetchShouldFire(StateContext state) {
-    state.access(ELEMENTS_IN_PANE_TAG).get();
+  public void prefetchShouldFire(StateAccessor<?> state) {
+    state.access(ELEMENTS_IN_PANE_TAG).readLater();
   }
 
   @Override
   public boolean shouldFire(Trigger<W>.TriggerContext context) throws Exception {
-    long count = context.state().access(ELEMENTS_IN_PANE_TAG).get().read();
+    long count = context.state().access(ELEMENTS_IN_PANE_TAG).read();
     return count >= countElems;
   }
 

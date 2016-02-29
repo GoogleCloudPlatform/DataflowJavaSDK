@@ -20,7 +20,6 @@ import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.IterableCoder;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
-import com.google.cloud.dataflow.sdk.runners.worker.logging.DataflowWorkerLoggingMDC;
 import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
@@ -37,7 +36,6 @@ import com.google.cloud.dataflow.sdk.util.state.StateInternals;
 import com.google.cloud.dataflow.sdk.values.PCollectionView;
 import com.google.cloud.dataflow.sdk.values.TupleTag;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Throwables;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -128,35 +126,23 @@ public abstract class DoFnRunnerBase<InputT, OutputT> implements DoFnRunner<Inpu
       fn.startBundle(context);
     } catch (Throwable t) {
       // Exception in user code.
-      Throwables.propagateIfInstanceOf(t, UserCodeException.class);
-      throw new UserCodeException(t);
+      throw wrapUserCodeException(t);
     }
   }
 
   @Override
   public void processElement(WindowedValue<InputT> elem) {
-    // TODO: Move the DataflowWorkerLoggingMDC into wrapper used on the Dataflow worker in
-    // invokeProcessElement
-    // Setup new thread local logging before running user code, and restore it after.
-    // Needs to happen here (per-element) since fusion may be running this as part of a call to
-    // output in an earlier step.
-    String previousStepName = DataflowWorkerLoggingMDC.getStepName();
-    DataflowWorkerLoggingMDC.setStepName(context.stepContext.getStepName());
-    try {
-      if (elem.getWindows().size() <= 1
-          || (!RequiresWindowAccess.class.isAssignableFrom(fn.getClass())
-          && context.sideInputReader.isEmpty())) {
-        invokeProcessElement(elem);
-      } else {
-        // We could modify the windowed value (and the processContext) to
-        // avoid repeated allocations, but this is more straightforward.
-        for (BoundedWindow window : elem.getWindows()) {
-          invokeProcessElement(WindowedValue.of(
-              elem.getValue(), elem.getTimestamp(), window, elem.getPane()));
-        }
+    if (elem.getWindows().size() <= 1
+        || (!RequiresWindowAccess.class.isAssignableFrom(fn.getClass())
+            && context.sideInputReader.isEmpty())) {
+      invokeProcessElement(elem);
+    } else {
+      // We could modify the windowed value (and the processContext) to
+      // avoid repeated allocations, but this is more straightforward.
+      for (BoundedWindow window : elem.getWindows()) {
+        invokeProcessElement(WindowedValue.of(
+            elem.getValue(), elem.getTimestamp(), window, elem.getPane()));
       }
-    } finally {
-      DataflowWorkerLoggingMDC.setStepName(previousStepName);
     }
   }
 
@@ -173,8 +159,7 @@ public abstract class DoFnRunnerBase<InputT, OutputT> implements DoFnRunner<Inpu
       fn.finishBundle(context);
     } catch (Throwable t) {
       // Exception in user code.
-      Throwables.propagateIfInstanceOf(t, UserCodeException.class);
-      throw new UserCodeException(t);
+      throw wrapUserCodeException(t);
     }
   }
 
@@ -275,8 +260,7 @@ public abstract class DoFnRunnerBase<InputT, OutputT> implements DoFnRunner<Inpu
             }
           });
         } catch (Exception e) {
-          Throwables.propagateIfInstanceOf(e, UserCodeException.class);
-          throw new UserCodeException(e);
+          throw UserCodeException.wrap(e);
         }
       }
 
@@ -379,6 +363,14 @@ public abstract class DoFnRunnerBase<InputT, OutputT> implements DoFnRunner<Inpu
    */
   protected DoFn<InputT, OutputT>.ProcessContext createProcessContext(WindowedValue<InputT> elem) {
     return new DoFnProcessContext<InputT, OutputT>(fn, context, elem);
+  }
+
+  protected RuntimeException wrapUserCodeException(Throwable t) {
+    throw UserCodeException.wrapIf(!isSystemDoFn(), t);
+  }
+
+  private boolean isSystemDoFn() {
+    return fn.getClass().isAnnotationPresent(SystemDoFnInternal.class);
   }
 
   /**
@@ -545,8 +537,13 @@ public abstract class DoFnRunnerBase<InputT, OutputT> implements DoFnRunner<Inpu
         }
 
         @Override
-        public StateInternals stateInternals() {
+        public StateInternals<?> stateInternals() {
           return context.stepContext.stateInternals();
+        }
+
+        @Override
+        public <T> T sideInput(PCollectionView<T> view, BoundedWindow mainInputWindow) {
+          return context.sideInput(view, mainInputWindow);
         }
       };
     }

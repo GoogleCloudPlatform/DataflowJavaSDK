@@ -39,7 +39,11 @@ import java.util.Collection;
  */
 public interface WindowingInternals<InputT, OutputT> {
 
-  StateInternals stateInternals();
+  /**
+   * Unsupported state internals. The key type is unknown. It is up to the user to use the
+   * correct type of key.
+   */
+  StateInternals<?> stateInternals();
 
   /**
    * Output the value at the specified timestamp in the listed windows.
@@ -70,4 +74,9 @@ public interface WindowingInternals<InputT, OutputT> {
       TupleTag<?> tag,
       Iterable<WindowedValue<T>> data,
       Coder<T> elemCoder) throws IOException;
+
+  /**
+   * Return the value of the side input for the window of a main input element.
+   */
+  <T> T sideInput(PCollectionView<T> view, BoundedWindow mainInputWindow);
 }

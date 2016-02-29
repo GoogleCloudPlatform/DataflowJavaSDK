@@ -21,6 +21,8 @@ import com.google.cloud.dataflow.sdk.coders.CannotProvideCoderException;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.CoderRegistry;
 import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
+import com.google.cloud.dataflow.sdk.transforms.Combine.KeyedCombineFn;
+import com.google.cloud.dataflow.sdk.transforms.CombineWithContext.KeyedCombineFnWithContext;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.OutputTimeFn;
 import com.google.common.base.MoreObjects;
@@ -36,6 +38,7 @@ import java.util.Objects;
 public class StateTags {
 
   private static final CoderRegistry STANDARD_REGISTRY = new CoderRegistry();
+
   static {
     STANDARD_REGISTRY.registerStandardCoders();
   }
@@ -53,10 +56,14 @@ public class StateTags {
 
   private StateTags() { }
 
+  private interface SystemStateTag<K, StateT extends State> {
+    StateTag<K, StateT> asKind(StateKind kind);
+  }
+
   /**
    * Create a simple state tag for values of type {@code T}.
    */
-  public static <T> StateTag<ValueState<T>> value(String id, Coder<T> valueCoder) {
+  public static <T> StateTag<Object, ValueState<T>> value(String id, Coder<T> valueCoder) {
     return new ValueStateTag<>(new StructuredId(id), valueCoder);
   }
 
@@ -64,10 +71,41 @@ public class StateTags {
    * Create a state tag for values that use a {@link CombineFn} to automatically merge
    * multiple {@code InputT}s into a single {@code OutputT}.
    */
-  public static <InputT, AccumT, OutputT> StateTag<CombiningValueState<InputT, OutputT>>
-  combiningValue(
+  public static <InputT, AccumT, OutputT>
+    StateTag<Object, AccumulatorCombiningState<InputT, AccumT, OutputT>>
+    combiningValue(
       String id, Coder<AccumT> accumCoder, CombineFn<InputT, AccumT, OutputT> combineFn) {
     return combiningValueInternal(id, accumCoder, combineFn);
+  }
+
+  /**
+   * Create a state tag for values that use a {@link KeyedCombineFn} to automatically merge
+   * multiple {@code InputT}s into a single {@code OutputT}. The key provided to the
+   * {@link KeyedCombineFn} comes from the keyed {@link StateAccessor}.
+   */
+  public static <K, InputT, AccumT,
+      OutputT> StateTag<K, AccumulatorCombiningState<InputT, AccumT, OutputT>>
+      keyedCombiningValue(String id, Coder<AccumT> accumCoder,
+          KeyedCombineFn<K, InputT, AccumT, OutputT> combineFn) {
+    return keyedCombiningValueInternal(id, accumCoder, combineFn);
+  }
+
+  /**
+   * Create a state tag for values that use a {@link KeyedCombineFnWithContext} to automatically
+   * merge multiple {@code InputT}s into a single {@code OutputT}. The key provided to the
+   * {@link KeyedCombineFn} comes from the keyed {@link StateAccessor}, the context provided comes
+   * from the {@link StateContext}.
+   */
+  public static <K, InputT, AccumT, OutputT>
+      StateTag<K, AccumulatorCombiningState<InputT, AccumT, OutputT>>
+      keyedCombiningValueWithContext(
+          String id,
+          Coder<AccumT> accumCoder,
+          KeyedCombineFnWithContext<K, InputT, AccumT, OutputT> combineFn) {
+    return new KeyedCombiningValueWithContextStateTag<K, InputT, AccumT, OutputT>(
+        new StructuredId(id),
+        accumCoder,
+        combineFn);
   }
 
   /**
@@ -77,9 +115,10 @@ public class StateTags {
    * <p>This determines the {@code Coder<AccumT>} from the given {@code Coder<InputT>}, and
    * should only be used to initialize static values.
    */
-  public static <InputT, AccumT, OutputT> StateTag<CombiningValueState<InputT, OutputT>>
-  combiningValueFromInputInternal(
-      String id, Coder<InputT> inputCoder, CombineFn<InputT, AccumT, OutputT> combineFn) {
+  public static <InputT, AccumT, OutputT>
+      StateTag<Object, AccumulatorCombiningState<InputT, AccumT, OutputT>>
+      combiningValueFromInputInternal(
+          String id, Coder<InputT> inputCoder, CombineFn<InputT, AccumT, OutputT> combineFn) {
     try {
       Coder<AccumT> accumCoder = combineFn.getAccumulatorCoder(STANDARD_REGISTRY, inputCoder);
       return combiningValueInternal(id, accumCoder, combineFn);
@@ -90,55 +129,67 @@ public class StateTags {
     }
   }
 
-  private static <InputT, AccumT, OutputT> StateTag<CombiningValueState<InputT, OutputT>>
-  combiningValueInternal(
+  private static <InputT, AccumT,
+      OutputT> StateTag<Object, AccumulatorCombiningState<InputT, AccumT, OutputT>>
+      combiningValueInternal(
       String id, Coder<AccumT> accumCoder, CombineFn<InputT, AccumT, OutputT> combineFn) {
-    StateTag<CombiningValueStateInternal<InputT, AccumT, OutputT>> internal =
+    return
         new CombiningValueStateTag<InputT, AccumT, OutputT>(
             new StructuredId(id), accumCoder, combineFn);
+  }
 
-    // This is a safe cast, since StateTag only supports reading, and
-    // CombiningValue<InputT, OutputT> is a super-interface of
-    // CombiningValueInternal<InputT, AccumT, OutputT>
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    StateTag<CombiningValueState<InputT, OutputT>> external = (StateTag) internal;
-    return external;
+  private static <K, InputT, AccumT, OutputT>
+      StateTag<K, AccumulatorCombiningState<InputT, AccumT, OutputT>> keyedCombiningValueInternal(
+          String id,
+          Coder<AccumT> accumCoder,
+          KeyedCombineFn<K, InputT, AccumT, OutputT> combineFn) {
+    return new KeyedCombiningValueStateTag<K, InputT, AccumT, OutputT>(
+        new StructuredId(id), accumCoder, combineFn);
   }
 
   /**
    * Create a state tag that is optimized for adding values frequently, and
    * occasionally retrieving all the values that have been added.
    */
-  public static <T> StateTag<BagState<T>> bag(String id, Coder<T> elemCoder) {
+  public static <T> StateTag<Object, BagState<T>> bag(String id, Coder<T> elemCoder) {
     return new BagStateTag<T>(new StructuredId(id), elemCoder);
   }
 
   /**
    * Create a state tag for holding the watermark.
    */
-  public static <T, W extends BoundedWindow> StateTag<WatermarkStateInternal>
-      watermarkStateInternal(String id, OutputTimeFn<W> outputTimeFn) {
+  public static <W extends BoundedWindow> StateTag<Object, WatermarkHoldState<W>>
+      watermarkStateInternal(String id, OutputTimeFn<? super W> outputTimeFn) {
     return new WatermarkStateTagInternal<W>(new StructuredId(id), outputTimeFn);
   }
 
   /**
-   * Convert an arbitrary {@code StateTag} to a system-internal tag that is guaranteed not to
+   * Convert an arbitrary {@link StateTag} to a system-internal tag that is guaranteed not to
    * collide with any user tags.
    */
-  public static <StateT extends State> StateTag<StateT> makeSystemTagInternal(
-      StateTag<StateT> tag) {
-    if (!(tag instanceof StateTagBase)) {
+  public static <K, StateT extends State> StateTag<K, StateT> makeSystemTagInternal(
+      StateTag<K, StateT> tag) {
+    if (!(tag instanceof SystemStateTag)) {
       throw new IllegalArgumentException("Expected subclass of StateTagBase, got " + tag);
     }
-    return ((StateTagBase<StateT>) tag).asKind(StateKind.SYSTEM);
+    // Checked above
+    @SuppressWarnings("unchecked")
+    SystemStateTag<K, StateT> typedTag = (SystemStateTag<K, StateT>) tag;
+    return typedTag.asKind(StateKind.SYSTEM);
   }
 
-  public static <InputT, AccumT, OutputT> StateTag<BagState<AccumT>> convertToBagTagInternal(
-      StateTag<CombiningValueStateInternal<InputT, AccumT, OutputT>> combiningTag) {
-    if (!(combiningTag instanceof CombiningValueStateTag)) {
+  public static <K, InputT, AccumT, OutputT> StateTag<Object, BagState<AccumT>>
+      convertToBagTagInternal(
+          StateTag<? super K, AccumulatorCombiningState<InputT, AccumT, OutputT>> combiningTag) {
+    if (!(combiningTag instanceof KeyedCombiningValueStateTag)) {
       throw new IllegalArgumentException("Unexpected StateTag " + combiningTag);
     }
-    return ((CombiningValueStateTag<InputT, AccumT, OutputT>) combiningTag).asBagTag();
+    // Checked above; conversion to a bag tag depends on the provided tag being one of those
+    // created via the factory methods in this class.
+    @SuppressWarnings("unchecked")
+    KeyedCombiningValueStateTag<K, InputT, AccumT, OutputT> typedTag =
+        (KeyedCombiningValueStateTag<K, InputT, AccumT, OutputT>) combiningTag;
+    return typedTag.asBagTag();
   }
 
   private static class StructuredId implements Serializable {
@@ -156,10 +207,6 @@ public class StateTags {
 
     public StructuredId asKind(StateKind kind) {
       return new StructuredId(kind, rawId);
-    }
-
-    public String getIdString() {
-      return kind.prefix + rawId;
     }
 
     public void appendTo(Appendable sb) throws IOException {
@@ -199,7 +246,11 @@ public class StateTags {
     }
   }
 
-  private abstract static class StateTagBase<StateT extends State> implements StateTag<StateT> {
+  /**
+   * A base class that just manages the structured ids.
+   */
+  private abstract static class StateTagBase<K, StateT extends State>
+      implements StateTag<K, StateT>, SystemStateTag<K, StateT> {
 
     protected final StructuredId id;
 
@@ -219,11 +270,13 @@ public class StateTags {
           .toString();
     }
 
-    protected abstract StateTag<StateT> asKind(StateKind kind);
-
+    @Override
     public void appendTo(Appendable sb) throws IOException {
       id.appendTo(sb);
     }
+
+    @Override
+    public abstract StateTag<K, StateT> asKind(StateKind kind);
   }
 
   /**
@@ -231,7 +284,8 @@ public class StateTags {
    *
    * @param <T> the type of value being stored
    */
-  private static class ValueStateTag<T> extends StateTagBase<ValueState<T>> {
+  private static class ValueStateTag<T> extends StateTagBase<Object, ValueState<T>>
+      implements StateTag<Object, ValueState<T>> {
 
     private final Coder<T> coder;
 
@@ -241,7 +295,7 @@ public class StateTags {
     }
 
     @Override
-    public ValueState<T> bind(StateBinder visitor) {
+    public ValueState<T> bind(StateBinder<? extends Object> visitor) {
       return visitor.bindValue(this, coder);
     }
 
@@ -266,20 +320,22 @@ public class StateTags {
     }
 
     @Override
-    protected StateTag<ValueState<T>> asKind(StateKind kind) {
+    public StateTag<Object, ValueState<T>> asKind(StateKind kind) {
       return new ValueStateTag<T>(id.asKind(kind), coder);
     }
   }
 
   /**
-   * A general purpose state cell for values of type {@code T}.
+   * A state cell for values that are combined according to a {@link CombineFn}.
    *
    * @param <InputT> the type of input values
    * @param <AccumT> type of mutable accumulator values
    * @param <OutputT> type of output values
    */
   private static class CombiningValueStateTag<InputT, AccumT, OutputT>
-      extends StateTagBase<CombiningValueStateInternal<InputT, AccumT, OutputT>> {
+      extends KeyedCombiningValueStateTag<Object, InputT, AccumT, OutputT>
+      implements StateTag<Object, AccumulatorCombiningState<InputT, AccumT, OutputT>>,
+      SystemStateTag<Object, AccumulatorCombiningState<InputT, AccumT, OutputT>> {
 
     private final Coder<AccumT> accumCoder;
     private final CombineFn<InputT, AccumT, OutputT> combineFn;
@@ -287,14 +343,105 @@ public class StateTags {
     private CombiningValueStateTag(
         StructuredId id,
         Coder<AccumT> accumCoder, CombineFn<InputT, AccumT, OutputT> combineFn) {
+      super(id, accumCoder, combineFn.asKeyedFn());
+      this.combineFn = combineFn;
+      this.accumCoder = accumCoder;
+    }
+
+    @Override
+    public StateTag<Object, AccumulatorCombiningState<InputT, AccumT, OutputT>>
+    asKind(StateKind kind) {
+      return new CombiningValueStateTag<InputT, AccumT, OutputT>(
+          id.asKind(kind), accumCoder, combineFn);
+    }
+  }
+
+  /**
+   * A state cell for values that are combined according to a {@link KeyedCombineFnWithContext}.
+   *
+   * @param <K> the type of keys
+   * @param <InputT> the type of input values
+   * @param <AccumT> type of mutable accumulator values
+   * @param <OutputT> type of output values
+   */
+  private static class KeyedCombiningValueWithContextStateTag<K, InputT, AccumT, OutputT>
+    extends StateTagBase<K, AccumulatorCombiningState<InputT, AccumT, OutputT>>
+    implements SystemStateTag<K, AccumulatorCombiningState<InputT, AccumT, OutputT>> {
+
+    private final Coder<AccumT> accumCoder;
+    private final KeyedCombineFnWithContext<K, InputT, AccumT, OutputT> combineFn;
+
+    protected KeyedCombiningValueWithContextStateTag(
+        StructuredId id,
+        Coder<AccumT> accumCoder,
+        KeyedCombineFnWithContext<K, InputT, AccumT, OutputT> combineFn) {
       super(id);
       this.combineFn = combineFn;
       this.accumCoder = accumCoder;
     }
 
     @Override
-    public CombiningValueStateInternal<InputT, AccumT, OutputT> bind(StateBinder visitor) {
-      return visitor.bindCombiningValue(this, accumCoder, combineFn);
+    public AccumulatorCombiningState<InputT, AccumT, OutputT> bind(
+        StateBinder<? extends K> visitor) {
+      return visitor.bindKeyedCombiningValueWithContext(this, accumCoder, combineFn);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (obj == this) {
+        return true;
+      }
+
+      if (!(obj instanceof KeyedCombiningValueWithContextStateTag)) {
+        return false;
+      }
+
+      KeyedCombiningValueWithContextStateTag<?, ?, ?, ?> that =
+          (KeyedCombiningValueWithContextStateTag<?, ?, ?, ?>) obj;
+      return Objects.equals(this.id, that.id)
+          && Objects.equals(this.accumCoder, that.accumCoder);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(getClass(), id, accumCoder);
+    }
+
+    @Override
+    public StateTag<K, AccumulatorCombiningState<InputT, AccumT, OutputT>> asKind(
+        StateKind kind) {
+      return new KeyedCombiningValueWithContextStateTag<>(
+          id.asKind(kind), accumCoder, combineFn);
+    }
+  }
+
+  /**
+   * A state cell for values that are combined according to a {@link KeyedCombineFn}.
+   *
+   * @param <K> the type of keys
+   * @param <InputT> the type of input values
+   * @param <AccumT> type of mutable accumulator values
+   * @param <OutputT> type of output values
+   */
+  private static class KeyedCombiningValueStateTag<K, InputT, AccumT, OutputT>
+      extends StateTagBase<K, AccumulatorCombiningState<InputT, AccumT, OutputT>>
+      implements SystemStateTag<K, AccumulatorCombiningState<InputT, AccumT, OutputT>> {
+
+    private final Coder<AccumT> accumCoder;
+    private final KeyedCombineFn<K, InputT, AccumT, OutputT> keyedCombineFn;
+
+    protected KeyedCombiningValueStateTag(
+        StructuredId id,
+        Coder<AccumT> accumCoder, KeyedCombineFn<K, InputT, AccumT, OutputT> keyedCombineFn) {
+      super(id);
+      this.keyedCombineFn = keyedCombineFn;
+      this.accumCoder = accumCoder;
+    }
+
+    @Override
+    public AccumulatorCombiningState<InputT, AccumT, OutputT> bind(
+        StateBinder<? extends K> visitor) {
+      return visitor.bindKeyedCombiningValue(this, accumCoder, keyedCombineFn);
     }
 
     @Override
@@ -307,7 +454,7 @@ public class StateTags {
         return false;
       }
 
-      CombiningValueStateTag<?, ?, ?> that = (CombiningValueStateTag<?, ?, ?>) obj;
+      KeyedCombiningValueStateTag<?, ?, ?, ?> that = (KeyedCombiningValueStateTag<?, ?, ?, ?>) obj;
       return Objects.equals(this.id, that.id)
           && Objects.equals(this.accumCoder, that.accumCoder);
     }
@@ -318,12 +465,12 @@ public class StateTags {
     }
 
     @Override
-    protected StateTag<CombiningValueStateInternal<InputT, AccumT, OutputT>> asKind(
+    public StateTag<K, AccumulatorCombiningState<InputT, AccumT, OutputT>> asKind(
         StateKind kind) {
-      return new CombiningValueStateTag<>(id.asKind(kind), accumCoder, combineFn);
+      return new KeyedCombiningValueStateTag<>(id.asKind(kind), accumCoder, keyedCombineFn);
     }
 
-    private StateTag<BagState<AccumT>> asBagTag() {
+    private StateTag<Object, BagState<AccumT>> asBagTag() {
       return new BagStateTag<AccumT>(id, accumCoder);
     }
   }
@@ -334,7 +481,8 @@ public class StateTags {
    *
    * @param <T> the type of value in the bag
    */
-  private static class BagStateTag<T> extends StateTagBase<BagState<T>> {
+  private static class BagStateTag<T> extends StateTagBase<Object, BagState<T>>
+      implements StateTag<Object, BagState<T>>{
 
     private final Coder<T> elemCoder;
 
@@ -344,7 +492,7 @@ public class StateTags {
     }
 
     @Override
-    public BagState<T> bind(StateBinder visitor) {
+    public BagState<T> bind(StateBinder<? extends Object> visitor) {
       return visitor.bindBag(this, elemCoder);
     }
 
@@ -369,13 +517,13 @@ public class StateTags {
     }
 
     @Override
-    protected StateTag<BagState<T>> asKind(StateKind kind) {
+    public StateTag<Object, BagState<T>> asKind(StateKind kind) {
       return new BagStateTag<>(id.asKind(kind), elemCoder);
     }
   }
 
   private static class WatermarkStateTagInternal<W extends BoundedWindow>
-      extends StateTagBase<WatermarkStateInternal> {
+      extends StateTagBase<Object, WatermarkHoldState<W>> {
 
     /**
      * When multiple output times are added to hold the watermark, this determines how they are
@@ -390,7 +538,7 @@ public class StateTags {
     }
 
     @Override
-    public WatermarkStateInternal bind(StateBinder visitor) {
+    public WatermarkHoldState<W> bind(StateBinder<? extends Object> visitor) {
       return visitor.bindWatermark(this, outputTimeFn);
     }
 
@@ -414,7 +562,7 @@ public class StateTags {
     }
 
     @Override
-    protected StateTag<WatermarkStateInternal> asKind(StateKind kind) {
+    public StateTag<Object, WatermarkHoldState<W>> asKind(StateKind kind) {
       return new WatermarkStateTagInternal<W>(id.asKind(kind), outputTimeFn);
     }
   }

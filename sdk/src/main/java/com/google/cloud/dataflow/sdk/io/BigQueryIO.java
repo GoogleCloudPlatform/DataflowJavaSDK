@@ -37,15 +37,18 @@ import com.google.cloud.dataflow.sdk.options.BigQueryOptions;
 import com.google.cloud.dataflow.sdk.options.GcpOptions;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
+import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
+import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.util.BigQueryTableInserter;
 import com.google.cloud.dataflow.sdk.util.BigQueryTableRowIterator;
 import com.google.cloud.dataflow.sdk.util.PropertyNames;
 import com.google.cloud.dataflow.sdk.util.Reshuffle;
+import com.google.cloud.dataflow.sdk.util.SystemDoFnInternal;
 import com.google.cloud.dataflow.sdk.util.Transport;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
@@ -57,7 +60,6 @@ import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.cloud.hadoop.util.ApiErrorExtractor;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -1054,6 +1056,7 @@ public class BigQueryIO {
   /**
    * Implementation of DoFn to perform streaming BigQuery write.
    */
+  @SystemDoFnInternal
   private static class StreamingWriteFn
       extends DoFn<KV<ShardedKey<String>, TableRowInfo>, Void> {
     /** TableSchema in JSON. Use String to make the class Serializable. */
@@ -1069,6 +1072,10 @@ public class BigQueryIO {
         each time. */
     private static Set<String> createdTables =
         Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+
+    /** Tracks bytes written, exposed as "ByteCount" Counter. */
+    private Aggregator<Long, Long> byteCountAggregator =
+        createAggregator("ByteCount", new Sum.SumLongFn());
 
     /** Constructor. */
     StreamingWriteFn(TableSchema schema) {
@@ -1139,7 +1146,7 @@ public class BigQueryIO {
       if (!tableRows.isEmpty()) {
         try {
           BigQueryTableInserter inserter = new BigQueryTableInserter(client);
-          inserter.insertAll(tableReference, tableRows, uniqueIds);
+          inserter.insertAll(tableReference, tableRows, uniqueIds, byteCountAggregator);
         } catch (IOException e) {
           throw new RuntimeException(e);
         }
@@ -1422,9 +1429,17 @@ public class BigQueryIO {
       iterator = BigQueryTableRowIterator.fromTable(transform.table, client);
     }
 
-    List<TableRow> elems = ImmutableList.copyOf(iterator);
-    LOG.info("Number of records read from BigQuery: {}", elems.size());
-    context.setPCollection(context.getOutput(transform), elems);
+    try (BigQueryTableRowIterator ignored = iterator) {
+      List<TableRow> elems = new ArrayList<>();
+      iterator.open();
+      while (iterator.advance()) {
+        elems.add(iterator.getCurrent());
+      }
+      LOG.info("Number of records read from BigQuery: {}", elems.size());
+      context.setPCollection(context.getOutput(transform), elems);
+    } catch (IOException | InterruptedException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   private static <K, V> List<V> getOrCreateMapListValue(Map<K, List<V>> map, K key) {

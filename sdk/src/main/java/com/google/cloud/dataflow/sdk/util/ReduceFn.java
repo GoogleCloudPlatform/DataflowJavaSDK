@@ -17,19 +17,13 @@ package com.google.cloud.dataflow.sdk.util;
 
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.PaneInfo;
-import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger;
-import com.google.cloud.dataflow.sdk.util.state.MergeableState;
-import com.google.cloud.dataflow.sdk.util.state.State;
-import com.google.cloud.dataflow.sdk.util.state.StateContents;
-import com.google.cloud.dataflow.sdk.util.state.StateTag;
+import com.google.cloud.dataflow.sdk.util.state.MergingStateAccessor;
+import com.google.cloud.dataflow.sdk.util.state.ReadableState;
+import com.google.cloud.dataflow.sdk.util.state.StateAccessor;
 
 import org.joda.time.Instant;
 
 import java.io.Serializable;
-import java.util.Collection;
-import java.util.Map;
-
-import javax.annotation.Nullable;
 
 /**
  * Specification for processing to happen after elements have been grouped by key.
@@ -41,79 +35,6 @@ import javax.annotation.Nullable;
  */
 public abstract class ReduceFn<K, InputT, OutputT, W extends BoundedWindow>
     implements Serializable {
-  /** Interface for interacting with persistent state. */
-  public interface StateContext {
-    /**
-     * Access the storage for the given {@code address} in the current window.
-     *
-     * <p>Never accounts for merged windows. When windows are merged, any state accessed via
-     * this method must be eagerly combined and written into the result window.
-     */
-    <StateT extends State> StateT access(StateTag<StateT> address);
-
-    /**
-     * Access the storage for the given {@code address} in all of the windows that were
-     * merged into the current window.
-     *
-     * <p>If no windows were merged, this reads and writes to just the current window.
-     * Otherwise, when windows merge we do not eagerly combine state, but rather defer the
-     * combination to reading time. Thus reads will be from all 'merged windows' for the
-     * current window, and writes will be to the designated 'writing window' for the current window.
-     */
-    <StateT extends MergeableState<?, ?>> StateT accessAcrossMergedWindows(
-        StateTag<StateT> address);
-  }
-
-  /** Interface for interacting with persistent state within {@link #onMerge}. */
-  public interface MergingStateContext extends StateContext {
-    /**
-     * Analogous to {@link #access}, but across all windows which are about to be merged.
-     */
-    <StateT extends MergeableState<?, ?>> StateT mergingAccess(StateTag<StateT> address);
-
-    /**
-     * Analogous to {@link #access}, but returned as a map from each window which is
-     * about to be merged to the corresponding state.
-     */
-    public abstract <StateT extends State> Map<BoundedWindow, StateT>
-        mergingAccessInEachMergingWindow(StateTag<StateT> address);
-  }
-
-  /**
-   * Interface for interacting with time.
-   */
-  public interface Timers {
-    /**
-     * Sets a timer to fire when the watermark or processing time is beyond the given timestamp.
-     * Timers are not guaranteed to fire immediately, but will be delivered at some time afterwards.
-     *
-     * <p>As with {@link StateContext}, timers are implicitly scoped to the current window. All
-     * timer firings for a window will be received, but the implementation should choose to ignore
-     * those that are not applicable.
-     *
-     * @param timestamp the time at which the trigger’s {@link Trigger#onTimer} callback should
-     *        execute
-     * @param timeDomain the domain that the {@code timestamp} applies to
-     */
-    public abstract void setTimer(Instant timestamp, TimeDomain timeDomain);
-
-    /**
-     * Removes the timer set in this trigger context for the given {@code window}, {@code timestmap}
-     * and {@code timeDomain}.
-     */
-    public abstract void deleteTimer(Instant timestamp, TimeDomain timeDomain);
-
-    /** Returns the current processing time. */
-    public abstract Instant currentProcessingTime();
-
-    /** Returns the current synchronized processing time or {@code null} if unknown. */
-    @Nullable
-    public abstract Instant currentSynchronizedProcessingTime();
-
-    /** Returns the current event time or {@code null} if unknown. */
-    @Nullable
-    public abstract Instant currentEventTime();
-  }
 
   /** Information accessible to all the processing methods in this {@code ReduceFn}. */
   public abstract class Context {
@@ -127,7 +48,7 @@ public abstract class ReduceFn<K, InputT, OutputT, W extends BoundedWindow>
     public abstract WindowingStrategy<?, W> windowingStrategy();
 
     /** Return the interface for accessing state. */
-    public abstract StateContext state();
+    public abstract StateAccessor<K> state();
 
     /** Return the interface for accessing timers. */
     public abstract Timers timers();
@@ -144,16 +65,9 @@ public abstract class ReduceFn<K, InputT, OutputT, W extends BoundedWindow>
 
   /** Information accessible within {@link #onMerge}. */
   public abstract class OnMergeContext extends Context {
-    /**
-     * Return the collection of windows that were merged.
-     *
-     * <p>Note that this may include the result window.
-     */
-    public abstract Collection<W> mergingWindows();
-
     /** Return the interface for accessing state. */
     @Override
-    public abstract MergingStateContext state();
+    public abstract MergingStateAccessor<K, W> state();
   }
 
   /** Information accessible within {@link #onTrigger}. */
@@ -174,18 +88,8 @@ public abstract class ReduceFn<K, InputT, OutputT, W extends BoundedWindow>
 
   /**
    * Called when windows are merged.
-   *
-   * <p>There are generally two strategies for implementing this and handling merging of state:
-   * <ul>
-   * <li> Lazily merge the state when outputting. This is especially easy if all the state is stored
-   * in {@link MergeableState}, since an automatically merged view can be retrieved.
-   * <li> Eagerly merge the state inside the {@link #onMerge} implementation. Load all the state
-   * from the merging windows and write it back to the result window. In this case the state in the
-   * result window should be cleared into between the read and write in case it was in the source
-   * windows.
-   * </ul>
    */
-  public abstract void onMerge(OnMergeContext c) throws Exception;
+  public abstract void onMerge(OnMergeContext context) throws Exception;
 
   /**
    * Called when triggers fire.
@@ -193,24 +97,32 @@ public abstract class ReduceFn<K, InputT, OutputT, W extends BoundedWindow>
    * <p>Implementations of {@link ReduceFn} should call {@link OnTriggerContext#output} to emit
    * any results that should be included in the pane produced by this trigger firing.
    */
-  public abstract void onTrigger(OnTriggerContext c) throws Exception;
+  public abstract void onTrigger(OnTriggerContext context) throws Exception;
+
+  /**
+   * Called before {@link #onMerge} is invoked to provide an opportunity to prefetch any needed
+   * state.
+   *
+   * @param c Context to use prefetch from.
+   */
+  public void prefetchOnMerge(MergingStateAccessor<K, W> c) throws Exception {}
 
   /**
    * Called before {@link #onTrigger} is invoked to provide an opportunity to prefetch any needed
    * state.
    *
-   * @param c Context to use prefetch from.
+   * @param context Context to use prefetch from.
    */
-  public void prefetchOnTrigger(StateContext c) {}
+  public void prefetchOnTrigger(StateAccessor<K> context) {}
 
   /**
    * Called to clear any persisted state that the {@link ReduceFn} may be holding. This will be
    * called when the windowing is closing and will receive no future interactions.
    */
-  public abstract void clearState(Context c) throws Exception;
+  public abstract void clearState(Context context) throws Exception;
 
   /**
    * Returns true if the there is no buffered state.
    */
-  public abstract StateContents<Boolean> isEmpty(StateContext c);
+  public abstract ReadableState<Boolean> isEmpty(StateAccessor<K> context);
 }

@@ -38,7 +38,7 @@ import com.google.cloud.dataflow.sdk.util.state.StateNamespaces;
 import com.google.cloud.dataflow.sdk.util.state.StateNamespaces.WindowAndTriggerNamespace;
 import com.google.cloud.dataflow.sdk.util.state.StateNamespaces.WindowNamespace;
 import com.google.cloud.dataflow.sdk.util.state.StateTag;
-import com.google.cloud.dataflow.sdk.util.state.WatermarkStateInternal;
+import com.google.cloud.dataflow.sdk.util.state.WatermarkHoldState;
 import com.google.cloud.dataflow.sdk.values.TimestampedValue;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Throwables;
@@ -96,7 +96,8 @@ public class TriggerTester<InputT, W extends BoundedWindow> {
 
   protected final WindowingStrategy<Object, W> windowingStrategy;
 
-  private final TestInMemoryStateInternals stateInternals = new TestInMemoryStateInternals();
+  private final TestInMemoryStateInternals<?> stateInternals =
+      new TestInMemoryStateInternals<Object>();
   private final TestTimerInternals timerInternals = new TestTimerInternals();
   private final TriggerContextFactory<W> contextFactory;
   private final WindowFn<Object, W> windowFn;
@@ -176,7 +177,7 @@ public class TriggerTester<InputT, W extends BoundedWindow> {
         @SuppressWarnings("unchecked")
         WindowAndTriggerNamespace<W> namespace = (WindowAndTriggerNamespace<W>) untypedNamespace;
         if (namespace.getWindow().equals(window)) {
-          Set<StateTag<?>> tagsInUse = stateInternals.getTagsInUse(namespace);
+          Set<?> tagsInUse = stateInternals.getTagsInUse(namespace);
           assertTrue("Trigger has not cleared tags: " + tagsInUse, tagsInUse.isEmpty());
         }
       }
@@ -309,30 +310,26 @@ public class TriggerTester<InputT, W extends BoundedWindow> {
    * since it is just to test the trigger's {@code OnMerge} method.
    */
   public final void mergeWindows() throws Exception {
-    final Map<W, Collection<W>> windowToComponents = new HashMap<>();
-
     activeWindows.merge(new MergeCallback<W>() {
+      @Override
+      public void prefetchOnMerge(Collection<W> toBeMerged, Collection<W> activeToBeMerged,
+          W mergeResult) throws Exception {}
+
       @Override
       public void onMerge(Collection<W> toBeMerged, Collection<W> activeToBeMerged, W mergeResult)
           throws Exception {
-        windowToComponents.put(mergeResult, toBeMerged);
+        Map<W, FinishedTriggers> mergingFinishedSets =
+            Maps.newHashMapWithExpectedSize(activeToBeMerged.size());
+        for (W oldWindow : activeToBeMerged) {
+          mergingFinishedSets.put(oldWindow, getFinishedSet(oldWindow));
+        }
+        executableTrigger.invokeOnMerge(contextFactory.createOnMergeContext(mergeResult,
+            new TestTimers(windowNamespace(mergeResult)), executableTrigger,
+            getFinishedSet(mergeResult), mergingFinishedSets));
         timerInternals.setTimer(TimerData.of(
             windowNamespace(mergeResult), mergeResult.maxTimestamp(), TimeDomain.EVENT_TIME));
       }
     });
-
-    for (Map.Entry<W, Collection<W>> merged : windowToComponents.entrySet()) {
-      W window = merged.getKey();
-      Collection<W> oldWindows = merged.getValue();
-      Map<W, FinishedTriggers> mergingFinishedSets =
-          Maps.newHashMapWithExpectedSize(oldWindows.size());
-      for (W oldWindow : oldWindows) {
-        mergingFinishedSets.put(oldWindow, getFinishedSet(oldWindow));
-      }
-      executableTrigger.invokeOnMerge(
-          contextFactory.createOnMergeContext(window, new TestTimers(windowNamespace(window)),
-              oldWindows, executableTrigger, getFinishedSet(window), mergingFinishedSets));
-    }
   }
 
   private FinishedTriggers getFinishedSet(W window) {
@@ -347,11 +344,16 @@ public class TriggerTester<InputT, W extends BoundedWindow> {
   /**
    * Simulate state.
    */
-  private static class TestInMemoryStateInternals extends InMemoryStateInternals {
+  private static class TestInMemoryStateInternals<K> extends InMemoryStateInternals<K> {
 
-    public Set<StateTag<?>> getTagsInUse(StateNamespace namespace) {
-      Set<StateTag<?>> inUse = new HashSet<>();
-      for (Map.Entry<StateTag<?>, State> entry : inMemoryState.getTagsInUse(namespace).entrySet()) {
+    public TestInMemoryStateInternals() {
+      super(null);
+    }
+
+    public Set<StateTag<? super K, ?>> getTagsInUse(StateNamespace namespace) {
+      Set<StateTag<? super K, ?>> inUse = new HashSet<>();
+      for (Map.Entry<StateTag<? super K, ?>, State> entry :
+          inMemoryState.getTagsInUse(namespace).entrySet()) {
         if (!isEmptyForTesting(entry.getValue())) {
           inUse.add(entry.getKey());
         }
@@ -367,8 +369,9 @@ public class TriggerTester<InputT, W extends BoundedWindow> {
     public Instant earliestWatermarkHold() {
       Instant minimum = null;
       for (State storage : inMemoryState.values()) {
-        if (storage instanceof WatermarkStateInternal) {
-          Instant hold = ((WatermarkStateInternal) storage).get().read();
+        if (storage instanceof WatermarkHoldState) {
+          @SuppressWarnings("unchecked")
+          Instant hold = ((WatermarkHoldState<BoundedWindow>) storage).read();
           if (minimum == null || (hold != null && hold.isBefore(minimum))) {
             minimum = hold;
           }
@@ -544,7 +547,7 @@ public class TriggerTester<InputT, W extends BoundedWindow> {
     }
   }
 
-  private class TestTimers implements ReduceFn.Timers {
+  private class TestTimers implements Timers {
     private final StateNamespace namespace;
 
     public TestTimers(StateNamespace namespace) {

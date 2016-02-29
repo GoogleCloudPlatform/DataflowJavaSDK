@@ -41,18 +41,15 @@ import com.google.cloud.dataflow.sdk.Pipeline.PipelineVisitor;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.coders.IterableCoder;
-import com.google.cloud.dataflow.sdk.io.AvroIO;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO;
 import com.google.cloud.dataflow.sdk.io.PubsubIO;
 import com.google.cloud.dataflow.sdk.io.Read;
-import com.google.cloud.dataflow.sdk.io.TextIO;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.options.StreamingOptions;
-import com.google.cloud.dataflow.sdk.runners.dataflow.AvroIOTranslator;
+import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner.GroupByKeyAndSortValuesOnly;
 import com.google.cloud.dataflow.sdk.runners.dataflow.BigQueryIOTranslator;
 import com.google.cloud.dataflow.sdk.runners.dataflow.PubsubIOTranslator;
 import com.google.cloud.dataflow.sdk.runners.dataflow.ReadTranslator;
-import com.google.cloud.dataflow.sdk.runners.dataflow.TextIOTranslator;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
 import com.google.cloud.dataflow.sdk.transforms.Combine;
 import com.google.cloud.dataflow.sdk.transforms.Create;
@@ -141,8 +138,12 @@ public class DataflowPipelineTranslator {
   /**
    * Translates a {@link Pipeline} into a {@code JobSpecification}.
    */
-  public JobSpecification translate(Pipeline pipeline, List<DataflowPackage> packages) {
-    Translator translator = new Translator(pipeline);
+  public JobSpecification translate(
+      Pipeline pipeline,
+      DataflowPipelineRunner runner,
+      List<DataflowPackage> packages) {
+
+    Translator translator = new Translator(pipeline, runner);
     Job result = translator.translate(packages);
     return new JobSpecification(result, Collections.unmodifiableMap(translator.stepNames));
   }
@@ -349,6 +350,9 @@ public class DataflowPipelineTranslator {
     /** The Pipeline to translate. */
     private final Pipeline pipeline;
 
+    /** The runner which will execute the pipeline. */
+    private final DataflowPipelineRunner runner;
+
     /** The Cloud Dataflow Job representation. */
     private final Job job = new Job();
 
@@ -382,8 +386,9 @@ public class DataflowPipelineTranslator {
      * Constructs a Translator that will translate the specified
      * Pipeline into Dataflow objects.
      */
-    public Translator(Pipeline pipeline) {
+    public Translator(Pipeline pipeline, DataflowPipelineRunner runner) {
       this.pipeline = pipeline;
+      this.runner = runner;
     }
 
     /**
@@ -702,7 +707,10 @@ public class DataflowPipelineTranslator {
       Map<String, Object> outputInfo = new HashMap<>();
       addString(outputInfo, PropertyNames.OUTPUT_NAME, name);
       addString(outputInfo, PropertyNames.USER_NAME, value.getName());
-
+      if (value instanceof PCollection
+          && runner.doesPCollectionRequireIndexedFormat((PCollection<?>) value)) {
+        addBoolean(outputInfo, PropertyNames.USE_INDEXED_FORMAT, true);
+      }
       if (valueCoder != null) {
         // Verify that encoding can be decoded, in order to catch serialization
         // failures as early as possible.
@@ -887,6 +895,30 @@ public class DataflowPipelineTranslator {
         });
 
     registerTransformTranslator(
+        GroupByKeyAndSortValuesOnly.class,
+        new TransformTranslator<GroupByKeyAndSortValuesOnly>() {
+          @Override
+          public void translate(
+              GroupByKeyAndSortValuesOnly transform,
+              TranslationContext context) {
+            groupByKeyAndSortValuesHelper(transform, context);
+          }
+
+          private <K1, K2, V> void groupByKeyAndSortValuesHelper(
+              GroupByKeyAndSortValuesOnly<K1, K2, V> transform,
+              TranslationContext context) {
+            context.addStep(transform, "GroupByKey");
+            context.addInput(PropertyNames.PARALLEL_INPUT, context.getInput(transform));
+            context.addOutput(PropertyNames.OUTPUT, context.getOutput(transform));
+            context.addInput(PropertyNames.SORT_VALUES, true);
+
+            // TODO: Add support for combiner lifting once the need arises.
+            context.addInput(
+                PropertyNames.DISALLOW_COMBINER_LIFTING, true);
+          }
+        });
+
+    registerTransformTranslator(
         GroupByKey.class,
         new TransformTranslator<GroupByKey>() {
           @Override
@@ -964,7 +996,6 @@ public class DataflowPipelineTranslator {
           }
         });
 
-
     registerTransformTranslator(
         Window.Bound.class,
         new DataflowPipelineTranslator.TransformTranslator<Window.Bound>() {
@@ -993,11 +1024,6 @@ public class DataflowPipelineTranslator {
     // IO Translation.
 
     registerTransformTranslator(
-        AvroIO.Read.Bound.class, new AvroIOTranslator.ReadTranslator());
-    registerTransformTranslator(
-        AvroIO.Write.Bound.class, new AvroIOTranslator.WriteTranslator());
-
-    registerTransformTranslator(
         BigQueryIO.Read.Bound.class, new BigQueryIOTranslator.ReadTranslator());
     registerTransformTranslator(
         BigQueryIO.Write.Bound.class, new BigQueryIOTranslator.WriteTranslator());
@@ -1007,11 +1033,6 @@ public class DataflowPipelineTranslator {
     registerTransformTranslator(
         DataflowPipelineRunner.StreamingPubsubIOWrite.class,
         new PubsubIOTranslator.WriteTranslator());
-
-    registerTransformTranslator(
-        TextIO.Read.Bound.class, new TextIOTranslator.ReadTranslator());
-    registerTransformTranslator(
-        TextIO.Write.Bound.class, new TextIOTranslator.WriteTranslator());
 
     registerTransformTranslator(Read.Bounded.class, new ReadTranslator());
   }

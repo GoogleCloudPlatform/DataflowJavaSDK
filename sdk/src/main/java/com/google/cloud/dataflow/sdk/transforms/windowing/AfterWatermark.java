@@ -179,6 +179,9 @@ public class AfterWatermark<W extends BoundedWindow> {
 
     @Override
     public void onMerge(OnMergeContext c) throws Exception {
+      // NOTE that the ReduceFnRunner will delete all end-of-window timers for the
+      // merged-away windows.
+
       ExecutableTrigger<W> earlySubtrigger = c.trigger().subTrigger(EARLY_INDEX);
       // We check the early trigger to determine if we are still processing it or
       // if the end of window has transitioned us to the late trigger
@@ -328,11 +331,17 @@ public class AfterWatermark<W extends BoundedWindow> {
 
     @Override
     public void onElement(OnElementContext c) throws Exception {
+      // We're interested in knowing when the input watermark passes the end of the window.
+      // (It is possible this has already happened, in which case the timer will be fired
+      // almost immediately).
       c.setTimer(c.window().maxTimestamp(), TimeDomain.EVENT_TIME);
     }
 
     @Override
     public void onMerge(OnMergeContext c) throws Exception {
+      // NOTE that the ReduceFnRunner will delete all end-of-window timers for the
+      // merged-away windows.
+
       if (!c.trigger().finishedInAllMergingWindows()) {
         // If the trigger is still active in any merging window then it is still active in the new
         // merged window, because even if the merged window is "done" some pending elements haven't

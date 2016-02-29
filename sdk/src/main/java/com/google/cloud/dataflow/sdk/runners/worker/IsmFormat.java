@@ -23,6 +23,7 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.cloud.dataflow.sdk.coders.AtomicCoder;
 import com.google.cloud.dataflow.sdk.coders.ByteArrayCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
+import com.google.cloud.dataflow.sdk.coders.Coder.NonDeterministicException;
 import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.coders.ListCoder;
 import com.google.cloud.dataflow.sdk.coders.StandardCoder;
@@ -31,7 +32,6 @@ import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
 import com.google.cloud.dataflow.sdk.util.CloudObject;
 import com.google.cloud.dataflow.sdk.util.PropertyNames;
 import com.google.cloud.dataflow.sdk.util.RandomAccessData;
-import com.google.cloud.dataflow.sdk.util.ScalableBloomFilter;
 import com.google.cloud.dataflow.sdk.util.VarInt;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.common.base.MoreObjects;
@@ -54,6 +54,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import javax.annotation.Nullable;
+
 /**
  * An Ism file is a prefix encoded composite key value file broken into shards. Each composite
  * key is composed of a fixed number of component keys. A fixed number of those sub keys represent
@@ -64,7 +66,7 @@ import java.util.List;
  * <p>An Ism file is composed of these high level sections (in order):
  * <ul>
  *   <li>shard block</li>
- *   <li>bloom filter (See {@link ScalableBloomFilter} for details on encoding format)</li>
+ *   <li>bloom filter (See {@code ScalableBloomFilter} for details on encoding format)</li>
  *   <li>shard index</li>
  *   <li>footer (See {@link Footer} for details on encoding format)</li>
  * </ul>
@@ -97,7 +99,7 @@ import java.util.List;
  *   <li>byte offset to key prefix in data block (variable length long coding)</li>
  * </ul>
  *
- * <p>The shard index is composed of a variable length integer encoding representing
+ * <p>The shard index is composed of a {@link VarInt variable length integer} encoding representing
  * the number of shard index records followed by that many shard index records.
  * See {@link IsmShardCoder} for further details as to its encoding scheme.
  */
@@ -135,7 +137,9 @@ public class IsmFormat {
     }
 
     private final List<?> keyComponents;
+    @Nullable
     private final V value;
+    @Nullable
     private final byte[] metadata;
     private IsmRecord(List<?> keyComponents, V value, byte[] metadata) {
       this.keyComponents = keyComponents;
@@ -456,6 +460,21 @@ public class IsmFormat {
         }
       }
       return super.structuralValue(record);
+    }
+  }
+
+  /**
+   * Validates that the key portion of the given coder is deterministic.
+   */
+  static void validateCoderIsCompatible(IsmRecordCoder<?> coder) {
+    for (Coder<?> keyComponentCoder : coder.getKeyComponentCoders()) {
+      try {
+          keyComponentCoder.verifyDeterministic();
+      } catch (NonDeterministicException e) {
+        throw new IllegalArgumentException(
+            String.format("Key component coder %s is expected to be deterministic.",
+                keyComponentCoder), e);
+      }
     }
   }
 
