@@ -1,4 +1,4 @@
-package com.google.cloud.dataflow.contrib.kafka;
+package com.google.cloud.dataflow.contrib.kafka.examples;
 
 import java.util.List;
 import java.util.Map;
@@ -17,6 +17,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
+import com.google.cloud.dataflow.contrib.kafka.KafkaSource;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.io.Read;

@@ -22,14 +22,37 @@
   <parent>
     <groupId>com.google.cloud.dataflow</groupId>
     <artifactId>google-cloud-dataflow-java-contrib-kafka-parent</artifactId>
+    <relativePath>../../kafka/common-pom.xml</relativePath>
     <version>0.0.1-SNAPSHOT</version>
-    <relativePath>./common-pom.xml</relativePath>
   </parent>
 
   <groupId>com.google.cloud.dataflow</groupId>
-  <artifactId>google-cloud-dataflow-java-contrib-kafka</artifactId>
-  <name>Google Cloud Dataflow Kafka Connectors</name>
-  <description>Dataflow Library to read Kafka topics</description>
+  <artifactId>google-cloud-dataflow-java-contrib-kafka-examples</artifactId>
+  <name>Google Cloud Dataflow Kafka Examples</name>
+  <description>Examples apps using Kafka Source in Google Cloud Dataflow</description>
   <packaging>jar</packaging>
 
+  <dependencies>
+    <dependency>
+      <groupId>com.google.cloud.dataflow</groupId>
+      <artifactId>google-cloud-dataflow-java-contrib-kafka</artifactId>      
+      <version>${project.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>com.google.cloud.dataflow</groupId>
+          <artifactId>google-cloud-dataflow-java-contrib-kafka-parent</artifactId> <!-- XXX whats the right way to do this? -->
+        </exclusion>
+      </exclusions>
+    </dependency> 
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-log4j12</artifactId>
+      <version>1.7.16</version>
+    </dependency>
+    <dependency>
+      <groupId>log4j</groupId>
+      <artifactId>log4j</artifactId>
+      <version>1.2.17</version>
+    </dependency>
+  </dependencies>
 </project>
