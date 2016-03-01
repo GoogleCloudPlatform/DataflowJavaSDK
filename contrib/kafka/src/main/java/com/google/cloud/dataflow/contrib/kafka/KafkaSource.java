@@ -67,7 +67,7 @@ import javax.annotation.Nullable;
  *
  * <pre>
  * Usage:
- *        UnboundedSource<String, ?> kafkaSource = KafkaSource
+ *        UnboundedSource&lt;String, ?&gt; kafkaSource = KafkaSource
  *            .&lt;String&gt;unboundedValueSourceBuilder()
  *            .withBootstrapServers("broker_1:9092,broker_2:9092)
  *            .withTopics(ImmutableList.of("topic_a", "topic_b")
@@ -241,11 +241,9 @@ public class KafkaSource {
 
     /**
      * A function to calculate watermark. When this is not set, last record timestamp is returned
-     * in {@link UnboundedReader#getWatermark()}. NOTE: this might be invoked before any records
-     * have been read, in which case the function is invoked with null KafkaRecord. User could
-     * decide the policy in such a case (e.g. return current timestamp).
+     * in {@link UnboundedReader#getWatermark()}.
      *
-     * @param watermarkFn Function to calculate watermark for a record. NOTE: input might be null.
+     * @param watermarkFn to calculate watermark at a record.
      * @return Builder
      */
     public Builder<K, V> withWatermarkFn(
@@ -420,18 +418,11 @@ public class KafkaSource {
   private static class UnboundedKafkaReader<K, V>
              extends UnboundedReader<KafkaRecord<K, V>> {
 
-    private final UnboundedKafkaSource<K, V> source;
-    private final String name;
-    private KafkaConsumer<byte[], byte[]> consumer;
-
-    // maintains state of each assigned partition
+    // maintains state of each assigned partition (buffered records and consumed offset)
     private static class PartitionState {
       private final TopicPartition topicPartition;
-
-      private Iterator<ConsumerRecord<byte[], byte[]>> recordIter = Iterators.emptyIterator();
-
       private long consumedOffset;
-      // might need to keep track of per partition watermark. not decided yet about the semantics
+      private Iterator<ConsumerRecord<byte[], byte[]>> recordIter = Iterators.emptyIterator();
 
       PartitionState(TopicPartition partition, long offset) {
         this.topicPartition = partition;
@@ -439,12 +430,16 @@ public class KafkaSource {
       }
     }
 
-    private List<PartitionState> partitionStates;
-
+    private final UnboundedKafkaSource<K, V> source;
+    private final String name;
+    private KafkaConsumer<byte[], byte[]> consumer;
+    private final List<PartitionState> partitionStates;
     private KafkaRecord<K, V> curRecord;
     private Instant curTimestamp;
-
     private Iterator<PartitionState> curBatch = Iterators.emptyIterator();
+
+    /** watermark before any records have been read. */
+    private static Instant initialWatermark = new Instant(Long.MIN_VALUE);
 
     public String toString() {
       return name;
@@ -476,7 +471,7 @@ public class KafkaSource {
         // we could consider allowing a mismatch, though it is not expected in current Dataflow
 
         for (int i = 0; i < source.assignedPartitions.size(); i++) {
-          KafkaCheckpointMark.PartitionMark ckptMark = checkpointMark.getPartitions().get(i);
+          PartitionMark ckptMark = checkpointMark.getPartitions().get(i);
           TopicPartition assigned = source.assignedPartitions.get(i);
 
           Preconditions.checkState(ckptMark.getTopicPartition().equals(assigned),
@@ -602,16 +597,12 @@ public class KafkaSource {
     @Override
     public Instant getWatermark() {
       if (curRecord == null) {
-        LOG.warn("{} : getWatermar() : no records have been read yet.", name);
-        // if watermarkFn is set, we invoke it with null record and let the user decide what to do,
-        // otherwise return now().
+        LOG.warn("{} : getWatermark() : no records have been read yet.", name);
+        return initialWatermark;
       }
 
-      if (source.watermarkFn.isPresent()) {
-        return source.watermarkFn.get().apply(curRecord);
-      } else {
-        return curRecord == null ? Instant.now() : curTimestamp;
-      }
+      return source.watermarkFn.isPresent() ?
+          source.watermarkFn.get().apply(curRecord) : curTimestamp;
     }
 
     @Override
@@ -633,7 +624,7 @@ public class KafkaSource {
 
     @Override
     public KafkaRecord<K, V> getCurrent() throws NoSuchElementException {
-      // TODO: should we delay updating consumed offset till now?
+      // should we delay updating consumed offset till this point? Mostly not required.
       return curRecord;
     }
 
@@ -689,11 +680,9 @@ public class KafkaSource {
 
     /**
      * A function to calculate watermark. When this is not set, last record timestamp is returned
-     * in {@link UnboundedReader#getWatermark()}. NOTE: this might be invoked before any records
-     * have been read, in which case the function is invoked with null value. User could
-     * decide the policy in such a case (e.g. return current timestamp).
+     * in {@link UnboundedReader#getWatermark()}.
      *
-     * @param watermarkFn Function to calculate watermark for a record. NOTE: input might be null.
+     * @param watermarkFn to calculate watermark at a record.
      * @return Builder
      */
     public ValueSourceBuilder<V> withWatermarkFn(SerializableFunction<V, Instant> watermarkFn) {
@@ -710,7 +699,7 @@ public class KafkaSource {
         final SerializableFunction<InT, OutT> fn) {
       return new SerializableFunction<KafkaRecord<byte[], InT>, OutT>() {
         public OutT apply(KafkaRecord<byte[], InT> record) {
-          return fn.apply(record == null ? null : record.getValue());
+          return fn.apply(record.getValue());
         }
       };
     }
