@@ -64,6 +64,22 @@ import javax.annotation.Nullable;
 
 /**
  * Dataflow Source for consuming Kafka sources.
+ *
+ * <pre>
+ * Usage:
+ *        UnboundedSource<String, ?> kafkaSource = KafkaSource
+ *            .&lt;String&gt;unboundedValueSourceBuilder()
+ *            .withBootstrapServers("broker_1:9092,broker_2:9092)
+ *            .withTopics(ImmutableList.of("topic_a", "topic_b")
+ *            .withValueCoder(StringUtf8Coder.of())
+ *            .withTimestampFn(timestampFn)
+ *            .withWatermarkFn(watermarkFn)
+ *            .build();
+ *
+ *        pipeline
+ *          .apply(Read.from(kafkaSource).named("read_topic_a_and_b"))
+ *          ....
+ * </pre>
  */
 public class KafkaSource {
 
@@ -554,7 +570,7 @@ public class KafkaSource {
             LOG.info("{} : first record offset {}", name, offset);
           }
 
-          // apply user coders
+          // apply user coders. might want to allow skipping records that fail in coders.
           curRecord = new KafkaRecord<K, V>(
               rawRecord.topic(),
               rawRecord.partition(),
