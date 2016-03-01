@@ -1,22 +1,21 @@
+/*
+ * Copyright (C) 2015 Google Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ */
+
 package com.google.cloud.dataflow.contrib.kafka.examples;
 
-import java.util.List;
-import java.util.Map;
-
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.serialization.StringSerializer;
-import org.joda.time.Duration;
-import org.joda.time.Instant;
-import org.joda.time.format.DateTimeFormat;
-import org.joda.time.format.DateTimeFormatter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectWriter;
 import com.google.cloud.dataflow.contrib.kafka.KafkaSource;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
@@ -39,6 +38,24 @@ import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.joda.time.Duration;
+import org.joda.time.Instant;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * This Dataflow app show cases {@link KafkaSource}. The application reads from a Kafka topic
@@ -63,6 +80,9 @@ public class TopHashtagsExample {
 
   private static final Logger LOG = LoggerFactory.getLogger(TopHashtagsExample.class);
 
+  /**
+   * Options for the app.
+   */
   public static interface Options extends PipelineOptions {
     @Description("Sliding window size, in minutes")
     @Default.Integer(10)
@@ -119,7 +139,8 @@ public class TopHashtagsExample {
           .of(Duration.standardMinutes(windowSize))
           .every(Duration.standardMinutes(windowPeriod))))
       .apply(Count.<String>perElement())
-      .apply(Top.of(options.getNumTopHashtags(), new KV.OrderByValue<String, Long>()).withoutDefaults())
+      .apply(Top.of(options.getNumTopHashtags(), new KV.OrderByValue<String, Long>())
+                .withoutDefaults())
       .apply(ParDo.of(new OutputFormatter()))
       .apply(ParDo.of(new KafkaWriter(options)));
 
@@ -133,7 +154,7 @@ public class TopHashtagsExample {
   private static final ObjectMapper jsonMapper = new ObjectMapper();
 
   /**
-   * Emit hashtags in the tweet (if any)
+   * Emit hashtags in the tweet (if any).
    */
   private static class ExtractHashtagsFn extends DoFn<String, String> {
 
@@ -153,8 +174,8 @@ public class TopHashtagsExample {
         @Override
         public Instant apply(String json) {
           try {
-            long timestamp_ms = jsonMapper.readTree(json).path("timestamp_ms").asLong();
-            return timestamp_ms == 0 ? Instant.now() : new Instant(timestamp_ms);
+            long tsMillis = jsonMapper.readTree(json).path("timestamp_ms").asLong();
+            return tsMillis == 0 ? Instant.now() : new Instant(tsMillis);
           } catch (Exception e) {
             throw Throwables.propagate(e);
           }
@@ -165,8 +186,8 @@ public class TopHashtagsExample {
   private static class OutputFormatter extends DoFn<List<KV<String, Long>>, String>
       implements DoFn.RequiresWindowAccess {
 
-    transient private DateTimeFormatter formatter;
-    transient private ObjectWriter jsonWriter;
+    private transient DateTimeFormatter formatter;
+    private transient ObjectWriter jsonWriter;
 
     static class OutputJson {
       @JsonProperty String windowStart;

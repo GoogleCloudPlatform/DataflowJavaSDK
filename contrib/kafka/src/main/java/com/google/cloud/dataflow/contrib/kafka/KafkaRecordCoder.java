@@ -1,12 +1,21 @@
+/*
+ * Copyright (C) 2015 Google Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ */
+
 package com.google.cloud.dataflow.contrib.kafka;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.List;
-
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
@@ -17,6 +26,17 @@ import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
 import com.google.cloud.dataflow.sdk.util.PropertyNames;
 import com.google.common.collect.ImmutableList;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.List;
+
+/**
+ * {@link Coder} for {@link KafkaRecord}.
+ */
 public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
 
   private static final StringUtf8Coder stringCoder = StringUtf8Coder.of();
@@ -46,11 +66,11 @@ public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
   public void encode(KafkaRecord<K, V> value, OutputStream outStream, Context context)
                          throws CoderException, IOException {
     Context nested = context.nested();
-    stringCoder.encode(value.getTopic(),      outStream, nested);
-    intCoder   .encode(value.getPartition(),  outStream, nested);
-    longCoder  .encode(value.getOffset(),     outStream, nested);
-    keyCoder   .encode(value.getKey(),        outStream, nested);
-    valueCoder .encode(value.getValue(),      outStream, nested);
+    stringCoder.encode(value.getTopic(), outStream, nested);
+    intCoder.encode(value.getPartition(), outStream, nested);
+    longCoder.encode(value.getOffset(), outStream, nested);
+    keyCoder.encode(value.getKey(), outStream, nested);
+    valueCoder.encode(value.getValue(), outStream, nested);
   }
 
   @Override
@@ -58,11 +78,11 @@ public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
                                       throws CoderException, IOException {
     Context nested = context.nested();
     return new KafkaRecord<K, V>(
-        stringCoder .decode(inStream, nested),
-        intCoder    .decode(inStream, nested),
-        longCoder   .decode(inStream, nested),
-        keyCoder    .decode(inStream, nested),
-        valueCoder  .decode(inStream, nested));
+        stringCoder.decode(inStream, nested),
+        intCoder.decode(inStream, nested),
+        longCoder.decode(inStream, nested),
+        keyCoder.decode(inStream, nested),
+        valueCoder.decode(inStream, nested));
   }
 
   @Override
@@ -79,20 +99,21 @@ public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
   public boolean isRegisterByteSizeObserverCheap(KafkaRecord<K, V> value, Context context) {
     return keyCoder.isRegisterByteSizeObserverCheap(value.getKey(), context.nested())
         && valueCoder.isRegisterByteSizeObserverCheap(value.getValue(), context.nested());
-    //XXX don't we have to implement getEncodedSize()?
+    //TODO : do we have to implement getEncodedSize()?
   }
 
   @Override
-  public Object structuralValue(KafkaRecord<K, V> value) throws Exception{
-    if (consistentWithEquals())
+  public Object structuralValue(KafkaRecord<K, V> value) throws Exception {
+    if (consistentWithEquals()) {
       return value;
-    else
+    } else {
       return new KafkaRecord<Object, Object>(
           value.getTopic(),
           value.getPartition(),
           value.getOffset(),
           keyCoder.structuralValue(value.getKey()),
           valueCoder.structuralValue(value.getValue()));
+    }
   }
 
   @Override
