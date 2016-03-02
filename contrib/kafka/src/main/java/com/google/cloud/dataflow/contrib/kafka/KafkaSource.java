@@ -31,6 +31,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -417,6 +418,16 @@ public class KafkaSource {
     @Override
     public UnboundedKafkaReader<K, V> createReader(PipelineOptions options,
                                                    KafkaCheckpointMark checkpointMark) {
+      if (assignedPartitions.isEmpty()) {
+        LOG.warn("hack: working around DirectRunner issue. It does not generateSplits()");
+        // generate single split and return reader from it.
+        try {
+          return new UnboundedKafkaReader<K, V>(
+              generateInitialSplits(1, options).get(0), checkpointMark);
+        } catch (Exception e) {
+          Throwables.propagate(e);
+        }
+      }
       return new UnboundedKafkaReader<K, V>(this, checkpointMark);
     }
 
