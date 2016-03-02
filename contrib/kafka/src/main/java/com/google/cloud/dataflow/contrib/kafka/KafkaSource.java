@@ -264,8 +264,6 @@ public class KafkaSource {
     /**
      * A factory to create Kafka {@link Consumer} from consumer configuration.
      * Mainly used for tests.
-     * @param kafkaConsumerFactoryFn function to create
-     * @return
      */
     public Builder<K, V> withKafkaConsumerFactoryFn(
       SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> kafkaConsumerFactoryFn) {
@@ -354,7 +352,7 @@ public class KafkaSource {
 
       // fetch partitions for each topic
       // sort by <topic, partition>
-      // round-robin assign the partition to splits
+      // round-robin assign the partitions to splits
 
       try {
         for (String topic : topics) {
@@ -496,11 +494,9 @@ public class KafkaSource {
             }
         }));
 
-      // a) verify that assigned and check-pointed partitions match exactly
-      // b) set consumed offsets
-
       if (checkpointMark != null) {
-        // set consumed offset
+        // a) verify that assigned and check-pointed partitions match exactly
+        // b) set consumed offsets
 
         Preconditions.checkState(
             checkpointMark.getPartitions().size() == source.assignedPartitions.size(),
@@ -549,7 +545,7 @@ public class KafkaSource {
       consumer = source.kafkaConsumerFactoryFn.apply(source.consumerConfig);
       consumer.assign(source.assignedPartitions);
 
-      // seek to next offset if consumedOffset is set
+      // seek to consumedOffset + 1 if it is set
       for (PartitionState p : partitionStates) {
         if (p.consumedOffset >= 0) {
           LOG.info("{}: resuming {} at {}", name, p.topicPartition, p.consumedOffset + 1);
@@ -566,7 +562,7 @@ public class KafkaSource {
     @Override
     public boolean advance() throws IOException {
       /* Read first record (if any). we need to loop here because :
-       *  - (a) some records initially need to be skipped since they are before consumedOffset
+       *  - (a) some records initially need to be skipped if they are consumedOffset
        *  - (b) when the current batch empty, we want to readNextBatch() and then advance.
        *  - (c) curBatch is an iterator of iterators. we interleave the records from each.
        *    curBatch.next() might return an empty iterator.
