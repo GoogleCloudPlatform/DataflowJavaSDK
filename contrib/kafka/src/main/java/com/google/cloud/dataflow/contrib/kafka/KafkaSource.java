@@ -38,6 +38,7 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.io.Closeables;
 
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -109,7 +110,7 @@ public class KafkaSource {
    * @param <V> value type
    * @return {@link ValueSourceBuilder}
    */
-  public static <V extends Serializable> ValueSourceBuilder<V> unboundedValueSourceBuilder() {
+  public static <V> ValueSourceBuilder<V> unboundedValueSourceBuilder() {
     return new ValueSourceBuilder<V>(
        new Builder<byte[], V>()
        .withKeyCoder(ByteArrayCoder.of()));
@@ -130,6 +131,13 @@ public class KafkaSource {
     private SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn = new NowTimestampFn<>();
     private Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn =
         Optional.absent();
+    private SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>
+      kafkaConsumerFactoryFn =
+        new SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>() {
+          public Consumer<byte[], byte[]> apply(Map<String, Object> config) {
+            return new KafkaConsumer<>(config); // default 0.9 consumer
+          }
+        };
 
     private Map<String, Object> mutableConsumerConfig = Maps.newHashMap();
 
@@ -253,6 +261,18 @@ public class KafkaSource {
     }
 
     /**
+     * A factory to create Kafka {@link Consumer} from consumer configuration.
+     * Mainly used for tests.
+     * @param kafkaConsumerFactoryFn function to create
+     * @return
+     */
+    public Builder<K, V> withKafkaConsumerFactoryFn(
+      SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> kafkaConsumerFactoryFn) {
+      this.kafkaConsumerFactoryFn = kafkaConsumerFactoryFn;
+      return this;
+    }
+
+    /**
      * Build Unbounded Kafka Source
      *
      * @return UnboundedKafkaSource
@@ -277,6 +297,7 @@ public class KafkaSource {
           valueCoder,
           timestampFn,
           watermarkFn,
+          kafkaConsumerFactoryFn,
           ImmutableList.<TopicPartition>of() // no assigned partitions yet.
           );
     }
@@ -296,6 +317,8 @@ public class KafkaSource {
     private final SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn;
     // would it be a good idea to pass currentTimestamp to watermarkFn?
     private final Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn;
+    private
+      SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> kafkaConsumerFactoryFn;
     private final List<TopicPartition> assignedPartitions;
 
     public UnboundedKafkaSource(
@@ -306,6 +329,7 @@ public class KafkaSource {
         Coder<V> valueCoder,
         SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn,
         Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn,
+        SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> kafkaConsumerFactoryFn,
         List<TopicPartition> assignedPartitions) {
 
       this.id = id;
@@ -315,6 +339,7 @@ public class KafkaSource {
       this.valueCoder = valueCoder;
       this.timestampFn = timestampFn;
       this.watermarkFn = watermarkFn;
+      this.kafkaConsumerFactoryFn = kafkaConsumerFactoryFn;
       this.assignedPartitions = ImmutableList.copyOf(assignedPartitions);
     }
 
@@ -322,7 +347,7 @@ public class KafkaSource {
     public List<UnboundedKafkaSource<K, V>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
 
-      KafkaConsumer<K, V> consumer = new KafkaConsumer<K, V>(consumerConfig);
+      Consumer<byte[], byte[]> consumer = kafkaConsumerFactoryFn.apply(consumerConfig);
 
       List<TopicPartition> partitions = Lists.newArrayList();
 
@@ -382,6 +407,7 @@ public class KafkaSource {
             this.valueCoder,
             this.timestampFn,
             this.watermarkFn,
+            this.kafkaConsumerFactoryFn,
             assignedToSplit));
       }
 
@@ -432,7 +458,7 @@ public class KafkaSource {
 
     private final UnboundedKafkaSource<K, V> source;
     private final String name;
-    private KafkaConsumer<byte[], byte[]> consumer;
+    private Consumer<byte[], byte[]> consumer;
     private final List<PartitionState> partitionStates;
     private KafkaRecord<K, V> curRecord;
     private Instant curTimestamp;
@@ -488,7 +514,8 @@ public class KafkaSource {
 
       // Use a longer timeout for first fetch. Kafka consumer seems to do better with poll() with
       // longer timeout initially. Looks like it does not handle initial connection setup properly
-      // with short polls. In my tests it took ~5 seconds before first record was read with this
+      // with short polls and backoff policy in Dataflow might be making things worse for
+      // this case. In my tests it took ~5 seconds before first record was read with this
       // hack and 20-30 seconds with out.
       long timeoutMillis = isFirstFetch ? 4000 : 100;
       ConsumerRecords<byte[], byte[]> records = consumer.poll(timeoutMillis);
@@ -508,7 +535,7 @@ public class KafkaSource {
 
     @Override
     public boolean start() throws IOException {
-      consumer = new KafkaConsumer<>(source.consumerConfig);
+      consumer = source.kafkaConsumerFactoryFn.apply(source.consumerConfig);
       consumer.assign(source.assignedPartitions);
 
       // seek to next offset if consumedOffset is set
@@ -688,6 +715,18 @@ public class KafkaSource {
     public ValueSourceBuilder<V> withWatermarkFn(SerializableFunction<V, Instant> watermarkFn) {
       return new ValueSourceBuilder<V>(
           underlying.withTimestampFn(unwrapKafkaAndThen(watermarkFn)));
+    }
+
+    /**
+     * A factory to create Kafka {@link Consumer} from consumer configuration.
+     * Mainly used for tests.
+     * @param kafkaConsumerFactoryFn function to create
+     * @return
+     */
+    public ValueSourceBuilder<V> withKafkaConsumerFactoryFn(
+      SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> kafkaConsumerFactoryFn) {
+      return new ValueSourceBuilder<V>(
+          underlying.withKafkaConsumerFactoryFn(kafkaConsumerFactoryFn));
     }
 
     public UnboundedSource<V, KafkaCheckpointMark> build() {
