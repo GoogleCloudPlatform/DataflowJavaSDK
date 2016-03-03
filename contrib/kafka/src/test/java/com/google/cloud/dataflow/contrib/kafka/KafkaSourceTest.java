@@ -37,6 +37,7 @@ import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.RemoveDuplicates;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
+import com.google.cloud.dataflow.sdk.util.SerializableUtils;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollectionList;
 import com.google.common.collect.ImmutableList;
@@ -198,9 +199,12 @@ public class KafkaSourceTest {
   public void testUnboundedSource() {
     Pipeline p = TestPipeline.create();
     int numElements = 1000;
+    UnboundedSource<Long, KafkaCheckpointMark> source = mkKafkaSource(numElements, new ValueAsTimestampFn());
+
+    SerializableUtils.ensureSerializable(source);
 
     PCollection<Long> input = p.apply(Read
-            .from(mkKafkaSource(numElements, null))
+            .from(source)
             .withMaxNumRecords(numElements));
 
     addCountingAsserts(input, numElements);
@@ -271,7 +275,7 @@ public class KafkaSourceTest {
 
   @Test
   public void testUnboundedSourceCheckpointMark() throws Exception {
-    int numElements = 85; // make sure some partitions have more records than other
+    int numElements = 85; // 85 to make sure some partitions have more records than other.
 
     // create a single split:
     UnboundedSource<Long, KafkaCheckpointMark> source =
@@ -285,13 +289,13 @@ public class KafkaSourceTest {
     assertTrue(reader.start());
 
     // Advance the source numToSkip-1 elements and manually save state.
-    for (long l = 0; l < numToSkip-1; ++l) {
+    for (long l = 0; l < numToSkip - 1; ++l) {
       reader.advance();
     }
 
     // Confirm that we get the expected element in sequence before checkpointing.
-    assertEquals(numToSkip-1, (long) reader.getCurrent());
-    assertEquals(numToSkip-1, reader.getCurrentTimestamp().getMillis());
+    assertEquals(numToSkip - 1, (long) reader.getCurrent());
+    assertEquals(numToSkip - 1, reader.getCurrentTimestamp().getMillis());
 
     // Checkpoint and restart, and confirm that the source continues correctly.
     KafkaCheckpointMark mark = CoderUtils.clone(

@@ -69,12 +69,11 @@ import java.util.Map;
  *          --project=GCP_PROJECT                                           \
  *          --stagingLocation=GS_STAGING_DIRECTORY                          \
  *          --runner=BlockingDataflowPipelineRunner                         \
- *          --bootstrapServers="a_kafka_server:9092"                        \
+ *          --bootstrapServers="kafka_server_1:9092"                        \
  *          --topics="sample_tweets_json"                                   \
  *          --outputTopic="top_hashtags"
  * </pre>
  *
- * TODO: Move this out this directory.
  */
 public class TopHashtagsExample {
 
@@ -149,7 +148,7 @@ public class TopHashtagsExample {
 
   // The rest of the file implements DoFns to extract hashtags, formatting output, writing output
   // back to Kafka. Note that writing to Kafka is not a complete Dataflow Sink. It is a best-effort
-  // logging the results.
+  // logging of the results.
 
   private static final ObjectMapper jsonMapper = new ObjectMapper();
 

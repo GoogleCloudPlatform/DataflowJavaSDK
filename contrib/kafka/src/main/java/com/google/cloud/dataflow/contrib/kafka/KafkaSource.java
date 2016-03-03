@@ -52,7 +52,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -133,14 +132,17 @@ public class KafkaSource {
     private Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn =
         Optional.absent();
     private SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>
-      kafkaConsumerFactoryFn =
-        new SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>() {
-          public Consumer<byte[], byte[]> apply(Map<String, Object> config) {
-            return new KafkaConsumer<>(config); // default 0.9 consumer
-          }
-        };
+        kafkaConsumerFactoryFn = kafka9Consumer;
 
     private Map<String, Object> mutableConsumerConfig = Maps.newHashMap();
+
+    // default Kafka 0.9 Consumer supplier
+    private static SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>
+      kafka9Consumer = new SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>() {
+        public Consumer<byte[], byte[]> apply(Map<String, Object> config) {
+          return new KafkaConsumer<>(config); // default 0.9 consumer
+        }
+      };
 
     /**
      * set of properties that are not required or don't make sense for our consumer.
@@ -249,8 +251,7 @@ public class KafkaSource {
     }
 
     /**
-     * A function to calculate watermark. When this is not set, last record timestamp is returned
-     * in {@link UnboundedReader#getWatermark()}.
+     * A function to calculate watermark. Default is {@link UnboundedSource#getCurrentTimestamp()}.
      *
      * @param watermarkFn to calculate watermark at a record.
      * @return Builder
@@ -272,7 +273,7 @@ public class KafkaSource {
     }
 
     /**
-     * Build Unbounded Kafka Source
+     * Build Unbounded Kafka Source.
      *
      * @return UnboundedKafkaSource
      */
@@ -521,8 +522,8 @@ public class KafkaSource {
 
       // Use a longer timeout for first fetch. Kafka consumer seems to do better with poll() with
       // longer timeout initially. Looks like it does not handle initial connection setup properly
-      // with short polls and backoff policy in Dataflow might be making things worse for
-      // this case. In my tests it took ~5 seconds before first record was read with this
+      // with short polls (may also be affected by backoff policy in Dataflow).
+      // In my tests it took ~5 seconds before first record was read with this
       // hack and 20-30 seconds with out.
       long timeoutMillis = isFirstFetch ? 4000 : 100;
       ConsumerRecords<byte[], byte[]> records = consumer.poll(timeoutMillis);
@@ -713,8 +714,7 @@ public class KafkaSource {
     }
 
     /**
-     * A function to calculate watermark. When this is not set, last record timestamp is returned
-     * in {@link UnboundedReader#getWatermark()}.
+     * A function to calculate watermark. Default is {@link UnboundedSource#getCurrentTimestamp()}.
      *
      * @param watermarkFn to calculate watermark at a record.
      * @return Builder
