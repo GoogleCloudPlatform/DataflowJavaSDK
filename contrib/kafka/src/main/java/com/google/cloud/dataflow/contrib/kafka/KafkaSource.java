@@ -132,17 +132,17 @@ public class KafkaSource {
     private Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn =
         Optional.absent();
     private SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>
-        kafkaConsumerFactoryFn = kafka9Consumer;
-
+        kafkaConsumerFactoryFn = kafka9ConsumerFactory;
     private Map<String, Object> mutableConsumerConfig = Maps.newHashMap();
 
-    // default Kafka 0.9 Consumer supplier
+    // default Kafka 0.9 Consumer supplier. static variable to avoid capturing 'this'
     private static SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>
-      kafka9Consumer = new SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>() {
-        public Consumer<byte[], byte[]> apply(Map<String, Object> config) {
-          return new KafkaConsumer<>(config); // default 0.9 consumer
-        }
-      };
+      kafka9ConsumerFactory =
+        new SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>() {
+          public Consumer<byte[], byte[]> apply(Map<String, Object> config) {
+            return new KafkaConsumer<>(config);
+          }
+        };
 
     /**
      * set of properties that are not required or don't make sense for our consumer.
@@ -347,22 +347,18 @@ public class KafkaSource {
     public List<UnboundedKafkaSource<K, V>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
 
-      Consumer<byte[], byte[]> consumer = kafkaConsumerFactoryFn.apply(consumerConfig);
-
       List<TopicPartition> partitions = Lists.newArrayList();
 
       // fetch partitions for each topic
       // sort by <topic, partition>
       // round-robin assign the partitions to splits
 
-      try {
+      try (Consumer<?, ?> consumer = kafkaConsumerFactoryFn.apply(consumerConfig)) {
         for (String topic : topics) {
           for (PartitionInfo p : consumer.partitionsFor(topic)) {
             partitions.add(new TopicPartition(p.topic(), p.partition()));
           }
         }
-      } finally {
-        consumer.close();
       }
 
       Collections.sort(partitions, new Comparator<TopicPartition>() {
@@ -666,6 +662,14 @@ public class KafkaSource {
     @Override
     public Instant getCurrentTimestamp() throws NoSuchElementException {
       return curTimestamp;
+    }
+
+
+    @Override
+    public long getSplitBacklogBytes() {
+      // TODO: we should do this. currently looks like we need to pass a partition and then
+      // seekToEnd() to find the latest offset. We could do that if that is useful.
+      return super.getSplitBacklogBytes();
     }
 
     @Override
