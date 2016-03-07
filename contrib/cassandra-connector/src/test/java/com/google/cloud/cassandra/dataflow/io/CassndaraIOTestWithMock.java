@@ -31,7 +31,7 @@ public class CassndaraIOTestWithMock {
 	
 	/**
 	 * Create mocked objects for CassandraIO.Write.Bound
-	 * set method returns for mocked object methods
+	 * set method returns for mocked object
 	 **/
 	@Before
 	public void setup() {

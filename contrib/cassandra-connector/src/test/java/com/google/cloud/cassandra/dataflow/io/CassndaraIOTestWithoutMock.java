@@ -28,7 +28,7 @@ import com.google.cloud.dataflow.sdk.values.PDone;
 
 /**
  * To test write to cassandara.
- * Ton run this test, cassandra instance is required. This test requires a
+ * Ton run this test, cassandra instance is required in local/google cloud. This test requires a
  * columnFamily (table) "Person" in cassandra database. under "dev_keyspace".
  * Following is the structure of "Person" table CREATE TABLE dev_keyspace.person
  * (person_id int PRIMARY KEY, person_name text);

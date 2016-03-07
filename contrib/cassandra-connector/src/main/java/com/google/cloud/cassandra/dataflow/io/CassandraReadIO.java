@@ -10,7 +10,7 @@ import com.datastax.driver.mapping.MappingManager;
 import com.datastax.driver.mapping.Result;
 
 /**
- * Utility to create read operation from Cassandra using entities in a
+ * Class to create read operation from Cassandra using entities in a
  * Google Dataflow pipeline.
  * 
  * To read from a cassandra database table : 
@@ -27,7 +27,6 @@ import com.datastax.driver.mapping.Result;
  *				p.run();		
  *
  */
-
 public class CassandraReadIO {
 
 	/*

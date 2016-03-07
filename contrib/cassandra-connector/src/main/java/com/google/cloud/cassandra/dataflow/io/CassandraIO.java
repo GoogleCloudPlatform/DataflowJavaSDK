@@ -15,7 +15,6 @@ package com.google.cloud.cassandra.dataflow.io;
  * License for the specific language governing permissions and limitations under
  * the License.
  */
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -104,7 +103,7 @@ public class CassandraIO {
 		}
 
 		/**
-		 * Set cassandra hosts,keyspace and port Apply transformation
+		 * Set Cassandra hosts,keyspace and port Apply transformation
 		 */
 		public static class Bound<T> extends PTransform<PCollection<T>, PDone> {
 

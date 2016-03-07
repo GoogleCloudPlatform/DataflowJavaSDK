@@ -22,7 +22,7 @@ public class CassandraReadIOTestWithMock {
 	private static Pipeline p;
 	
 	/**
-	 * Initial setup
+	 * Setup
 	 *
 	 */
 	@Before

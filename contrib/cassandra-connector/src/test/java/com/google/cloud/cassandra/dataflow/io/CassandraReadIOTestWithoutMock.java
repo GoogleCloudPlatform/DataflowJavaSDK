@@ -20,7 +20,7 @@ import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 /**
-* Class contains JUnit test case that can be tested in cloud. 
+* Class contains JUnit test case that can be tested in google cloud. 
 */
 public class CassandraReadIOTestWithoutMock {
 	private static String[] hosts;
