@@ -1,7 +1,6 @@
 package com.google.cloud.cassandra.dataflow.io;
 import java.util.ArrayList;
 import java.util.List;
-
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Session;
