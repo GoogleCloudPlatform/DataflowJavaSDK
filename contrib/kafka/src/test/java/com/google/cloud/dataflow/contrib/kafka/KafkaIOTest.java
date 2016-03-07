@@ -19,6 +19,7 @@ package com.google.cloud.dataflow.contrib.kafka;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import com.google.cloud.dataflow.contrib.kafka.KafkaIO.Reader;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.BigEndianLongCoder;
 import com.google.cloud.dataflow.sdk.io.Read;
@@ -36,8 +37,9 @@ import com.google.cloud.dataflow.sdk.transforms.Min;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.RemoveDuplicates;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
+import com.google.cloud.dataflow.sdk.transforms.Values;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
-import com.google.cloud.dataflow.sdk.util.SerializableUtils;
+import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollectionList;
 import com.google.common.collect.ImmutableList;
@@ -67,13 +69,14 @@ import javax.annotation.Nullable;
  * Tests of {@link KafkaSource}.
  */
 @RunWith(JUnit4.class)
-public class KafkaSourceTest {
+public class KafkaIOTest {
   /*
    * The tests below borrow code and structure from CountingSourceTest. In addition verifies
    * the reader interleaves the records from multiple partitions.
    *
    * Other tests to consider :
    *   - test KafkaRecordCoder
+   *   - test with manual partitions
    */
 
   // Update mock consumer with records distributed among the given topics, each with given number
@@ -155,23 +158,23 @@ public class KafkaSourceTest {
    * Creates a consumer with two topics, with 5 partitions each.
    * numElements are (round-robin) assigned all the 10 partitions.
    */
-  private static UnboundedSource<Long, KafkaCheckpointMark> mkKafkaSource(
+  private static UnboundedSource<KV<byte[], Long>, KafkaCheckpointMark> mkKafkaSource(
       int numElements,
-      @Nullable SerializableFunction<Long, Instant> timestampFn) {
+      @Nullable SerializableFunction<KV<byte[], Long>, Instant> timestampFn) {
 
     List<String> topics = ImmutableList.of("topic_a", "topic_b");
 
-    KafkaSource.ValueSourceBuilder<Long> builder = KafkaSource.<Long>unboundedValueSourceBuilder()
+    Reader<byte[], Long> reader = KafkaIO.reader()
         .withBootstrapServers("none")
         .withTopics(topics)
-        .withKafkaConsumerFactoryFn(new ConsumerFactoryFn(topics, 10, numElements)) // 20 partitions
+        .withConsumerFactoryFn(new ConsumerFactoryFn(topics, 10, numElements)) // 20 partitions
         .withValueCoder(BigEndianLongCoder.of());
 
     if (timestampFn != null) {
-      builder = builder.withTimestampFn(timestampFn);
+      reader = reader.withTimestampFn(timestampFn);
     }
 
-    return builder.build();
+    return reader.makeSource();
   }
 
   public static void addCountingAsserts(PCollection<Long> input, long numElements) {
@@ -199,13 +202,12 @@ public class KafkaSourceTest {
   public void testUnboundedSource() {
     Pipeline p = TestPipeline.create();
     int numElements = 1000;
-    UnboundedSource<Long, KafkaCheckpointMark> source = mkKafkaSource(numElements, new ValueAsTimestampFn());
 
-    SerializableUtils.ensureSerializable(source);
-
-    PCollection<Long> input = p.apply(Read
-            .from(source)
-            .withMaxNumRecords(numElements));
+    PCollection<Long> input = p
+        .apply(Read
+            .from(mkKafkaSource(numElements, new ValueAsTimestampFn()))
+            .withMaxNumRecords(numElements))
+        .apply(Values.<Long>create());
 
     addCountingAsserts(input, numElements);
     p.run();
@@ -224,9 +226,11 @@ public class KafkaSourceTest {
     Pipeline p = TestPipeline.create();
     int numElements = 1000;
 
-    PCollection<Long> input = p.apply(Read
-        .from(mkKafkaSource(numElements, new ValueAsTimestampFn()))
-            .withMaxNumRecords(numElements));
+    PCollection<Long> input = p
+        .apply(Read.from(mkKafkaSource(numElements, new ValueAsTimestampFn()))
+            .withMaxNumRecords(numElements))
+        .apply(Values.<Long>create());
+
     addCountingAsserts(input, numElements);
 
     PCollection<Long> diffs = input
@@ -245,8 +249,8 @@ public class KafkaSourceTest {
     int numElements = 1000;
     int numSplits = 10;
 
-    UnboundedSource<Long, ?> initial = mkKafkaSource(numElements, null);
-    List<? extends UnboundedSource<Long, ?>> splits =
+    UnboundedSource<KV<byte[], Long>, ?> initial = mkKafkaSource(numElements, null);
+    List<? extends UnboundedSource<KV<byte[], Long>, ?>> splits =
         initial.generateInitialSplits(numSplits, p.getOptions());
     assertEquals("Expected exact splitting", numSplits, splits.size());
 
@@ -255,7 +259,8 @@ public class KafkaSourceTest {
     PCollectionList<Long> pcollections = PCollectionList.empty(p);
     for (int i = 0; i < splits.size(); ++i) {
       pcollections = pcollections.and(
-          p.apply("split" + i, Read.from(splits.get(i)).withMaxNumRecords(elementsPerSplit)));
+          p.apply("split" + i, Read.from(splits.get(i)).withMaxNumRecords(elementsPerSplit))
+           .apply(Values.<Long>create()));
     }
     PCollection<Long> input = pcollections.apply(Flatten.<Long>pCollections());
 
@@ -266,10 +271,11 @@ public class KafkaSourceTest {
   /**
    * A timestamp function that uses the given value as the timestamp.
    */
-  private static class ValueAsTimestampFn implements SerializableFunction<Long, Instant> {
+  private static class ValueAsTimestampFn
+                       implements SerializableFunction<KV<byte[], Long>, Instant> {
     @Override
-    public Instant apply(Long input) {
-      return new Instant(input);
+    public Instant apply(KV<byte[], Long> input) {
+      return new Instant(input.getValue());
     }
   }
 
@@ -278,12 +284,12 @@ public class KafkaSourceTest {
     int numElements = 85; // 85 to make sure some partitions have more records than other.
 
     // create a single split:
-    UnboundedSource<Long, KafkaCheckpointMark> source =
+    UnboundedSource<KV<byte[], Long>, KafkaCheckpointMark> source =
         mkKafkaSource(numElements, new ValueAsTimestampFn())
           .generateInitialSplits(1, PipelineOptionsFactory.fromArgs(new String[0]).create())
           .get(0);
 
-    UnboundedReader<Long> reader = source.createReader(null, null);
+    UnboundedReader<KV<byte[], Long>> reader = source.createReader(null, null);
     final int numToSkip = 3;
     // advance once:
     assertTrue(reader.start());
@@ -294,7 +300,7 @@ public class KafkaSourceTest {
     }
 
     // Confirm that we get the expected element in sequence before checkpointing.
-    assertEquals(numToSkip - 1, (long) reader.getCurrent());
+    assertEquals(numToSkip - 1, (long) reader.getCurrent().getValue());
     assertEquals(numToSkip - 1, reader.getCurrentTimestamp().getMillis());
 
     // Checkpoint and restart, and confirm that the source continues correctly.
@@ -306,7 +312,7 @@ public class KafkaSourceTest {
     // Confirm that we get the next elements in sequence.
     // This also confirms that Reader interleaves records from each partitions by the reader.
     for (int i = numToSkip; i < numElements; i++) {
-      assertEquals(i, (long) reader.getCurrent());
+      assertEquals(i, (long) reader.getCurrent().getValue());
       assertEquals(i, reader.getCurrentTimestamp().getMillis());
       reader.advance();
     }

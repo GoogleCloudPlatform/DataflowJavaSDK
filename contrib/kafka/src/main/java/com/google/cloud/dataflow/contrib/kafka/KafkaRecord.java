@@ -29,7 +29,7 @@ public class KafkaRecord<K, V> implements Serializable {
   private final int partition;
   private final long offset;
   private final K key;
-  private final V value;
+  private final V value; // XXX TODO: use KV<K, V> instead
 
   public KafkaRecord(
       String topic,
@@ -73,7 +73,7 @@ public class KafkaRecord<K, V> implements Serializable {
       return topic.equals(other.topic)
           && partition == other.partition
           && offset == other.offset
-          && key.equals(other.key)
+          && key.equals(other.key) // XXX KV.equals()
           && value.equals(other.value);
     } else {
       return false;

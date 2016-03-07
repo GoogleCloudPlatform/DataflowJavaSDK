@@ -16,7 +16,7 @@
 
 package com.google.cloud.dataflow.contrib.kafka.examples;
 
-import com.google.cloud.dataflow.contrib.kafka.KafkaSource;
+import com.google.cloud.dataflow.contrib.kafka.KafkaIO;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.io.Read;
@@ -58,7 +58,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This Dataflow app show cases {@link KafkaSource}. The application reads from a Kafka topic
+ * This Dataflow app show cases {@link KafkaIO}. The application reads from a Kafka topic
  * containing <a href="https://dev.twitter.com/overview/api/tweets">JSON Tweets</a>, calculates top
  * hashtags in 10 minute window. The results are written back to a Kafka topic.
  *
@@ -123,7 +123,7 @@ public class TopHashtagsExample {
     final int windowSize = options.getSlidingWindowSize();
     final int windowPeriod = options.getSlidingWindowPeriod();
 
-    UnboundedSource<String, ?> kafkaSource = KafkaSource
+    UnboundedSource<String, ?> kafkaSource = KafkaIO
         .<String>unboundedValueSourceBuilder()
         .withBootstrapServers(options.getBootstrapServers())
         .withTopics(options.getTopics())
