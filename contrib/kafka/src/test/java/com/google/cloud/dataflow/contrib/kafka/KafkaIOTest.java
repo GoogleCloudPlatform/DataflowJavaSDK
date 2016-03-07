@@ -76,7 +76,6 @@ public class KafkaIOTest {
    *
    * Other tests to consider :
    *   - test KafkaRecordCoder
-   *   - test with manual partitions
    */
 
   // Update mock consumer with records distributed among the given topics, each with given number
@@ -177,6 +176,22 @@ public class KafkaIOTest {
     return reader.makeSource();
   }
 
+  private static class AssertMultipleOf implements SerializableFunction<Iterable<Long>, Void> {
+    private final int num;
+
+    public AssertMultipleOf(int num) {
+      this.num = num;
+    }
+
+    @Override
+    public Void apply(Iterable<Long> values) {
+      for (Long v : values) {
+        assertEquals(0, v % num);
+      }
+      return null;
+    }
+  }
+
   public static void addCountingAsserts(PCollection<Long> input, long numElements) {
     // Count == numElements
     DataflowAssert
@@ -210,6 +225,37 @@ public class KafkaIOTest {
         .apply(Values.<Long>create());
 
     addCountingAsserts(input, numElements);
+    p.run();
+  }
+
+  @Test
+  @Category(RunnableOnService.class)
+  public void testUnboundedSourceWithExplicitPartitions() {
+    Pipeline p = TestPipeline.create();
+    int numElements = 1000;
+
+    List<String> topics = ImmutableList.of("test");
+
+    Reader<byte[], Long> reader = KafkaIO.reader()
+        .withBootstrapServers("none")
+        .withTopicPartitions(ImmutableList.of(new TopicPartition("test", 5)))
+        .withConsumerFactoryFn(new ConsumerFactoryFn(topics, 10, numElements)) // 10 partitions
+        .withValueCoder(BigEndianLongCoder.of())
+        .withMaxNumRecords(numElements/10);
+
+    PCollection<Long> input = p
+        .apply(reader)
+        .apply(Values.<Long>create());
+
+    // assert that every element is a multiple of 5.
+    DataflowAssert
+      .that(input)
+      .satisfies(new AssertMultipleOf(5));
+
+    DataflowAssert
+      .thatSingleton(input.apply(Count.<Long>globally()))
+      .isEqualTo(numElements / 10L);
+
     p.run();
   }
 

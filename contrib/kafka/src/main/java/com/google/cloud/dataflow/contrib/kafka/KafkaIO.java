@@ -205,11 +205,15 @@ public class KafkaIO {
     }
 
     public Reader<K, V> withTopics(List<String> topics) {
+      checkState(topicPartitions.isEmpty(), "Only topics or topicPartitions can be set, not both");
+
       return new Reader<K, V>(ImmutableList.copyOf(topics), topicPartitions, keyCoder, valueCoder,
           timestampFn, watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
     }
 
     public Reader<K, V> withTopicPartitions(List<TopicPartition> topicPartitions) {
+      checkState(topics.isEmpty(), "Only topics or topicPartitions can be set, not both");
+
       return new Reader<K, V>(topics, ImmutableList.copyOf(topicPartitions), keyCoder, valueCoder,
           timestampFn, watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
     }
