@@ -17,10 +17,9 @@
 package com.google.cloud.dataflow.contrib.kafka.examples;
 
 import com.google.cloud.dataflow.contrib.kafka.KafkaIO;
+import com.google.cloud.dataflow.contrib.kafka.KafkaIO.Reader;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
-import com.google.cloud.dataflow.sdk.io.Read;
-import com.google.cloud.dataflow.sdk.io.UnboundedSource;
 import com.google.cloud.dataflow.sdk.options.Default;
 import com.google.cloud.dataflow.sdk.options.Description;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
@@ -31,6 +30,7 @@ import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.transforms.Top;
+import com.google.cloud.dataflow.sdk.transforms.Values;
 import com.google.cloud.dataflow.sdk.transforms.windowing.IntervalWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.SlidingWindows;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
@@ -123,16 +123,15 @@ public class TopHashtagsExample {
     final int windowSize = options.getSlidingWindowSize();
     final int windowPeriod = options.getSlidingWindowPeriod();
 
-    UnboundedSource<String, ?> kafkaSource = KafkaIO
-        .<String>unboundedValueSourceBuilder()
+    Reader<?, String> reader = KafkaIO.reader()
         .withBootstrapServers(options.getBootstrapServers())
         .withTopics(options.getTopics())
         .withValueCoder(StringUtf8Coder.of())
-        .withTimestampFn(timestampFn)
-        .build();
+        .withTimestampFn(timestampFn);
 
     pipeline
-      .apply(Read.from(kafkaSource).named("sample_tweets"))
+      .apply("sample_tweets", reader)
+      .apply(Values.<String>create())
       .apply(ParDo.of(new ExtractHashtagsFn()))
       .apply(Window.<String>into(SlidingWindows
           .of(Duration.standardMinutes(windowSize))
@@ -168,12 +167,12 @@ public class TopHashtagsExample {
   }
 
   // extract timestamp from "timestamp_ms" field.
-  private static SerializableFunction<String, Instant> timestampFn =
-      new SerializableFunction<String, Instant>() {
+  private static SerializableFunction<KV<byte[], String>, Instant> timestampFn =
+      new SerializableFunction<KV<byte[], String>, Instant>() {
         @Override
-        public Instant apply(String json) {
+        public Instant apply(KV<byte[], String> kv) {
           try {
-            long tsMillis = jsonMapper.readTree(json).path("timestamp_ms").asLong();
+            long tsMillis = jsonMapper.readTree(kv.getValue()).path("timestamp_ms").asLong();
             return tsMillis == 0 ? Instant.now() : new Instant(tsMillis);
           } catch (Exception e) {
             throw Throwables.propagate(e);

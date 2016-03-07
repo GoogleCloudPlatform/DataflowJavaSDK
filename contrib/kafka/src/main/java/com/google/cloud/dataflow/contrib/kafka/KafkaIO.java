@@ -198,7 +198,7 @@ public class KafkaIO {
       this.maxReadTime = maxReadTime;
     }
 
-    Reader<K, V> withBootstrapServers(String bootstrapServers) {
+    public Reader<K, V> withBootstrapServers(String bootstrapServers) {
       return updateConsumerProperties(
           ImmutableMap.<String, Object>of(
               ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers));
