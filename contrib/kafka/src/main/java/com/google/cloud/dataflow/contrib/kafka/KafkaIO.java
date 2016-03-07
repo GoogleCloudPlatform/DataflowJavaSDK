@@ -21,9 +21,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.api.client.repackaged.com.google.common.annotations.VisibleForTesting;
-import com.google.api.client.util.Maps;
 import com.google.cloud.dataflow.contrib.kafka.KafkaCheckpointMark.PartitionMark;
-import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.ByteArrayCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
@@ -75,7 +73,6 @@ import java.util.NoSuchElementException;
 
 import javax.annotation.Nullable;
 
-// {@link #withConsumerProperty} or something like that ?
 // {@link Coder}
 // generally, feel free to drop @param and @return tags -- relatively unused in google style.
 // probably worth javadoccing the splitting behavior extensively here,
@@ -726,11 +723,14 @@ public class KafkaIO {
       }
     }
 
+    private static byte[] nullBytes = new byte[0];
     private static <T> T decode(byte[] bytes, Coder<T> coder) throws IOException {
-      if (bytes == null) {
-        return null; // is this the right thing to do?
-      }
-      return coder.decode(new ExposedByteArrayInputStream(bytes), Coder.Context.OUTER);
+      // If 'bytes' is null use byte[0]. It is common for key in Kakfa record to be null.
+      // This makes it impossible for user to distinguish between zero length byte and null.
+      // Alternately, we could have a ByteArrayCoder that handles nulls, use that for default
+      // coder.
+      byte[] toDecode = bytes == null ? nullBytes : bytes;
+      return coder.decode(new ExposedByteArrayInputStream(toDecode), Coder.Context.OUTER);
     }
 
     @Override
@@ -783,7 +783,7 @@ public class KafkaIO {
 
     @Override
     public void close() throws IOException {
-      Closeables.closeQuietly(consumer);
+      Closeables.close(consumer, true);
     }
   }
 }

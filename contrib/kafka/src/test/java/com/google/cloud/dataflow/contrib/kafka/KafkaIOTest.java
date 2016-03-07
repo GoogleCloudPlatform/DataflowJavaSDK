@@ -260,7 +260,7 @@ public class KafkaIOTest {
     for (int i = 0; i < splits.size(); ++i) {
       pcollections = pcollections.and(
           p.apply("split" + i, Read.from(splits.get(i)).withMaxNumRecords(elementsPerSplit))
-           .apply(Values.<Long>create()));
+           .apply("collection " + i, Values.<Long>create()));
     }
     PCollection<Long> input = pcollections.apply(Flatten.<Long>pCollections());
 
