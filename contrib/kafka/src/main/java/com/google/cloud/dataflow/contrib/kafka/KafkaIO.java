@@ -67,6 +67,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -559,18 +560,16 @@ public class KafkaIO {
           "Could not find any partitions. Please check Kafka configuration and topic names");
 
       int numSplits = Math.min(desiredNumSplits, partitions.size());
-
-      List<List<TopicPartition>> assignments = Lists.newArrayList();
+      List<List<TopicPartition>> assignments = new ArrayList<>(numSplits);
 
       for (int i = 0; i < numSplits; i++) {
-        assignments.add(Lists.<TopicPartition>newArrayList());
+        assignments.add(new ArrayList<TopicPartition>());
       }
-
       for (int i = 0; i < partitions.size(); i++) {
         assignments.get(i % numSplits).add(partitions.get(i));
       }
 
-      List<UnboundedKafkaSource<K, V, T>> result = Lists.newArrayList();
+      List<UnboundedKafkaSource<K, V, T>> result = new ArrayList<>(numSplits);
 
       for (int i = 0; i < numSplits; i++) {
         List<TopicPartition> assignedToSplit = assignments.get(i);
@@ -710,7 +709,7 @@ public class KafkaIO {
       long timeoutMillis = isFirstFetch ? 4000 : 100;
       ConsumerRecords<byte[], byte[]> records = consumer.poll(timeoutMillis);
 
-      List<PartitionState> nonEmpty = Lists.newLinkedList();
+      List<PartitionState> nonEmpty = new LinkedList<>();
 
       for (PartitionState p : partitionStates) {
         p.recordIter = records.records(p.topicPartition).iterator();

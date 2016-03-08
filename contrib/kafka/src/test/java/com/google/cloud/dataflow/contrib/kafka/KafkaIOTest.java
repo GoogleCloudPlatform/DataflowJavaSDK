@@ -42,7 +42,6 @@ import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollectionList;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -87,7 +86,7 @@ public class KafkaIOTest {
     Map<String, List<PartitionInfo>> partitionMap = new HashMap<>();
 
     for (String topic : topics) {
-      List<PartitionInfo> partIds = Lists.newArrayListWithCapacity(partitionsPerTopic);
+      List<PartitionInfo> partIds = new ArrayList<>(partitionsPerTopic);
       for (int i = 0; i < partitionsPerTopic; i++) {
         partitions.add(new TopicPartition(topic, i));
         partIds.add(new PartitionInfo(topic, i, null, null, null));
