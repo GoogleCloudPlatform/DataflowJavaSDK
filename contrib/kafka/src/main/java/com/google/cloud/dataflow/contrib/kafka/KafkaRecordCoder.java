@@ -24,7 +24,7 @@ import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.VarIntCoder;
 import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
 import com.google.cloud.dataflow.sdk.util.PropertyNames;
-import com.google.common.collect.ImmutableList;
+import com.google.cloud.dataflow.sdk.values.KV;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -43,8 +43,7 @@ public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
   private static final VarLongCoder longCoder = VarLongCoder.of();
   private static final VarIntCoder intCoder = VarIntCoder.of();
 
-  private final Coder<K> keyCoder;
-  private final Coder<V> valueCoder;
+  private final KvCoder<K, V> kvCoder;
 
   @JsonCreator
   public static KafkaRecordCoder<?, ?> of(@JsonProperty(PropertyNames.COMPONENT_ENCODINGS)
@@ -58,8 +57,7 @@ public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
   }
 
   public KafkaRecordCoder(Coder<K> keyCoder, Coder<V> valueCoder) {
-    this.keyCoder = keyCoder;
-    this.valueCoder = valueCoder;
+    this.kvCoder = KvCoder.of(keyCoder, valueCoder);
   }
 
   @Override
@@ -69,8 +67,7 @@ public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
     stringCoder.encode(value.getTopic(), outStream, nested);
     intCoder.encode(value.getPartition(), outStream, nested);
     longCoder.encode(value.getOffset(), outStream, nested);
-    keyCoder.encode(value.getKey(), outStream, nested);
-    valueCoder.encode(value.getValue(), outStream, nested);
+    kvCoder.encode(value.getKV(), outStream, nested);
   }
 
   @Override
@@ -81,27 +78,26 @@ public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
         stringCoder.decode(inStream, nested),
         intCoder.decode(inStream, nested),
         longCoder.decode(inStream, nested),
-        keyCoder.decode(inStream, nested),
-        valueCoder.decode(inStream, nested));
+        kvCoder.decode(inStream, nested));
   }
 
   @Override
   public List<? extends Coder<?>> getCoderArguments() {
-    return ImmutableList.of(keyCoder, valueCoder);
+    return kvCoder.getCoderArguments();
   }
 
   @Override
   public void verifyDeterministic() throws NonDeterministicException {
-    verifyDeterministic("Key and Value coder should be deterministic", keyCoder, valueCoder);
+    kvCoder.verifyDeterministic();
   }
 
   @Override
   public boolean isRegisterByteSizeObserverCheap(KafkaRecord<K, V> value, Context context) {
-    return keyCoder.isRegisterByteSizeObserverCheap(value.getKey(), context.nested())
-        && valueCoder.isRegisterByteSizeObserverCheap(value.getValue(), context.nested());
+    return kvCoder.isRegisterByteSizeObserverCheap(value.getKV(), context);
     //TODO : do we have to implement getEncodedSize()?
   }
 
+  @SuppressWarnings("unchecked")
   @Override
   public Object structuralValue(KafkaRecord<K, V> value) throws Exception {
     if (consistentWithEquals()) {
@@ -111,13 +107,12 @@ public class KafkaRecordCoder<K, V> extends StandardCoder<KafkaRecord<K, V>> {
           value.getTopic(),
           value.getPartition(),
           value.getOffset(),
-          keyCoder.structuralValue(value.getKey()),
-          valueCoder.structuralValue(value.getValue()));
+          (KV<Object, Object>) kvCoder.structuralValue(value.getKV()));
     }
   }
 
   @Override
   public boolean consistentWithEquals() {
-    return keyCoder.consistentWithEquals() && valueCoder.consistentWithEquals();
+    return kvCoder.consistentWithEquals();
   }
 }

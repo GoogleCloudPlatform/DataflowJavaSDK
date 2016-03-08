@@ -348,7 +348,7 @@ public class KafkaIO {
       unwrapKafkaAndThen(final SerializableFunction<KV<KeyT, ValueT>, OutT> fn) {
         return new SerializableFunction<KafkaRecord<KeyT, ValueT>, OutT>() {
           public OutT apply(KafkaRecord<KeyT, ValueT> record) {
-            return fn.apply(KV.of(record.getKey(), record.getValue()));
+            return fn.apply(record.getKV());
           }
         };
       }

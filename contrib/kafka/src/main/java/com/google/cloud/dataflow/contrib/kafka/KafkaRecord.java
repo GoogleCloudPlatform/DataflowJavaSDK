@@ -18,18 +18,18 @@ package com.google.cloud.dataflow.contrib.kafka;
 
 import java.io.Serializable;
 
+import com.google.cloud.dataflow.sdk.values.KV;
+
 /**
  * KafkaRecord contains key and value of the record as well as metadata for the record (topic name,
- * partition id, and offset). This is essentially a serializable
- * {@link org.apache.kafka.clients.consumer.ConsumerRecord}.
+ * partition id, and offset).
  */
 public class KafkaRecord<K, V> implements Serializable {
 
   private final String topic;
   private final int partition;
   private final long offset;
-  private final K key;
-  private final V value; // XXX TODO: use KV<K, V> instead
+  private final KV<K, V> kv;
 
   public KafkaRecord(
       String topic,
@@ -37,12 +37,19 @@ public class KafkaRecord<K, V> implements Serializable {
       long offset,
       K key,
       V value) {
+    this(topic, partition, offset, KV.of(key, value));
+  }
+
+  public KafkaRecord(
+      String topic,
+      int partition,
+      long offset,
+      KV<K, V> kv) {
 
     this.topic = topic;
     this.partition = partition;
     this.offset = offset;
-    this.key = key;
-    this.value = value;
+    this.kv = kv;
   }
 
   public String getTopic() {
@@ -57,12 +64,8 @@ public class KafkaRecord<K, V> implements Serializable {
     return offset;
   }
 
-  public K getKey() {
-    return key;
-  }
-
-  public V getValue() {
-    return value;
+  public KV<K, V> getKV() {
+    return kv;
   }
 
   @Override
@@ -73,8 +76,7 @@ public class KafkaRecord<K, V> implements Serializable {
       return topic.equals(other.topic)
           && partition == other.partition
           && offset == other.offset
-          && key.equals(other.key) // XXX KV.equals()
-          && value.equals(other.value);
+          && kv.equals(other.kv);
     } else {
       return false;
     }
