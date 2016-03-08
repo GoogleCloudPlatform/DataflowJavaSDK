@@ -17,7 +17,7 @@
 package com.google.cloud.dataflow.contrib.kafka.examples;
 
 import com.google.cloud.dataflow.contrib.kafka.KafkaIO;
-import com.google.cloud.dataflow.contrib.kafka.KafkaIO.Reader;
+import com.google.cloud.dataflow.contrib.kafka.KafkaIO.Read;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.options.Default;
@@ -123,7 +123,7 @@ public class TopHashtagsExample {
     final int windowSize = options.getSlidingWindowSize();
     final int windowPeriod = options.getSlidingWindowPeriod();
 
-    Reader<?, String> reader = KafkaIO.reader()
+    Read<?, String> reader = KafkaIO.read()
         .withBootstrapServers(options.getBootstrapServers())
         .withTopics(options.getTopics())
         .withValueCoder(StringUtf8Coder.of())

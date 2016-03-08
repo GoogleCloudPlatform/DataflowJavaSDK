@@ -19,7 +19,7 @@ package com.google.cloud.dataflow.contrib.kafka;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import com.google.cloud.dataflow.contrib.kafka.KafkaIO.Reader;
+import com.google.cloud.dataflow.contrib.kafka.KafkaIO.Read;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.BigEndianLongCoder;
 import com.google.cloud.dataflow.sdk.io.Read;
@@ -163,7 +163,7 @@ public class KafkaIOTest {
 
     List<String> topics = ImmutableList.of("topic_a", "topic_b");
 
-    Reader<byte[], Long> reader = KafkaIO.reader()
+    Read<byte[], Long> reader = KafkaIO.read()
         .withBootstrapServers("none")
         .withTopics(topics)
         .withConsumerFactoryFn(new ConsumerFactoryFn(topics, 10, numElements)) // 20 partitions
@@ -236,7 +236,7 @@ public class KafkaIOTest {
 
     List<String> topics = ImmutableList.of("test");
 
-    Reader<byte[], Long> reader = KafkaIO.reader()
+    Read<byte[], Long> reader = KafkaIO.read()
         .withBootstrapServers("none")
         .withTopicPartitions(ImmutableList.of(new TopicPartition("test", 5)))
         .withConsumerFactoryFn(new ConsumerFactoryFn(topics, 10, numElements)) // 10 partitions
