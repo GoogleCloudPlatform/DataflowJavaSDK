@@ -30,10 +30,12 @@ import com.google.api.services.bigquery.Bigquery;
 import com.google.api.services.bigquery.Bigquery.Jobs.Insert;
 import com.google.api.services.bigquery.model.Dataset;
 import com.google.api.services.bigquery.model.DatasetReference;
+import com.google.api.services.bigquery.model.ErrorProto;
 import com.google.api.services.bigquery.model.Job;
 import com.google.api.services.bigquery.model.JobConfiguration;
 import com.google.api.services.bigquery.model.JobConfigurationQuery;
 import com.google.api.services.bigquery.model.JobReference;
+import com.google.api.services.bigquery.model.JobStatus;
 import com.google.api.services.bigquery.model.Table;
 import com.google.api.services.bigquery.model.TableCell;
 import com.google.api.services.bigquery.model.TableDataList;
@@ -41,15 +43,13 @@ import com.google.api.services.bigquery.model.TableFieldSchema;
 import com.google.api.services.bigquery.model.TableReference;
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.api.services.bigquery.model.TableSchema;
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableList;
 
 import org.joda.time.Duration;
-import org.joda.time.format.DateTimeFormat;
-import org.joda.time.format.DateTimeFormatter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
@@ -65,7 +65,7 @@ import javax.annotation.Nullable;
 /**
  * Iterates over all rows in a table.
  */
-public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
+public class BigQueryTableRowIterator implements AutoCloseable {
   private static final Logger LOG = LoggerFactory.getLogger(BigQueryTableRowIterator.class);
 
   @Nullable private TableReference ref;
@@ -73,7 +73,8 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
   @Nullable private TableSchema schema;
   private final Bigquery client;
   private String pageToken;
-  private Iterator<TableRow> rowIterator;
+  private Iterator<TableRow> iteratorOverCurrentBatch;
+  private TableRow current;
   // Set true when the final page is seen from the service.
   private boolean lastPage = false;
 
@@ -87,6 +88,8 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
   private static final Duration QUERY_COMPLETION_POLL_TIME = Duration.standardSeconds(1);
 
   private final String query;
+  // Whether to flatten query results.
+  private final boolean flattenResults;
   // Temporary dataset used to store query results.
   private String temporaryDatasetId = null;
   // Temporary table used to store query results.
@@ -94,11 +97,12 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
 
   private BigQueryTableRowIterator(
       @Nullable TableReference ref, @Nullable String query, @Nullable String projectId,
-      Bigquery client) {
+      Bigquery client, boolean flattenResults) {
     this.ref = ref;
     this.query = query;
     this.projectId = projectId;
     this.client = checkNotNull(client, "client");
+    this.flattenResults = flattenResults;
   }
 
   /**
@@ -107,7 +111,7 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
   public static BigQueryTableRowIterator fromTable(TableReference ref, Bigquery client) {
     checkNotNull(ref, "ref");
     checkNotNull(client, "client");
-    return new BigQueryTableRowIterator(ref, null, ref.getProjectId(), client);
+    return new BigQueryTableRowIterator(ref, null, ref.getProjectId(), client, true);
   }
 
   /**
@@ -115,57 +119,79 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
    * specified query in the specified project.
    */
   public static BigQueryTableRowIterator fromQuery(
-      String query, String projectId, Bigquery client) {
+      String query, String projectId, Bigquery client, @Nullable Boolean flattenResults) {
     checkNotNull(query, "query");
     checkNotNull(projectId, "projectId");
     checkNotNull(client, "client");
-    return new BigQueryTableRowIterator(null, query, projectId, client);
-  }
-
-  @Override
-  public boolean hasNext() {
-    try {
-      if (rowIterator == null || (!rowIterator.hasNext() && !lastPage)) {
-        readNext();
-      }
-    } catch (IOException | InterruptedException e) {
-      throw new RuntimeException(e);
-    }
-
-    return rowIterator.hasNext();
+    return new BigQueryTableRowIterator(null, query, projectId, client,
+        MoreObjects.firstNonNull(flattenResults, Boolean.TRUE));
   }
 
   /**
-   * Formats BigQuery seconds-since-epoch into String matching JSON export. Thread-safe and
-   * immutable.
+   * Opens the table for read.
+   * @throws IOException on failure
    */
-  private static final DateTimeFormatter DATE_AND_SECONDS_FORMATER =
-      DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss").withZoneUTC();
-  private static String formatTimestamp(String timestamp) {
-    // timestamp is in "seconds since epoch" format, with scientific notation.
-    // e.g., "1.45206229112345E9" to mean "2016-01-06 06:38:11.123456 UTC".
-    // Separate into seconds and microseconds.
-    double timestampDoubleMicros = Double.parseDouble(timestamp) * 1000000;
-    long timestampMicros = (long) timestampDoubleMicros;
-    long seconds = timestampMicros / 1000000;
-    int micros = (int) (timestampMicros % 1000000);
-    String dayAndTime = DATE_AND_SECONDS_FORMATER.print(seconds * 1000);
-
-    // No sub-second component.
-    if (micros == 0) {
-      return String.format("%s UTC", dayAndTime);
+  public void open() throws IOException, InterruptedException {
+    if (query != null) {
+      ref = executeQueryAndWaitForCompletion();
     }
+    // Get table schema.
+    Bigquery.Tables.Get get =
+        client.tables().get(ref.getProjectId(), ref.getDatasetId(), ref.getTableId());
 
-    // Sub-second component.
-    int digits = 6;
-    int subsecond = micros;
-    while (subsecond % 10 == 0) {
-      digits--;
-      subsecond /= 10;
+    Table table =
+        executeWithBackOff(
+            get,
+            "Error opening BigQuery table  %s of dataset %s  : {}",
+            ref.getTableId(),
+            ref.getDatasetId());
+    schema = table.getSchema();
+  }
+
+  public boolean advance() throws IOException, InterruptedException {
+    while (true) {
+      if (iteratorOverCurrentBatch != null && iteratorOverCurrentBatch.hasNext()) {
+        // Embed schema information into the raw row, so that values have an
+        // associated key.  This matches how rows are read when using the
+        // DataflowPipelineRunner.
+        current = getTypedTableRow(schema.getFields(), iteratorOverCurrentBatch.next());
+        return true;
+      }
+      if (lastPage) {
+        return false;
+      }
+
+      Bigquery.Tabledata.List list =
+          client.tabledata().list(ref.getProjectId(), ref.getDatasetId(), ref.getTableId());
+      if (pageToken != null) {
+        list.setPageToken(pageToken);
+      }
+
+      TableDataList result =
+          executeWithBackOff(
+              list,
+              "Error reading from BigQuery table %s of dataset %s : {}",
+              ref.getTableId(),
+              ref.getDatasetId());
+
+      pageToken = result.getPageToken();
+      iteratorOverCurrentBatch =
+          result.getRows() != null
+              ? result.getRows().iterator()
+              : Collections.<TableRow>emptyIterator();
+
+      // The server may return a page token indefinitely on a zero-length table.
+      if (pageToken == null || result.getTotalRows() != null && result.getTotalRows() == 0) {
+        lastPage = true;
+      }
     }
-    String formatString = String.format("%%0%dd", digits);
-    String fractionalSeconds = String.format(formatString, subsecond);
-    return String.format("%s.%s UTC", dayAndTime, fractionalSeconds);
+  }
+
+  public TableRow getCurrent() {
+    if (current == null) {
+      throw new NoSuchElementException();
+    }
+    return current;
   }
 
   /**
@@ -223,7 +249,7 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
     }
 
     if (fieldSchema.getType().equals("TIMESTAMP")) {
-      return formatTimestamp((String) v);
+      return AvroUtils.formatTimestamp((String) v);
     }
 
     return v;
@@ -290,26 +316,17 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
       String fieldName = fieldSchema.getName();
       checkArgument(!RESERVED_FIELD_NAMES.contains(fieldName),
           "BigQueryIO does not support records with columns named %s", fieldName);
+
+      if (convertedValue == null) {
+        // BigQuery does not include null values when the export operation (to JSON) is used.
+        // To match that behavior, BigQueryTableRowiterator, and the DirectPipelineRunner,
+        // intentionally omits columns with null values.
+        continue;
+      }
+
       row.set(fieldName, convertedValue);
     }
     return row;
-  }
-
-  @Override
-  public TableRow next() {
-    if (!hasNext()) {
-      throw new NoSuchElementException();
-    }
-
-    // Embed schema information into the raw row, so that values have an
-    // associated key.  This matches how rows are read when using the
-    // DataflowPipelineRunner.
-    return getTypedTableRow(schema.getFields(), rowIterator.next());
-  }
-
-  @Override
-  public void remove() {
-    throw new UnsupportedOperationException();
   }
 
   // Create a new BigQuery dataset
@@ -344,6 +361,12 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
         + projectId + ". Manual deletion may be required. Error message : {}");
   }
 
+  /**
+   * Executes the specified query and returns a reference to the temporary BigQuery table created
+   * to hold the results.
+   *
+   * @throws IOException if the query fails.
+   */
   private TableReference executeQueryAndWaitForCompletion()
       throws IOException, InterruptedException {
     // Create a temporary dataset to store results.
@@ -360,6 +383,7 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
     job.setConfiguration(config);
     queryConfig.setQuery(query);
     queryConfig.setAllowLargeResults(true);
+    queryConfig.setFlattenResults(flattenResults);
 
     TableReference destinationTable = new TableReference();
     destinationTable.setProjectId(projectId);
@@ -376,8 +400,17 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
       Job pollJob = executeWithBackOff(
           client.jobs().get(projectId, jobId.getJobId()),
           "Error when trying to get status of the job for query " + query + " :{}");
-      if (pollJob.getStatus().getState().equals("DONE")) {
-        return pollJob.getConfiguration().getQuery().getDestinationTable();
+      JobStatus status = pollJob.getStatus();
+      if (status.getState().equals("DONE")) {
+        // Job is DONE, but did not necessarily succeed.
+        ErrorProto error = status.getErrorResult();
+        if (error == null) {
+          return pollJob.getConfiguration().getQuery().getDestinationTable();
+        } else {
+          // There will be no temporary table to delete, so null out the reference.
+          temporaryTableId = null;
+          throw new IOException("Executing query " + query + " failed: " + error.getMessage());
+        }
       }
       try {
         Thread.sleep(QUERY_COMPLETION_POLL_TIME.getMillis());
@@ -415,67 +448,22 @@ public class BigQueryTableRowIterator implements Iterator<TableRow>, Closeable {
     return result;
   }
 
-  private void readNext() throws IOException, InterruptedException {
-    if (query != null && ref == null) {
-      ref = executeQueryAndWaitForCompletion();
-    }
-    if (!isOpen()) {
-      open();
-    }
-
-    Bigquery.Tabledata.List list =
-        client.tabledata().list(ref.getProjectId(), ref.getDatasetId(), ref.getTableId());
-    if (pageToken != null) {
-      list.setPageToken(pageToken);
-    }
-
-    TableDataList result =
-        executeWithBackOff(list, "Error reading from BigQuery table %s of dataset %s : {}",
-            ref.getTableId(), ref.getDatasetId());
-
-    pageToken = result.getPageToken();
-    rowIterator =
-        result.getRows() != null
-            ? result.getRows().iterator() : Collections.<TableRow>emptyIterator();
-
-    // The server may return a page token indefinitely on a zero-length table.
-    if (pageToken == null || result.getTotalRows() != null && result.getTotalRows() == 0) {
-      lastPage = true;
-    }
-  }
-
   @Override
-  public void close() throws IOException {
+  public void close() {
     // Prevent any further requests.
     lastPage = true;
 
     try {
       // Deleting temporary table and dataset that gets generated when executing a query.
       if (temporaryDatasetId != null) {
-        deleteTable(temporaryDatasetId, temporaryTableId);
+        if (temporaryTableId != null) {
+          deleteTable(temporaryDatasetId, temporaryTableId);
+        }
         deleteDataset(temporaryDatasetId);
       }
-    } catch (InterruptedException e) {
-      throw new IOException(e);
+    } catch (IOException | InterruptedException e) {
+      throw new RuntimeException(e);
     }
 
-  }
-
-  private boolean isOpen() {
-    return schema != null;
-  }
-
-  /**
-   * Opens the table for read.
-   * @throws IOException on failure
-   */
-  private void open() throws IOException, InterruptedException {
-    // Get table schema.
-    Bigquery.Tables.Get get =
-        client.tables().get(ref.getProjectId(), ref.getDatasetId(), ref.getTableId());
-
-    Table table = executeWithBackOff(get, "Error opening BigQuery table  %s of dataset %s  : {}",
-        ref.getTableId(), ref.getDatasetId());
-    schema = table.getSchema();
   }
 }

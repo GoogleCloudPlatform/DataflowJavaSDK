@@ -31,21 +31,24 @@ import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
 import com.google.cloud.dataflow.sdk.coders.VarIntCoder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
+import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.CreateDisposition;
+import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.WriteDisposition;
 import com.google.cloud.dataflow.sdk.options.BigQueryOptions;
 import com.google.cloud.dataflow.sdk.options.GcpOptions;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
-import com.google.cloud.dataflow.sdk.runners.worker.BigQueryReader;
+import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
+import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.util.BigQueryTableInserter;
 import com.google.cloud.dataflow.sdk.util.BigQueryTableRowIterator;
 import com.google.cloud.dataflow.sdk.util.PropertyNames;
-import com.google.cloud.dataflow.sdk.util.ReaderUtils;
 import com.google.cloud.dataflow.sdk.util.Reshuffle;
+import com.google.cloud.dataflow.sdk.util.SystemDoFnInternal;
 import com.google.cloud.dataflow.sdk.util.Transport;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
@@ -55,6 +58,7 @@ import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
 import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.cloud.hadoop.util.ApiErrorExtractor;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -78,6 +82,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import javax.annotation.Nullable;
 
 /**
  * {@link PTransform}s for reading and writing
@@ -337,20 +343,24 @@ public class BigQueryIO {
       TableReference table;
       final String query;
       final boolean validate;
+      @Nullable
+      Boolean flattenResults;
 
       private static final String QUERY_VALIDATION_FAILURE_ERROR =
           "Validation of query \"%1$s\" failed. If the query depends on an earlier stage of the"
           + " pipeline, This validation can be disabled using #withoutValidation.";
 
       private Bound() {
-        this(null, null, null, true);
+        this(null, null, null, true, null);
       }
 
-      private Bound(String name, String query, TableReference reference, boolean validate) {
+      private Bound(String name, String query, TableReference reference, boolean validate,
+          Boolean flattenResults) {
         super(name);
         this.table = reference;
         this.query = query;
         this.validate = validate;
+        this.flattenResults = flattenResults;
       }
 
       /**
@@ -359,7 +369,7 @@ public class BigQueryIO {
        * <p>Does not modify this object.
        */
       public Bound named(String name) {
-        return new Bound(name, query, table, validate);
+        return new Bound(name, query, table, validate, flattenResults);
       }
 
       /**
@@ -378,23 +388,40 @@ public class BigQueryIO {
        * <p>Does not modify this object.
        */
       public Bound from(TableReference table) {
-        return new Bound(name, query, table, validate);
+        return new Bound(name, query, table, validate, flattenResults);
       }
 
       /**
        * Returns a copy of this transform that reads the results of the specified query.
        *
        * <p>Does not modify this object.
+       *
+       * <p>By default, the query results will be flattened -- see
+       * "flattenResults" in the <a href="https://cloud.google.com/bigquery/docs/reference/v2/jobs">
+       * Jobs documentation</a> for more information.  To disable flattening, use
+       * {@link BigQueryIO.Read.Bound#withoutResultFlattening}.
        */
       public Bound fromQuery(String query) {
-        return new Bound(name, query, table, validate);
+        return new Bound(name, query, table, validate,
+            MoreObjects.firstNonNull(flattenResults, Boolean.TRUE));
       }
 
       /**
        * Disable table validation.
        */
       public Bound withoutValidation() {
-        return new Bound(name, query, table, false);
+        return new Bound(name, query, table, false, flattenResults);
+      }
+
+      /**
+       * Disable <a href="https://cloud.google.com/bigquery/docs/reference/v2/jobs">
+       * flattening of query results</a>.
+       *
+       * <p>Only valid when a query is used ({@link #fromQuery}). Setting this option when reading
+       * from a table will cause an error during validation.
+       */
+      public Bound withoutResultFlattening() {
+        return new Bound(name, query, table, validate, false);
       }
 
       /**
@@ -408,6 +435,12 @@ public class BigQueryIO {
         } else if (table != null && query != null) {
           throw new IllegalStateException("Invalid BigQuery read operation. Specifies both a"
               + " query and a table, only one of these should be provided");
+        } else if (table != null && flattenResults != null) {
+          throw new IllegalStateException("Invalid BigQuery read operation. Specifies a"
+              + " table with a result flattening preference, which is not configurable");
+        } else if (query != null && flattenResults == null) {
+          throw new IllegalStateException("Invalid BigQuery read operation. Specifies a"
+              + " query without a result flattening preference");
         }
 
         BigQueryOptions bqOptions = input.getPipeline().getOptions().as(BigQueryOptions.class);
@@ -497,6 +530,13 @@ public class BigQueryIO {
        */
       public boolean getValidate() {
         return validate;
+      }
+
+      /**
+       * Returns true/false if result flattening is enabled/disabled, or null if not applicable.
+       */
+      public Boolean getFlattenResults() {
+        return flattenResults;
       }
     }
 
@@ -1016,6 +1056,7 @@ public class BigQueryIO {
   /**
    * Implementation of DoFn to perform streaming BigQuery write.
    */
+  @SystemDoFnInternal
   private static class StreamingWriteFn
       extends DoFn<KV<ShardedKey<String>, TableRowInfo>, Void> {
     /** TableSchema in JSON. Use String to make the class Serializable. */
@@ -1031,6 +1072,10 @@ public class BigQueryIO {
         each time. */
     private static Set<String> createdTables =
         Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+
+    /** Tracks bytes written, exposed as "ByteCount" Counter. */
+    private Aggregator<Long, Long> byteCountAggregator =
+        createAggregator("ByteCount", new Sum.SumLongFn());
 
     /** Constructor. */
     StreamingWriteFn(TableSchema schema) {
@@ -1086,7 +1131,8 @@ public class BigQueryIO {
             TableSchema tableSchema = JSON_FACTORY.fromString(jsonTableSchema, TableSchema.class);
             Bigquery client = Transport.newBigQueryClient(options).build();
             BigQueryTableInserter inserter = new BigQueryTableInserter(client);
-            inserter.tryCreateTable(tableReference, tableSchema);
+            inserter.getOrCreateTable(tableReference, WriteDisposition.WRITE_APPEND,
+                CreateDisposition.CREATE_IF_NEEDED, tableSchema);
             createdTables.add(tableSpec);
           }
         }
@@ -1100,7 +1146,7 @@ public class BigQueryIO {
       if (!tableRows.isEmpty()) {
         try {
           BigQueryTableInserter inserter = new BigQueryTableInserter(client);
-          inserter.insertAll(tableReference, tableRows, uniqueIds);
+          inserter.insertAll(tableReference, tableRows, uniqueIds, byteCountAggregator);
         } catch (IOException e) {
           throw new RuntimeException(e);
         }
@@ -1372,18 +1418,28 @@ public class BigQueryIO {
       transform.table.setProjectId(options.getProject());
     }
 
-    BigQueryReader reader = null;
+    BigQueryTableRowIterator iterator;
     if (transform.query != null) {
       LOG.info("Reading from BigQuery query {}", transform.query);
-      reader = BigQueryReader.fromQuery(transform.query, options.getProject(), client);
+      iterator =
+          BigQueryTableRowIterator.fromQuery(
+              transform.query, options.getProject(), client, transform.getFlattenResults());
     } else {
-      reader = BigQueryReader.fromTable(transform.table, client);
       LOG.info("Reading from BigQuery table {}", toTableSpec(transform.table));
+      iterator = BigQueryTableRowIterator.fromTable(transform.table, client);
     }
 
-    List<WindowedValue<TableRow>> elems = ReaderUtils.readElemsFromReader(reader);
-    LOG.info("Number of records read from BigQuery: {}", elems.size());
-    context.setPCollectionWindowedValue(context.getOutput(transform), elems);
+    try (BigQueryTableRowIterator ignored = iterator) {
+      List<TableRow> elems = new ArrayList<>();
+      iterator.open();
+      while (iterator.advance()) {
+        elems.add(iterator.getCurrent());
+      }
+      LOG.info("Number of records read from BigQuery: {}", elems.size());
+      context.setPCollection(context.getOutput(transform), elems);
+    } catch (IOException | InterruptedException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   private static <K, V> List<V> getOrCreateMapListValue(Map<K, List<V>> map, K key) {

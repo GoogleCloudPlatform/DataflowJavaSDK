@@ -16,14 +16,18 @@
 
 package com.google.cloud.dataflow.sdk.transforms;
 
+import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.annotations.Experimental;
 import com.google.cloud.dataflow.sdk.coders.CannotProvideCoderException;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
+import com.google.cloud.dataflow.sdk.transforms.windowing.WindowFn;
 import com.google.cloud.dataflow.sdk.util.DirectModeExecutionContext;
 import com.google.cloud.dataflow.sdk.util.DirectSideInputReader;
 import com.google.cloud.dataflow.sdk.util.DoFnRunner;
+import com.google.cloud.dataflow.sdk.util.DoFnRunnerBase;
+import com.google.cloud.dataflow.sdk.util.DoFnRunners;
 import com.google.cloud.dataflow.sdk.util.IllegalMutationException;
 import com.google.cloud.dataflow.sdk.util.MutationDetector;
 import com.google.cloud.dataflow.sdk.util.MutationDetectors;
@@ -43,6 +47,7 @@ import com.google.cloud.dataflow.sdk.values.TypedPValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
 
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -1015,6 +1020,10 @@ public class ParDo {
       return mainOutputTag;
     }
 
+    public TupleTagList getSideOutputTags() {
+      return sideOutputTags;
+    }
+
     public List<PCollectionView<?>> getSideInputs() {
       return sideInputs;
     }
@@ -1138,11 +1147,11 @@ public class ParDo {
     ImmutabilityCheckingOutputManager<ActualInputT> outputManager =
         new ImmutabilityCheckingOutputManager<>(
             fn.getClass().getSimpleName(),
-            new DoFnRunner.ListOutputManager(),
+            new DoFnRunnerBase.ListOutputManager(),
             outputs);
 
     DoFnRunner<InputT, OutputT> fnRunner =
-        DoFnRunner.create(
+        DoFnRunners.createDefault(
             context.getPipelineOptions(),
             fn,
             sideInputReader,
@@ -1178,7 +1187,7 @@ public class ParDo {
         fnRunner.processElement(windowedElem);
         inputMutationDetector.verifyUnmodified();
       } catch (CoderException e) {
-        throw new UserCodeException(e);
+        throw UserCodeException.wrap(e);
       } catch (IllegalMutationException exn) {
         throw new IllegalMutationException(
             String.format("DoFn %s mutated input value %s of class %s (new value was %s)."
@@ -1210,23 +1219,23 @@ public class ParDo {
   }
 
   /**
-   * A {@link DoFnRunner.OutputManager} that provides facilities for checking output values for
+   * A {@code DoFnRunner.OutputManager} that provides facilities for checking output values for
    * illegal mutations.
    *
    * <p>When used via the try-with-resources pattern, it is guaranteed that every value passed
    * to {@link #output} will have been checked for illegal mutation.
    */
   private static class ImmutabilityCheckingOutputManager<InputT>
-      implements DoFnRunner.OutputManager, AutoCloseable {
+      implements DoFnRunners.OutputManager, AutoCloseable {
 
-    private final DoFnRunner.OutputManager underlyingOutputManager;
+    private final DoFnRunners.OutputManager underlyingOutputManager;
     private final ConcurrentMap<TupleTag<?>, MutationDetector> mutationDetectorForTag;
     private final PCollectionTuple outputs;
     private String doFnName;
 
     public ImmutabilityCheckingOutputManager(
         String doFnName,
-        DoFnRunner.OutputManager underlyingOutputManager,
+        DoFnRunners.OutputManager underlyingOutputManager,
         PCollectionTuple outputs) {
       this.doFnName = doFnName;
       this.underlyingOutputManager = underlyingOutputManager;
@@ -1246,7 +1255,7 @@ public class ParDo {
           MutationDetector priorDetector = mutationDetectorForTag.put(tag, newDetector);
           verifyOutputUnmodified(priorDetector);
         } catch (CoderException e) {
-          throw new UserCodeException(e);
+          throw UserCodeException.wrap(e);
         }
       }
 

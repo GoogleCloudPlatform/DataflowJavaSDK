@@ -26,15 +26,19 @@ import com.google.cloud.dataflow.sdk.coders.IterableCoder;
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.VarIntCoder;
+import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
 import com.google.cloud.dataflow.sdk.transforms.Combine.KeyedCombineFn;
+import com.google.cloud.dataflow.sdk.transforms.CombineWithContext.KeyedCombineFnWithContext;
 import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.GlobalWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.PaneInfo;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger;
 import com.google.cloud.dataflow.sdk.transforms.windowing.TriggerBuilder;
+import com.google.cloud.dataflow.sdk.transforms.windowing.Window.ClosingBehavior;
 import com.google.cloud.dataflow.sdk.transforms.windowing.WindowFn;
 import com.google.cloud.dataflow.sdk.util.TimerInternals.TimerData;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
@@ -44,8 +48,9 @@ import com.google.cloud.dataflow.sdk.util.state.StateInternals;
 import com.google.cloud.dataflow.sdk.util.state.StateNamespace;
 import com.google.cloud.dataflow.sdk.util.state.StateNamespaces;
 import com.google.cloud.dataflow.sdk.util.state.StateTag;
-import com.google.cloud.dataflow.sdk.util.state.WatermarkStateInternal;
+import com.google.cloud.dataflow.sdk.util.state.WatermarkHoldState;
 import com.google.cloud.dataflow.sdk.values.KV;
+import com.google.cloud.dataflow.sdk.values.PCollectionView;
 import com.google.cloud.dataflow.sdk.values.TimestampedValue;
 import com.google.cloud.dataflow.sdk.values.TupleTag;
 import com.google.common.base.Function;
@@ -70,6 +75,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.PriorityQueue;
 import java.util.Set;
 
@@ -86,7 +92,10 @@ import javax.annotation.Nullable;
  * @param <W> The type of windows being used.
  */
 public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
-  private final TestInMemoryStateInternals stateInternals = new TestInMemoryStateInternals();
+  private static final String KEY = "TEST_KEY";
+
+  private final TestInMemoryStateInternals<String> stateInternals =
+      new TestInMemoryStateInternals<>(KEY);
   private final TestTimerInternals timerInternals = new TestTimerInternals();
 
   private final WindowFn<Object, W> windowFn;
@@ -94,31 +103,40 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
   private final Coder<OutputT> outputCoder;
   private final WindowingStrategy<Object, W> objectStrategy;
   private final ReduceFn<String, InputT, OutputT, W> reduceFn;
+  private final PipelineOptions options;
 
-  private static final String KEY = "TEST_KEY";
+  /**
+   * If true, the output watermark is automatically advanced to the latest possible
+   * point when the input watermark is advanced. This is the default for most tests.
+   * If false, the output watermark must be explicitly advanced by the test, which can
+   * be used to exercise some of the more subtle behavior of WatermarkHold.
+   */
+  private boolean autoAdvanceOutputWatermark;
+
   private ExecutableTrigger<W> executableTrigger;
 
   private final InMemoryLongSumAggregator droppedDueToClosedWindow =
-      new InMemoryLongSumAggregator(ReduceFnRunner.DROPPED_DUE_TO_CLOSED_WINDOW_COUNTER);
-  private final InMemoryLongSumAggregator droppedDueToLateness =
-      new InMemoryLongSumAggregator(ReduceFnRunner.DROPPED_DUE_TO_LATENESS_COUNTER);
+      new InMemoryLongSumAggregator(GroupAlsoByWindowsDoFn.DROPPED_DUE_TO_CLOSED_WINDOW_COUNTER);
 
   public static <W extends BoundedWindow> ReduceFnTester<Integer, Iterable<Integer>, W>
       nonCombining(WindowingStrategy<?, W> windowingStrategy) throws Exception {
     return new ReduceFnTester<Integer, Iterable<Integer>, W>(
         windowingStrategy,
-        SystemReduceFn.<String, Integer, W>buffering(VarIntCoder.of()).create(KEY),
-        IterableCoder.of(VarIntCoder.of()));
+        SystemReduceFn.<String, Integer, W>buffering(VarIntCoder.of()),
+        IterableCoder.of(VarIntCoder.of()),
+        PipelineOptionsFactory.create(),
+        NullSideInputReader.empty());
   }
 
   public static <W extends BoundedWindow> ReduceFnTester<Integer, Iterable<Integer>, W>
       nonCombining(WindowFn<?, W> windowFn, TriggerBuilder<W> trigger, AccumulationMode mode,
-          Duration allowedDataLateness) throws Exception {
+          Duration allowedDataLateness, ClosingBehavior closingBehavior) throws Exception {
     WindowingStrategy<?, W> strategy =
         WindowingStrategy.of(windowFn)
             .withTrigger(trigger.buildTrigger())
             .withMode(mode)
-            .withAllowedLateness(allowedDataLateness);
+            .withAllowedLateness(allowedDataLateness)
+            .withClosingBehavior(closingBehavior);
     return nonCombining(strategy);
   }
 
@@ -135,11 +153,31 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
 
     return new ReduceFnTester<Integer, OutputT, W>(
         strategy,
-        SystemReduceFn.<String, Integer, AccumT, OutputT, W>combining(StringUtf8Coder.of(), fn)
-            .create(KEY),
-        outputCoder);
+        SystemReduceFn.<String, Integer, AccumT, OutputT, W>combining(StringUtf8Coder.of(), fn),
+        outputCoder,
+        PipelineOptionsFactory.create(),
+        NullSideInputReader.empty());
   }
 
+  public static <W extends BoundedWindow, AccumT, OutputT> ReduceFnTester<Integer, OutputT, W>
+  combining(WindowingStrategy<?, W> strategy,
+      KeyedCombineFnWithContext<String, Integer, AccumT, OutputT> combineFn,
+      Coder<OutputT> outputCoder,
+      PipelineOptions options,
+      SideInputReader sideInputReader) throws Exception {
+    CoderRegistry registry = new CoderRegistry();
+    registry.registerStandardCoders();
+    AppliedCombineFn<String, Integer, AccumT, OutputT> fn =
+        AppliedCombineFn.<String, Integer, AccumT, OutputT>withInputCoder(
+            combineFn, registry, KvCoder.of(StringUtf8Coder.of(), VarIntCoder.of()));
+
+    return new ReduceFnTester<Integer, OutputT, W>(
+        strategy,
+        SystemReduceFn.<String, Integer, AccumT, OutputT, W>combining(StringUtf8Coder.of(), fn),
+        outputCoder,
+        options,
+        sideInputReader);
+  }
   public static <W extends BoundedWindow, AccumT, OutputT> ReduceFnTester<Integer, OutputT, W>
       combining(WindowFn<?, W> windowFn, Trigger<W> trigger, AccumulationMode mode,
           KeyedCombineFn<String, Integer, AccumT, OutputT> combineFn, Coder<OutputT> outputCoder,
@@ -153,21 +191,40 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
   }
 
   private ReduceFnTester(WindowingStrategy<?, W> wildcardStrategy,
-      ReduceFn<String, InputT, OutputT, W> reduceFn, Coder<OutputT> outputCoder) throws Exception {
+      ReduceFn<String, InputT, OutputT, W> reduceFn, Coder<OutputT> outputCoder,
+      PipelineOptions options, SideInputReader sideInputReader) throws Exception {
     @SuppressWarnings("unchecked")
     WindowingStrategy<Object, W> objectStrategy = (WindowingStrategy<Object, W>) wildcardStrategy;
 
     this.objectStrategy = objectStrategy;
     this.reduceFn = reduceFn;
     this.windowFn = objectStrategy.getWindowFn();
-    this.windowingInternals = new TestWindowingInternals();
+    this.windowingInternals = new TestWindowingInternals(sideInputReader);
     this.outputCoder = outputCoder;
-    executableTrigger = wildcardStrategy.getTrigger();
+    this.autoAdvanceOutputWatermark = true;
+    this.executableTrigger = wildcardStrategy.getTrigger();
+    this.options = options;
+  }
+
+  public void setAutoAdvanceOutputWatermark(boolean autoAdvanceOutputWatermark) {
+    this.autoAdvanceOutputWatermark = autoAdvanceOutputWatermark;
+  }
+
+  @Nullable
+  public Instant getNextTimer(TimeDomain domain) {
+    return timerInternals.getNextTimer(domain);
   }
 
   ReduceFnRunner<String, InputT, OutputT, W> createRunner() {
-    return new ReduceFnRunner<>(KEY, objectStrategy, timerInternals, windowingInternals,
-        droppedDueToClosedWindow, droppedDueToLateness, reduceFn);
+    return new ReduceFnRunner<>(
+        KEY,
+        objectStrategy,
+        stateInternals,
+        timerInternals,
+        windowingInternals,
+        droppedDueToClosedWindow,
+        reduceFn,
+        options);
   }
 
   public ExecutableTrigger<W> getTrigger() {
@@ -182,28 +239,29 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
   public final void assertHasOnlyGlobalAndFinishedSetsFor(W... expectedWindows) {
     assertHasOnlyGlobalAndAllowedTags(
         ImmutableSet.copyOf(expectedWindows),
-        ImmutableSet.<StateTag<?>>of(TriggerRunner.FINISHED_BITS_TAG));
+        ImmutableSet.<StateTag<? super String, ?>>of(TriggerRunner.FINISHED_BITS_TAG));
   }
 
   @SafeVarargs
   public final void assertHasOnlyGlobalAndFinishedSetsAndPaneInfoFor(W... expectedWindows) {
     assertHasOnlyGlobalAndAllowedTags(
         ImmutableSet.copyOf(expectedWindows),
-        ImmutableSet.<StateTag<?>>of(TriggerRunner.FINISHED_BITS_TAG, PaneInfoTracker.PANE_INFO_TAG,
+        ImmutableSet.<StateTag<? super String, ?>>of(
+            TriggerRunner.FINISHED_BITS_TAG, PaneInfoTracker.PANE_INFO_TAG,
             WatermarkHold.watermarkHoldTagForOutputTimeFn(objectStrategy.getOutputTimeFn()),
             WatermarkHold.EXTRA_HOLD_TAG));
   }
 
   public final void assertHasOnlyGlobalState() {
     assertHasOnlyGlobalAndAllowedTags(
-        Collections.<W>emptySet(), Collections.<StateTag<?>>emptySet());
+        Collections.<W>emptySet(), Collections.<StateTag<? super String, ?>>emptySet());
   }
 
   @SafeVarargs
   public final void assertHasOnlyGlobalAndPaneInfoFor(W... expectedWindows) {
     assertHasOnlyGlobalAndAllowedTags(
         ImmutableSet.copyOf(expectedWindows),
-        ImmutableSet.<StateTag<?>>of(
+        ImmutableSet.<StateTag<? super String, ?>>of(
             PaneInfoTracker.PANE_INFO_TAG,
             WatermarkHold.watermarkHoldTagForOutputTimeFn(objectStrategy.getOutputTimeFn()),
             WatermarkHold.EXTRA_HOLD_TAG));
@@ -214,30 +272,30 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
    * {@code expectedWindows} and that each of these windows has only tags from {@code allowedTags}.
    */
   private void assertHasOnlyGlobalAndAllowedTags(
-      Set<W> expectedWindows, Set<StateTag<?>> allowedTags) {
+      Set<W> expectedWindows, Set<StateTag<? super String, ?>> allowedTags) {
     Set<StateNamespace> expectedWindowsSet = new HashSet<>();
     for (W expectedWindow : expectedWindows) {
       expectedWindowsSet.add(windowNamespace(expectedWindow));
     }
-    Map<StateNamespace, Set<StateTag<?>>> actualWindows = new HashMap<>();
+    Map<StateNamespace, Set<StateTag<? super String, ?>>> actualWindows = new HashMap<>();
 
     for (StateNamespace namespace : stateInternals.getNamespacesInUse()) {
       if (namespace instanceof StateNamespaces.GlobalNamespace) {
         continue;
       } else if (namespace instanceof StateNamespaces.WindowNamespace) {
-        Set<StateTag<?>> tagsInUse = stateInternals.getTagsInUse(namespace);
+        Set<StateTag<? super String, ?>> tagsInUse = stateInternals.getTagsInUse(namespace);
         if (tagsInUse.isEmpty()) {
           continue;
         }
         actualWindows.put(namespace, tagsInUse);
-        Set<StateTag<?>> unexpected = Sets.difference(tagsInUse, allowedTags);
+        Set<StateTag<? super String, ?>> unexpected = Sets.difference(tagsInUse, allowedTags);
         if (unexpected.isEmpty()) {
           continue;
         } else {
           fail(namespace + " has unexpected states: " + tagsInUse);
         }
       } else if (namespace instanceof StateNamespaces.WindowAndTriggerNamespace) {
-        Set<StateTag<?>> tagsInUse = stateInternals.getTagsInUse(namespace);
+        Set<StateTag<? super String, ?>> tagsInUse = stateInternals.getTagsInUse(namespace);
         assertTrue(namespace + " contains " + tagsInUse, tagsInUse.isEmpty());
       } else {
         fail("Unrecognized namespace " + namespace);
@@ -262,10 +320,6 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
 
   public long getElementsDroppedDueToClosedWindow() {
     return droppedDueToClosedWindow.getSum();
-  }
-
-  public long getElementsDroppedDueToLateness() {
-    return droppedDueToLateness.getSum();
   }
 
   /**
@@ -302,10 +356,28 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     runner.persist();
   }
 
+  /**
+   * If {@link #autoAdvanceOutputWatermark} is {@literal false}, advance the output watermark
+   * to the given value. Otherwise throw.
+   */
+  public void advanceOutputWatermark(Instant newOutputWatermark) throws Exception {
+    timerInternals.advanceOutputWatermark(newOutputWatermark);
+  }
+
   /** Advance the processing time to the specified time, firing any timers that should fire. */
   public void advanceProcessingTime(Instant newProcessingTime) throws Exception {
     ReduceFnRunner<String, InputT, OutputT, W> runner = createRunner();
     timerInternals.advanceProcessingTime(runner, newProcessingTime);
+    runner.persist();
+  }
+
+  /**
+   * Advance the synchronized processing time to the specified time,
+   * firing any timers that should fire.
+   */
+  public void advanceSynchronizedProcessingTime(Instant newProcessingTime) throws Exception {
+    ReduceFnRunner<String, InputT, OutputT, W> runner = createRunner();
+    timerInternals.advanceSynchronizedProcessingTime(runner, newProcessingTime);
     runner.persist();
   }
 
@@ -339,7 +411,7 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     runner.persist();
   }
 
-  public void fireTimer(W window, Instant timestamp, TimeDomain domain) {
+  public void fireTimer(W window, Instant timestamp, TimeDomain domain) throws Exception {
     ReduceFnRunner<String, InputT, OutputT, W> runner = createRunner();
     runner.onTimer(
         TimerData.of(StateNamespaces.window(windowFn.windowCoder(), window), timestamp, domain));
@@ -349,10 +421,16 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
   /**
    * Simulate state.
    */
-  private static class TestInMemoryStateInternals extends InMemoryStateInternals {
-    public Set<StateTag<?>> getTagsInUse(StateNamespace namespace) {
-      Set<StateTag<?>> inUse = new HashSet<>();
-      for (Map.Entry<StateTag<?>, State> entry : inMemoryState.getTagsInUse(namespace).entrySet()) {
+  private static class TestInMemoryStateInternals<K> extends InMemoryStateInternals<K> {
+
+    public TestInMemoryStateInternals(K key) {
+      super(key);
+    }
+
+    public Set<StateTag<? super K, ?>> getTagsInUse(StateNamespace namespace) {
+      Set<StateTag<? super K, ?>> inUse = new HashSet<>();
+      for (Entry<StateTag<? super K, ?>, State> entry :
+        inMemoryState.getTagsInUse(namespace).entrySet()) {
         if (!isEmptyForTesting(entry.getValue())) {
           inUse.add(entry.getKey());
         }
@@ -368,8 +446,8 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     public Instant earliestWatermarkHold() {
       Instant minimum = null;
       for (State storage : inMemoryState.values()) {
-        if (storage instanceof WatermarkStateInternal) {
-          Instant hold = ((WatermarkStateInternal) storage).get().read();
+        if (storage instanceof WatermarkHoldState) {
+          Instant hold = ((WatermarkHoldState<?>) storage).read();
           if (minimum == null || (hold != null && hold.isBefore(minimum))) {
             minimum = hold;
           }
@@ -385,6 +463,11 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
    */
   private class TestWindowingInternals implements WindowingInternals<InputT, KV<String, OutputT>> {
     private List<WindowedValue<KV<String, OutputT>>> outputs = new ArrayList<>();
+    private SideInputReader sideInputReader;
+
+    private TestWindowingInternals(SideInputReader sideInputReader) {
+      this.sideInputReader = sideInputReader;
+    }
 
     @Override
     public void outputWindowedValue(KV<String, OutputT> output, Instant timestamp,
@@ -422,8 +505,22 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     }
 
     @Override
-    public StateInternals stateInternals() {
-      return stateInternals;
+    public StateInternals<Object> stateInternals() {
+      // Safe for testing only
+      @SuppressWarnings({"unchecked", "rawtypes"})
+      TestInMemoryStateInternals<Object> untypedStateInternals =
+          (TestInMemoryStateInternals) stateInternals;
+      return untypedStateInternals;
+    }
+
+    @Override
+    public <T> T sideInput(PCollectionView<T> view, BoundedWindow mainInputWindow) {
+      if (!sideInputReader.contains(view)) {
+        throw new IllegalArgumentException("calling sideInput() with unknown view");
+      }
+      BoundedWindow sideInputWindow =
+          view.getWindowingStrategyInternal().getWindowFn().getSideInputWindow(mainInputWindow);
+      return sideInputReader.get(view, sideInputWindow);
     }
   }
 
@@ -511,8 +608,35 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     /** Current processing time. */
     private Instant processingTime = BoundedWindow.TIMESTAMP_MIN_VALUE;
 
+    /** Current synchronized processing time. */
+    @Nullable
+    private Instant synchronizedProcessingTime = null;
+
+    @Nullable
+    public Instant getNextTimer(TimeDomain domain) {
+      TimerData data = null;
+      switch (domain) {
+        case EVENT_TIME:
+           data = watermarkTimers.peek();
+           break;
+        case PROCESSING_TIME:
+        case SYNCHRONIZED_PROCESSING_TIME:
+          data = processingTimers.peek();
+          break;
+      }
+      Preconditions.checkNotNull(data); // cases exhaustive
+      return data == null ? null : data.getTimestamp();
+    }
+
     private PriorityQueue<TimerData> queue(TimeDomain domain) {
-      return TimeDomain.EVENT_TIME.equals(domain) ? watermarkTimers : processingTimers;
+      switch (domain) {
+        case EVENT_TIME:
+          return watermarkTimers;
+        case PROCESSING_TIME:
+        case SYNCHRONIZED_PROCESSING_TIME:
+          return processingTimers;
+      }
+      throw new RuntimeException(); // cases exhaustive
     }
 
     @Override
@@ -533,6 +657,12 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     @Override
     public Instant currentProcessingTime() {
       return processingTime;
+    }
+
+    @Override
+    @Nullable
+    public Instant currentSynchronizedProcessingTime() {
+      return synchronizedProcessingTime;
     }
 
     @Override
@@ -559,7 +689,7 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     }
 
     public void advanceInputWatermark(
-        ReduceFnRunner<?, ?, ?, ?> runner, Instant newInputWatermark) {
+        ReduceFnRunner<?, ?, ?, ?> runner, Instant newInputWatermark) throws Exception {
       Preconditions.checkNotNull(newInputWatermark);
       Preconditions.checkState(
           inputWatermarkTime == null || !newInputWatermark.isBefore(inputWatermarkTime),
@@ -576,10 +706,12 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
             + "so output watermark = input watermark");
         hold = inputWatermarkTime;
       }
-      advanceOutputWatermark(hold);
+      if (autoAdvanceOutputWatermark) {
+        advanceOutputWatermark(hold);
+      }
     }
 
-    private void advanceOutputWatermark(Instant newOutputWatermark) {
+    public void advanceOutputWatermark(Instant newOutputWatermark) {
       Preconditions.checkNotNull(newOutputWatermark);
       Preconditions.checkNotNull(inputWatermarkTime);
       if (newOutputWatermark.isAfter(inputWatermarkTime)) {
@@ -598,7 +730,7 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     }
 
     public void advanceProcessingTime(
-        ReduceFnRunner<?, ?, ?, ?> runner, Instant newProcessingTime) {
+        ReduceFnRunner<?, ?, ?, ?> runner, Instant newProcessingTime) throws Exception {
       Preconditions.checkState(!newProcessingTime.isBefore(processingTime),
           "Cannot move processing time backwards from %s to %s", processingTime, newProcessingTime);
       WindowTracing.trace("TestTimerInternals.advanceProcessingTime: from {} to {}", processingTime,
@@ -607,8 +739,21 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
       advanceAndFire(runner, newProcessingTime, TimeDomain.PROCESSING_TIME);
     }
 
+    public void advanceSynchronizedProcessingTime(
+        ReduceFnRunner<?, ?, ?, ?> runner, Instant newSynchronizedProcessingTime) throws Exception {
+      Preconditions.checkState(!newSynchronizedProcessingTime.isBefore(synchronizedProcessingTime),
+          "Cannot move processing time backwards from %s to %s", processingTime,
+          newSynchronizedProcessingTime);
+      WindowTracing.trace("TestTimerInternals.advanceProcessingTime: from {} to {}",
+          synchronizedProcessingTime, newSynchronizedProcessingTime);
+      synchronizedProcessingTime = newSynchronizedProcessingTime;
+      advanceAndFire(
+          runner, newSynchronizedProcessingTime, TimeDomain.SYNCHRONIZED_PROCESSING_TIME);
+    }
+
     private void advanceAndFire(
-        ReduceFnRunner<?, ?, ?, ?> runner, Instant currentTime, TimeDomain domain) {
+        ReduceFnRunner<?, ?, ?, ?> runner, Instant currentTime, TimeDomain domain)
+            throws Exception {
       PriorityQueue<TimerData> queue = queue(domain);
       boolean shouldFire = false;
 

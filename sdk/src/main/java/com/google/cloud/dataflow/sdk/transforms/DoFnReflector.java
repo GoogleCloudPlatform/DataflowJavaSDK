@@ -133,10 +133,12 @@ public abstract class DoFnReflector {
    * @param c the {@link com.google.cloud.dataflow.sdk.transforms.DoFnWithContext.Context}
    *     to pass to {@link StartBundle}.
    */
-  abstract <InputT, OutputT> void invokeStartBundle(
+  <InputT, OutputT> void invokeStartBundle(
      DoFnWithContext<InputT, OutputT> fn,
      DoFnWithContext<InputT, OutputT>.Context c,
-     ExtraContextFactory<InputT, OutputT> extra);
+     ExtraContextFactory<InputT, OutputT> extra) {
+    fn.prepareForProcessing();
+  }
 
   /**
    * Invoke the reflected {@link FinishBundle} method on the given instance.
@@ -438,6 +440,7 @@ public abstract class DoFnReflector {
         DoFnWithContext<InputT, OutputT> fn,
         DoFnWithContext<InputT, OutputT>.Context c,
         ExtraContextFactory<InputT, OutputT> extra) {
+      super.invokeStartBundle(fn, c, extra);
       if (startBundle != null) {
         invoke(startBundle, fn, c, extra, startBundleArgs);
       }
@@ -470,8 +473,7 @@ public abstract class DoFnReflector {
         m.invoke(on, args);
       } catch (InvocationTargetException e) {
         // Exception in user code.
-        Throwables.propagateIfInstanceOf(e.getCause(), UserCodeException.class);
-        throw new UserCodeException(e.getCause());
+        throw UserCodeException.wrap(e.getCause());
       } catch (IllegalAccessException | IllegalArgumentException e) {
         // Exception in our code.
         throw Throwables.propagate(e);

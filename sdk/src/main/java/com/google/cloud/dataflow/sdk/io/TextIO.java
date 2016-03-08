@@ -16,33 +16,36 @@
 
 package com.google.cloud.dataflow.sdk.io;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.cloud.dataflow.sdk.coders.Coder;
+import com.google.cloud.dataflow.sdk.coders.Coder.Context;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
+import com.google.cloud.dataflow.sdk.io.Read.Bounded;
+import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
-import com.google.cloud.dataflow.sdk.runners.worker.TextReader;
-import com.google.cloud.dataflow.sdk.runners.worker.TextSink;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
-import com.google.cloud.dataflow.sdk.util.ReaderUtils;
-import com.google.cloud.dataflow.sdk.util.WindowedValue;
-import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
-import com.google.cloud.dataflow.sdk.util.common.worker.Sink;
+import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
+import com.google.cloud.dataflow.sdk.util.MimeTypes;
 import com.google.cloud.dataflow.sdk.values.PCollection;
-import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
 import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.PInput;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.primitives.Ints;
-
-import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
+import com.google.protobuf.ByteString;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.PushbackInputStream;
-import java.util.List;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.channels.WritableByteChannel;
+import java.nio.charset.StandardCharsets;
+import java.util.NoSuchElementException;
 import java.util.regex.Pattern;
-import java.util.zip.GZIPInputStream;
 
 import javax.annotation.Nullable;
 
@@ -64,7 +67,7 @@ import javax.annotation.Nullable;
  *
  * <p>See the following examples:
  *
- * <pre> {@code
+ * <pre>{@code
  * Pipeline p = ...;
  *
  * // A simple Read of a local file (only runs locally):
@@ -77,7 +80,7 @@ import javax.annotation.Nullable;
  *     p.apply(TextIO.Read.named("ReadNumbers")
  *                        .from("gs://my_bucket/path/to/numbers-*.txt")
  *                        .withCoder(TextualIntegerCoder.of()));
- * } </pre>
+ * }</pre>
  *
  * <p>To write a {@link PCollection} to one or more text files, use
  * {@link TextIO.Write}, specifying {@link TextIO.Write#to(String)} to specify
@@ -92,7 +95,7 @@ import javax.annotation.Nullable;
  * will be overwritten.
  *
  * <p>For example:
- * <pre> {@code
+ * <pre>{@code
  * // A simple Write to a local file (only runs locally):
  * PCollection<String> lines = ...;
  * lines.apply(TextIO.Write.to("/path/to/file.txt"));
@@ -104,7 +107,7 @@ import javax.annotation.Nullable;
  *                           .to("gs://my_bucket/path/to/numbers")
  *                           .withSuffix(".txt")
  *                           .withCoder(TextualIntegerCoder.of()));
- * } </pre>
+ * }</pre>
  *
  * <h3>Permissions</h3>
  * <p>When run using the {@link DirectPipelineRunner}, your pipeline can read and write text files
@@ -202,7 +205,7 @@ public class TextIO {
       @Nullable private final String filepattern;
 
       /** The Coder to use to decode each line. */
-      @Nullable private final Coder<T> coder;
+      private final Coder<T> coder;
 
       /** An option to indicate if input validation is desired. Default is true. */
       private final boolean validate;
@@ -291,14 +294,48 @@ public class TextIO {
         if (filepattern == null) {
           throw new IllegalStateException("need to set the filepattern of a TextIO.Read transform");
         }
-        // Force the output's Coder to be what the read is using, and
-        // unchangeable later, to ensure that we read the input in the
-        // format specified by the Read transform.
-        return PCollection.<T>createPrimitiveOutputInternal(
-                input.getPipeline(),
-                WindowingStrategy.globalDefault(),
-                IsBounded.BOUNDED)
-            .setCoder(coder);
+
+        if (validate) {
+          try {
+            checkState(
+                !IOChannelUtils.getFactory(filepattern).match(filepattern).isEmpty(),
+                "Unable to find any files matching %s",
+                filepattern);
+          } catch (IOException e) {
+            throw new IllegalStateException(
+                String.format("Failed to validate %s", filepattern), e);
+          }
+        }
+
+        // Create a source specific to the requested compression type.
+        final Bounded<T> read;
+        switch(compressionType) {
+          case UNCOMPRESSED:
+            read = com.google.cloud.dataflow.sdk.io.Read.from(
+                new TextSource<T>(filepattern, coder));
+            break;
+          case AUTO:
+            read = com.google.cloud.dataflow.sdk.io.Read.from(
+                CompressedSource.from(new TextSource<T>(filepattern, coder)));
+            break;
+          case BZIP2:
+            read = com.google.cloud.dataflow.sdk.io.Read.from(
+                CompressedSource.from(new TextSource<T>(filepattern, coder))
+                                .withDecompression(CompressedSource.CompressionMode.BZIP2));
+            break;
+          case GZIP:
+            read = com.google.cloud.dataflow.sdk.io.Read.from(
+                CompressedSource.from(new TextSource<T>(filepattern, coder))
+                                .withDecompression(CompressedSource.CompressionMode.GZIP));
+            break;
+          default:
+            throw new IllegalArgumentException("Unknown compression mode: " + compressionType);
+        }
+
+        PCollection<T> pcol = input.getPipeline().apply("Read", read);
+        // Honor the default output coder that would have been used by this PTransform.
+        pcol.setCoder(getDefaultOutputCoder());
+        return pcol;
       }
 
       @Override
@@ -316,17 +353,6 @@ public class TextIO {
 
       public TextIO.CompressionType getCompressionType() {
         return compressionType;
-      }
-
-      static {
-        DirectPipelineRunner.registerDefaultTransformEvaluator(
-            Bound.class, new DirectPipelineRunner.TransformEvaluator<Bound>() {
-              @Override
-              public void evaluate(
-                  Bound transform, DirectPipelineRunner.EvaluationContext context) {
-                evaluateReadHelper(transform, context);
-              }
-            });
       }
     }
 
@@ -452,9 +478,6 @@ public class TextIO {
       /** Requested number of shards. 0 for automatic. */
       private final int numShards;
 
-      /** Insert a shuffle before writing to decouple parallelism when numShards != 0. */
-      private final boolean forceReshard;
-
       /** The shard template of each file written, combined with prefix and suffix. */
       private final String shardTemplate;
 
@@ -462,17 +485,16 @@ public class TextIO {
       private final boolean validate;
 
       Bound(Coder<T> coder) {
-        this(null, null, "", coder, 0, true, ShardNameTemplate.INDEX_OF_MAX, true);
+        this(null, null, "", coder, 0, ShardNameTemplate.INDEX_OF_MAX, true);
       }
 
       private Bound(String name, String filenamePrefix, String filenameSuffix, Coder<T> coder,
-          int numShards, boolean forceReshard, String shardTemplate, boolean validate) {
+          int numShards, String shardTemplate, boolean validate) {
         super(name);
         this.coder = coder;
         this.filenamePrefix = filenamePrefix;
         this.filenameSuffix = filenameSuffix;
         this.numShards = numShards;
-        this.forceReshard = forceReshard;
         this.shardTemplate = shardTemplate;
         this.validate = validate;
       }
@@ -485,7 +507,7 @@ public class TextIO {
        */
       public Bound<T> named(String name) {
         return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards,
-            forceReshard, shardTemplate, validate);
+            shardTemplate, validate);
       }
 
       /**
@@ -498,7 +520,7 @@ public class TextIO {
        */
       public Bound<T> to(String filenamePrefix) {
         validateOutputComponent(filenamePrefix);
-        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards, forceReshard,
+        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards,
             shardTemplate, validate);
       }
 
@@ -512,7 +534,7 @@ public class TextIO {
        */
       public Bound<T> withSuffix(String nameExtension) {
         validateOutputComponent(nameExtension);
-        return new Bound<>(name, filenamePrefix, nameExtension, coder, numShards, forceReshard,
+        return new Bound<>(name, filenamePrefix, nameExtension, coder, numShards,
             shardTemplate, validate);
       }
 
@@ -531,30 +553,8 @@ public class TextIO {
        * @see ShardNameTemplate
        */
       public Bound<T> withNumShards(int numShards) {
-        return withNumShards(numShards, forceReshard);
-      }
-
-      /**
-       * Returns a transform for writing to text files that's like this one but
-       * that uses the provided shard count.
-       *
-       * <p>Constraining the number of shards is likely to reduce
-       * the performance of a pipeline. If forceReshard is true, the output
-       * will be shuffled to obtain the desired sharding. If it is false,
-       * data will not be reshuffled, but parallelism of preceeding stages
-       * may be constrained. Setting this value is not recommended
-       * unless you require a specific number of output files.
-       *
-       * <p>Does not modify this object.
-       *
-       * @param numShards the number of shards to use, or 0 to let the system
-       *                  decide.
-       * @param forceReshard whether to force a reshard to obtain the desired sharding.
-       * @see ShardNameTemplate
-       */
-      private Bound<T> withNumShards(int numShards, boolean forceReshard) {
         Preconditions.checkArgument(numShards >= 0);
-        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards, forceReshard,
+        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards,
             shardTemplate, validate);
       }
 
@@ -567,7 +567,7 @@ public class TextIO {
        * @see ShardNameTemplate
        */
       public Bound<T> withShardNameTemplate(String shardTemplate) {
-        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards, forceReshard,
+        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards,
             shardTemplate, validate);
       }
 
@@ -585,25 +585,7 @@ public class TextIO {
        * <p>Does not modify this object.
        */
       public Bound<T> withoutSharding() {
-        return withoutSharding(forceReshard);
-      }
-
-      /**
-       * Returns a transform for writing to text files that's like this one but
-       * that forces a single file as output.
-       *
-       * <p>Constraining the number of shards is likely to reduce
-       * the performance of a pipeline. Using this setting is not recommended
-       * unless you truly require a single output file.
-       *
-       * <p>This is a shortcut for
-       * {@code .withNumShards(1, forceReshard).withShardNameTemplate("")}
-       *
-       * <p>Does not modify this object.
-       */
-      private Bound<T> withoutSharding(boolean forceReshard) {
-        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, 1, forceReshard, "",
-            validate);
+        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, 1, "", validate);
       }
 
       /**
@@ -615,7 +597,7 @@ public class TextIO {
        * @param <X> the type of the elements of the input {@link PCollection}
        */
       public <X> Bound<X> withCoder(Coder<X> coder) {
-        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards, forceReshard,
+        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards,
             shardTemplate, validate);
       }
 
@@ -630,7 +612,7 @@ public class TextIO {
        * <p>Does not modify this object.
        */
       public Bound<T> withoutValidation() {
-        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards, forceReshard,
+        return new Bound<>(name, filenamePrefix, filenameSuffix, coder, numShards,
             shardTemplate, false);
       }
 
@@ -640,14 +622,13 @@ public class TextIO {
           throw new IllegalStateException(
               "need to set the filename prefix of a TextIO.Write transform");
         }
-        if (numShards > 0 && forceReshard) {
-          // Reshard and re-apply a version of this write without resharding.
-          return input
-              .apply(new FileBasedSink.ReshardForWrite<T>())
-              .apply(withNumShards(numShards, false));
-        } else {
-          return PDone.in(input.getPipeline());
-        }
+
+        // Note that custom sinks currently do not expose sharding controls.
+        // Thus pipeline runner writers need to individually add support internally to
+        // apply user requested sharding limits.
+        return input.apply("Write", com.google.cloud.dataflow.sdk.io.Write.to(
+            new TextSink<>(
+                filenamePrefix, filenameSuffix, shardTemplate, coder)));
       }
 
       /**
@@ -685,24 +666,13 @@ public class TextIO {
       public boolean needsValidation() {
         return validate;
       }
-
-      static {
-        DirectPipelineRunner.registerDefaultTransformEvaluator(
-            Bound.class, new DirectPipelineRunner.TransformEvaluator<Bound>() {
-              @Override
-              public void evaluate(
-                  Bound transform, DirectPipelineRunner.EvaluationContext context) {
-                evaluateWriteHelper(transform, context);
-              }
-            });
-      }
     }
   }
 
   /**
    * Possible text file compression types.
    */
-  public static enum CompressionType implements TextReader.DecompressingStreamFactory {
+  public static enum CompressionType {
     /**
      * Automatically determine the compression type based on filename extension.
      */
@@ -714,31 +684,11 @@ public class TextIO {
     /**
      * GZipped.
      */
-    GZIP(".gz") {
-      @Override
-      public InputStream createInputStream(InputStream inputStream) throws IOException {
-        // Determine if the input stream is gzipped. The input stream returned from the
-        // GCS connector may already be decompressed, and no action is required.
-        PushbackInputStream stream = new PushbackInputStream(inputStream, 2);
-        byte[] headerBytes = new byte[2];
-        int bytesRead = stream.read(headerBytes);
-        stream.unread(headerBytes, 0, bytesRead);
-        int header = Ints.fromBytes((byte) 0, (byte) 0, headerBytes[1], headerBytes[0]);
-        if (header == GZIPInputStream.GZIP_MAGIC) {
-          return new GZIPInputStream(stream);
-        }
-        return stream;
-      }
-    },
+    GZIP(".gz"),
     /**
      * BZipped.
      */
-    BZIP2(".bz2") {
-      @Override
-      public InputStream createInputStream(InputStream inputStream) throws IOException {
-        return new BZip2CompressorInputStream(inputStream);
-      }
-    };
+    BZIP2(".bz2");
 
     private String filenameSuffix;
 
@@ -753,11 +703,6 @@ public class TextIO {
      */
     public boolean matches(String filename) {
       return filename.toLowerCase().endsWith(filenameSuffix.toLowerCase());
-    }
-
-    @Override
-    public InputStream createInputStream(InputStream inputStream) throws IOException {
-      return inputStream;
     }
   }
 
@@ -777,33 +722,271 @@ public class TextIO {
   /** Disable construction of utility class. */
   private TextIO() {}
 
-  private static <T> void evaluateReadHelper(
-      Read.Bound<T> transform, DirectPipelineRunner.EvaluationContext context) {
-    TextReader<T> reader =
-        new TextReader<>(transform.filepattern, true, null, null, transform.coder,
-            transform.getCompressionType());
-    List<T> elems = ReaderUtils.readElemsFromReader(reader);
-    context.setPCollection(context.getOutput(transform), elems);
+  /**
+   * A {@link FileBasedSource} which can decode records delimited by new line characters.
+   *
+   * <p>This source splits the data into records using {@code UTF-8} {@code \n}, {@code \r}, or
+   * {@code \r\n} as the delimiter. This source is not strict and supports decoding the last record
+   * even if it is not delimited. Finally, no records are decoded if the stream is empty.
+   *
+   * <p>This source supports reading from any arbitrary byte position within the stream. If the
+   * starting position is not {@code 0}, then bytes are skipped until the first delimiter is found
+   * representing the beginning of the first record to be decoded.
+   */
+  @VisibleForTesting
+  static class TextSource<T> extends FileBasedSource<T> {
+    /** The Coder to use to decode each line. */
+    private final Coder<T> coder;
+
+    @VisibleForTesting
+    TextSource(String fileSpec, Coder<T> coder) {
+      super(fileSpec, 1L);
+      this.coder = coder;
+    }
+
+    private TextSource(String fileName, long start, long end, Coder<T> coder) {
+      super(fileName, 1L, start, end);
+      this.coder = coder;
+    }
+
+    @Override
+    protected FileBasedSource<T> createForSubrangeOfFile(String fileName, long start, long end) {
+      return new TextSource<>(fileName, start, end, coder);
+    }
+
+    @Override
+    protected FileBasedReader<T> createSingleFileReader(PipelineOptions options) {
+      return new TextBasedReader<>(this);
+    }
+
+    @Override
+    public boolean producesSortedKeys(PipelineOptions options) throws Exception {
+      return false;
+    }
+
+    @Override
+    public Coder<T> getDefaultOutputCoder() {
+      return coder;
+    }
+
+    /**
+     * A {@link com.google.cloud.dataflow.sdk.io.FileBasedSource.FileBasedReader FileBasedReader}
+     * which can decode records delimited by new line characters.
+     *
+     * See {@link TextSource} for further details.
+     */
+    @VisibleForTesting
+    static class TextBasedReader<T> extends FileBasedReader<T> {
+      private static final int READ_BUFFER_SIZE = 8192;
+      private final Coder<T> coder;
+      private final ByteBuffer readBuffer = ByteBuffer.allocate(READ_BUFFER_SIZE);
+      private ByteString buffer;
+      private int startOfSeparatorInBuffer;
+      private int endOfSeparatorInBuffer;
+      private long startOfNextRecord;
+      private boolean eof;
+      private boolean elementIsPresent;
+      private T currentValue;
+      private ReadableByteChannel inChannel;
+
+      private TextBasedReader(TextSource<T> source) {
+        super(source);
+        coder = source.coder;
+        buffer = ByteString.EMPTY;
+      }
+
+      @Override
+      protected long getCurrentOffset() throws NoSuchElementException {
+        if (!elementIsPresent) {
+          throw new NoSuchElementException();
+        }
+        return startOfNextRecord;
+      }
+
+      @Override
+      public T getCurrent() throws NoSuchElementException {
+        if (!elementIsPresent) {
+          throw new NoSuchElementException();
+        }
+        return currentValue;
+      }
+
+      @Override
+      protected void startReading(ReadableByteChannel channel) throws IOException {
+        this.inChannel = channel;
+        // If the first offset is greater than zero, we need to skip bytes until we see our
+        // first separator.
+        if (getCurrentSource().getStartOffset() > 0) {
+          checkState(channel instanceof SeekableByteChannel,
+              "%s only supports reading from a SeekableByteChannel when given a start offset"
+              + " greater than 0.", TextSource.class.getSimpleName());
+          long requiredPosition = getCurrentSource().getStartOffset() - 1;
+          ((SeekableByteChannel) channel).position(requiredPosition);
+          findSeparatorBounds();
+          buffer = buffer.substring(endOfSeparatorInBuffer);
+          startOfNextRecord = requiredPosition + endOfSeparatorInBuffer;
+          endOfSeparatorInBuffer = 0;
+          startOfSeparatorInBuffer = 0;
+        }
+      }
+
+      /**
+       * Locates the start position and end position of the next delimiter. Will
+       * consume the channel till either EOF or the delimiter bounds are found.
+       *
+       * <p>This fills the buffer and updates the positions as follows:
+       * <pre>{@code
+       * ------------------------------------------------------
+       * | element bytes | delimiter bytes | unconsumed bytes |
+       * ------------------------------------------------------
+       * 0            start of          end of              buffer
+       *              separator         separator           size
+       *              in buffer         in buffer
+       * }</pre>
+       */
+      private void findSeparatorBounds() throws IOException {
+        int bytePositionInBuffer = 0;
+        while (true) {
+          if (!tryToEnsureNumberOfBytesInBuffer(bytePositionInBuffer + 1)) {
+            startOfSeparatorInBuffer = endOfSeparatorInBuffer = bytePositionInBuffer;
+            break;
+          }
+
+          byte currentByte = buffer.byteAt(bytePositionInBuffer);
+
+          if (currentByte == '\n') {
+            startOfSeparatorInBuffer = bytePositionInBuffer;
+            endOfSeparatorInBuffer = startOfSeparatorInBuffer + 1;
+            break;
+          } else if (currentByte == '\r') {
+            startOfSeparatorInBuffer = bytePositionInBuffer;
+            endOfSeparatorInBuffer = startOfSeparatorInBuffer + 1;
+
+            if (tryToEnsureNumberOfBytesInBuffer(bytePositionInBuffer + 2)) {
+              currentByte = buffer.byteAt(bytePositionInBuffer + 1);
+              if (currentByte == '\n') {
+                endOfSeparatorInBuffer += 1;
+              }
+            }
+            break;
+          }
+
+          // Move to the next byte in buffer.
+          bytePositionInBuffer += 1;
+        }
+      }
+
+      @Override
+      protected boolean readNextRecord() throws IOException {
+        startOfNextRecord += endOfSeparatorInBuffer;
+        findSeparatorBounds();
+
+        // If we have reached EOF file and consumed all of the buffer then we know
+        // that there are no more records.
+        if (eof && buffer.size() == 0) {
+          elementIsPresent = false;
+          return false;
+        }
+
+        decodeCurrentElement();
+        return true;
+      }
+
+      /**
+       * Decodes the current element updating the buffer to only contain the unconsumed bytes.
+       *
+       * This invalidates the currently stored {@code startOfSeparatorInBuffer} and
+       * {@code endOfSeparatorInBuffer}.
+       */
+      private void decodeCurrentElement() throws IOException {
+        ByteString dataToDecode = buffer.substring(0, startOfSeparatorInBuffer);
+        currentValue = coder.decode(dataToDecode.newInput(), Context.OUTER);
+        elementIsPresent = true;
+        buffer = buffer.substring(endOfSeparatorInBuffer);
+      }
+
+      /**
+       * Returns false if we were unable to ensure the minimum capacity by consuming the channel.
+       */
+      private boolean tryToEnsureNumberOfBytesInBuffer(int minCapacity) throws IOException {
+        // While we aren't at EOF or haven't fulfilled the minimum buffer capacity,
+        // attempt to read more bytes.
+        while (buffer.size() <= minCapacity && !eof) {
+          eof = inChannel.read(readBuffer) == -1;
+          readBuffer.flip();
+          buffer = buffer.concat(ByteString.copyFrom(readBuffer));
+          readBuffer.clear();
+        }
+        // Return true if we were able to honor the minimum buffer capacity request
+        return buffer.size() >= minCapacity;
+      }
+    }
   }
 
-  private static <T> void evaluateWriteHelper(
-      Write.Bound<T> transform, DirectPipelineRunner.EvaluationContext context) {
-    List<T> elems = context.getPCollection(context.getInput(transform));
-    int numShards = transform.numShards;
-    if (numShards < 1) {
-      // System gets to choose. For direct mode, choose 1.
-      numShards = 1;
+  /**
+   * A {@link FileBasedSink} for text files. Produces text files with the new line separator
+   * {@code '\n'} represented in {@code UTF-8} format as the record separator.
+   * Each record (including the last) is terminated.
+   */
+  @VisibleForTesting
+  static class TextSink<T> extends FileBasedSink<T> {
+    private final Coder<T> coder;
+
+    @VisibleForTesting
+    TextSink(
+        String baseOutputFilename, String extension, String fileNameTemplate, Coder<T> coder) {
+      super(baseOutputFilename, extension, fileNameTemplate);
+      this.coder = coder;
     }
-    TextSink<WindowedValue<T>> writer = TextSink.createForDirectPipelineRunner(
-        transform.filenamePrefix, transform.getShardNameTemplate(), transform.filenameSuffix,
-        numShards, true, null, null, transform.coder);
-    try (Sink.SinkWriter<WindowedValue<T>> sink = writer.writer()) {
-      for (T elem : elems) {
-        sink.add(WindowedValue.valueInGlobalWindow(elem));
+
+    @Override
+    public FileBasedSink.FileBasedWriteOperation<T> createWriteOperation(PipelineOptions options) {
+      return new TextWriteOperation<>(this, coder);
+    }
+
+    /**
+     * A {@link com.google.cloud.dataflow.sdk.io.FileBasedSink.FileBasedWriteOperation
+     * FileBasedWriteOperation} for text files.
+     */
+    private static class TextWriteOperation<T> extends FileBasedWriteOperation<T> {
+      private final Coder<T> coder;
+
+      private TextWriteOperation(TextSink<T> sink, Coder<T> coder) {
+        super(sink);
+        this.coder = coder;
       }
-    } catch (IOException exn) {
-      throw new RuntimeException(
-          "unable to write to output file \"" + transform.filenamePrefix + "\"", exn);
+
+      @Override
+      public FileBasedWriter<T> createWriter(PipelineOptions options) throws Exception {
+        return new TextWriter<>(this, coder);
+      }
+    }
+
+    /**
+     * A {@link com.google.cloud.dataflow.sdk.io.FileBasedSink.FileBasedWriter FileBasedWriter}
+     * for text files.
+     */
+    private static class TextWriter<T> extends FileBasedWriter<T> {
+      private static final byte[] NEWLINE = "\n".getBytes(StandardCharsets.UTF_8);
+      private final Coder<T> coder;
+      private OutputStream out;
+
+      public TextWriter(FileBasedWriteOperation<T> writeOperation, Coder<T> coder) {
+        super(writeOperation);
+        this.mimeType = MimeTypes.TEXT;
+        this.coder = coder;
+      }
+
+      @Override
+      protected void prepareWrite(WritableByteChannel channel) throws Exception {
+        out = Channels.newOutputStream(channel);
+      }
+
+      @Override
+      public void write(T value) throws Exception {
+        coder.encode(value, out, Context.OUTER);
+        out.write(NEWLINE);
+      }
     }
   }
 }

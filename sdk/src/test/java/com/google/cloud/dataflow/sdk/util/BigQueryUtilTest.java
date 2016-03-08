@@ -40,9 +40,10 @@ import com.google.api.services.bigquery.model.TableReference;
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.api.services.bigquery.model.TableSchema;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO;
-import com.google.common.base.Function;
+import com.google.cloud.dataflow.sdk.transforms.Aggregator;
+import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
+import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterators;
 
 import org.hamcrest.Matchers;
 import org.junit.After;
@@ -188,7 +189,7 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testReadWithTime() throws IOException {
+  public void testReadWithTime() throws IOException, InterruptedException {
     // The BigQuery JSON API returns timestamps in the following format: floating-point seconds
     // since epoch (UTC) with microsecond precision. Test that we faithfully preserve a set of
     // known values.
@@ -218,8 +219,15 @@ public class BigQueryUtilTest {
         "2016-01-06 06:38:11.123456 UTC");
 
     // Download the rows, verify the interactions.
-    List<TableRow> rows = ImmutableList.copyOf(BigQueryTableRowIterator.fromTable(
-        BigQueryIO.parseTableSpec("project:dataset.table"), mockClient));
+    List<TableRow> rows = new ArrayList<>();
+    try (BigQueryTableRowIterator iterator =
+            BigQueryTableRowIterator.fromTable(
+                BigQueryIO.parseTableSpec("project:dataset.table"), mockClient)) {
+      iterator.open();
+      while (iterator.advance()) {
+        rows.add(iterator.getCurrent());
+      }
+    }
     verifyTableGet();
     verifyTabledataList();
 
@@ -246,7 +254,7 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testRead() throws IOException {
+  public void testRead() throws IOException, InterruptedException {
     onTableGet(basicTableSchema());
 
     TableDataList dataList = rawDataList(rawRow("Arthur", 42));
@@ -255,16 +263,16 @@ public class BigQueryUtilTest {
     try (BigQueryTableRowIterator iterator = BigQueryTableRowIterator.fromTable(
         BigQueryIO.parseTableSpec("project:dataset.table"),
         mockClient)) {
-
-      Assert.assertTrue(iterator.hasNext());
-      TableRow row = iterator.next();
+      iterator.open();
+      Assert.assertTrue(iterator.advance());
+      TableRow row = iterator.getCurrent();
 
       Assert.assertTrue(row.containsKey("name"));
       Assert.assertTrue(row.containsKey("answer"));
       Assert.assertEquals("Arthur", row.get("name"));
       Assert.assertEquals(42, row.get("answer"));
 
-      Assert.assertFalse(iterator.hasNext());
+      Assert.assertFalse(iterator.advance());
 
       verifyTableGet();
       verifyTabledataList();
@@ -272,7 +280,7 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testReadEmpty() throws IOException {
+  public void testReadEmpty() throws IOException, InterruptedException {
     onTableGet(basicTableSchema());
 
     // BigQuery may respond with a page token for an empty table, ensure we
@@ -285,8 +293,9 @@ public class BigQueryUtilTest {
     try (BigQueryTableRowIterator iterator = BigQueryTableRowIterator.fromTable(
         BigQueryIO.parseTableSpec("project:dataset.table"),
         mockClient)) {
+      iterator.open();
 
-      Assert.assertFalse(iterator.hasNext());
+      Assert.assertFalse(iterator.advance());
 
       verifyTableGet();
       verifyTabledataList();
@@ -294,7 +303,7 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testReadMultiPage() throws IOException {
+  public void testReadMultiPage() throws IOException, InterruptedException {
     onTableGet(basicTableSchema());
 
     TableDataList page1 = rawDataList(rawRow("Row1", 1))
@@ -313,15 +322,12 @@ public class BigQueryUtilTest {
     try (BigQueryTableRowIterator iterator = BigQueryTableRowIterator.fromTable(
         BigQueryIO.parseTableSpec("project:dataset.table"),
         mockClient)) {
+      iterator.open();
 
       List<String> names = new LinkedList<>();
-      Iterators.addAll(names,
-          Iterators.transform(iterator, new Function<TableRow, String>(){
-            @Override
-            public String apply(TableRow input) {
-              return (String) input.get("name");
-            }
-          }));
+      while (iterator.advance()) {
+        names.add((String) iterator.getCurrent().get("name"));
+      }
 
       Assert.assertThat(names, Matchers.hasItems("Row1", "Row2"));
 
@@ -333,8 +339,8 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testReadOpenFailure() throws IOException {
-    thrown.expect(RuntimeException.class);
+  public void testReadOpenFailure() throws IOException, InterruptedException {
+    thrown.expect(IOException.class);
 
     when(mockClient.tables())
         .thenReturn(mockTables);
@@ -347,7 +353,7 @@ public class BigQueryUtilTest {
         BigQueryIO.parseTableSpec("project:dataset.table"),
         mockClient)) {
       try {
-        Assert.assertFalse(iterator.hasNext());  // throws.
+        iterator.open(); // throws.
       } finally {
         verifyTableGet();
       }
@@ -429,14 +435,45 @@ public class BigQueryUtilTest {
     List<TableRow> rows = new ArrayList<>();
     List<String> ids = new ArrayList<>();
     for (int i = 0; i < 25; ++i) {
-      rows.add(new TableRow());
+      rows.add(rawRow("foo", 1234));
       ids.add(new String());
     }
 
+    InMemoryLongSumAggregator byteCountAggregator = new InMemoryLongSumAggregator("ByteCount");
     try {
-      inserter.insertAll(ref, rows, ids);
+      inserter.insertAll(ref, rows, ids, byteCountAggregator);
     } finally {
       verifyInsertAll(5);
+      // Each of the 25 rows is 23 bytes: "{f=[{v=foo}, {v=1234}]}"
+      assertEquals("Incorrect byte count", 25L * 23L, byteCountAggregator.getSum());
+    }
+  }
+
+  private static class InMemoryLongSumAggregator implements Aggregator<Long, Long> {
+    private final String name;
+    private long sum = 0;
+
+    public InMemoryLongSumAggregator(String name) {
+      this.name = name;
+    }
+
+    @Override
+    public void addValue(Long value) {
+      sum += value;
+    }
+
+    @Override
+    public String getName() {
+      return name;
+    }
+
+    @Override
+    public CombineFn<Long, ?, Long> getCombineFn() {
+      return new Sum.SumLongFn();
+    }
+
+    public long getSum() {
+      return sum;
     }
   }
 }

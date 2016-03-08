@@ -28,7 +28,10 @@ public class PropertyNames {
   public static final String BIGQUERY_SCHEMA = "schema";
   public static final String BIGQUERY_TABLE = "table";
   public static final String BIGQUERY_QUERY = "bigquery_query";
+  public static final String BIGQUERY_FLATTEN_RESULTS = "bigquery_flatten_results";
   public static final String BIGQUERY_WRITE_DISPOSITION = "write_disposition";
+  public static final String BIGQUERY_EXPORT_FORMAT = "bigquery_export_format";
+  public static final String BIGQUERY_EXPORT_SCHEMA = "bigquery_export_schema";
   public static final String CO_GBK_RESULT_SCHEMA = "co_gbk_result_schema";
   public static final String COMBINE_FN = "combine_fn";
   public static final String COMPONENT_ENCODINGS = "component_encodings";
@@ -67,6 +70,8 @@ public class PropertyNames {
   public static final String IS_WRAPPER = "is_wrapper";
   public static final String DISALLOW_COMBINER_LIFTING = "disallow_combiner_lifting";
   public static final String NON_PARALLEL_INPUTS = "non_parallel_inputs";
+  public static final String NUM_SHARD_CODERS = "num_shard_coders";
+  public static final String NUM_METADATA_SHARD_CODERS = "num_metadata_shard_coders";
   public static final String NUM_SHARDS = "num_shards";
   public static final String OBJECT_TYPE_NAME = "@type";
   public static final String OUTPUT = "output";
@@ -84,11 +89,13 @@ public class PropertyNames {
   public static final String SHUFFLE_KIND = "shuffle_kind";
   public static final String SHUFFLE_READER_CONFIG = "shuffle_reader_config";
   public static final String SHUFFLE_WRITER_CONFIG = "shuffle_writer_config";
+  public static final String SORT_VALUES = "sort_values";
   public static final String START_INDEX = "start_index";
   public static final String START_OFFSET = "start_offset";
   public static final String START_SHUFFLE_POSITION = "start_shuffle_position";
   public static final String STRIP_TRAILING_NEWLINES = "strip_trailing_newlines";
   public static final String TUPLE_TAGS = "tuple_tags";
+  public static final String USE_INDEXED_FORMAT = "use_indexed_format";
   public static final String USER_FN = "user_fn";
   public static final String USER_NAME = "user_name";
   public static final String USES_KEYED_STATE = "uses_keyed_state";

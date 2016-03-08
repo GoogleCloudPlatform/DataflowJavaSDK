@@ -18,6 +18,7 @@ package com.google.cloud.dataflow.sdk.coders;
 
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.cloud.dataflow.sdk.coders.CannotProvideCoderException.ReasonCode;
+import com.google.cloud.dataflow.sdk.coders.protobuf.ProtoCoder;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
 import com.google.cloud.dataflow.sdk.values.KV;
@@ -27,6 +28,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import com.google.protobuf.ByteString;
 
 import org.joda.time.Instant;
 import org.slf4j.Logger;
@@ -80,8 +82,8 @@ public class CoderRegistry implements CoderProvider {
   private static final Logger LOG = LoggerFactory.getLogger(CoderRegistry.class);
 
   public CoderRegistry() {
-    setFallbackCoderProvider(CoderProviders.firstOf(Proto2Coder.coderProvider(),
-        SerializableCoder.PROVIDER));
+    setFallbackCoderProvider(
+        CoderProviders.firstOf(ProtoCoder.coderProvider(), SerializableCoder.PROVIDER));
   }
 
   /**
@@ -89,6 +91,7 @@ public class CoderRegistry implements CoderProvider {
    */
   public void registerStandardCoders() {
     registerCoder(Byte.class, ByteCoder.class);
+    registerCoder(ByteString.class, ByteStringCoder.class);
     registerCoder(Double.class, DoubleCoder.class);
     registerCoder(Instant.class, InstantCoder.class);
     registerCoder(Integer.class, VarIntCoder.class);

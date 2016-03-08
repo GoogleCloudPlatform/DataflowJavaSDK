@@ -24,7 +24,12 @@ import com.google.cloud.dataflow.sdk.annotations.Experimental.Kind;
  * @param <T> The type of values being stored.
  */
 @Experimental(Kind.STATE)
-public interface ValueState<T> extends State {
-  StateContents<T> get();
-  void set(T input);
+public interface ValueState<T> extends ReadableState<T>, State {
+  /**
+   * Set the value of the buffer.
+   */
+  void write(T input);
+
+  @Override
+  ValueState<T> readLater();
 }

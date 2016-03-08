@@ -16,9 +16,7 @@
 
 package com.google.cloud.dataflow.sdk.util.common;
 
-import static com.google.cloud.dataflow.sdk.util.Values.asBoolean;
 import static com.google.cloud.dataflow.sdk.util.Values.asDouble;
-import static com.google.cloud.dataflow.sdk.util.Values.asLong;
 import static com.google.cloud.dataflow.sdk.util.common.Counter.AggregationKind.AND;
 import static com.google.cloud.dataflow.sdk.util.common.Counter.AggregationKind.MAX;
 import static com.google.cloud.dataflow.sdk.util.common.Counter.AggregationKind.MEAN;
@@ -29,17 +27,16 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import com.google.api.services.dataflow.model.MetricUpdate;
-import com.google.cloud.dataflow.sdk.util.CloudCounterUtils;
 import com.google.cloud.dataflow.sdk.util.common.Counter.CounterMean;
 
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.List;
 
 /**
  * Unit tests for the {@link Counter} API.
@@ -47,100 +44,27 @@ import java.util.Set;
 @RunWith(JUnit4.class)
 public class CounterTest {
 
-  private static MetricUpdate flush(Counter<?> c) {
-    // TODO: Move this out into a separate Counter test.
-    return CounterTestUtils.extractCounterUpdate(c, true);
+  @Rule
+  public ExpectedException thrown = ExpectedException.none();
+
+  private static void flush(Counter<?> c) {
+    switch (c.getKind()) {
+      case SUM:
+      case MAX:
+      case MIN:
+      case AND:
+      case OR:
+        c.getAndResetDelta();
+        break;
+      case MEAN:
+        c.getAndResetMeanDelta();
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown counter kind " + c.getKind());
+    }
   }
 
   private static final double EPSILON = 0.00000000001;
-
-  @Test
-  public void testNameKindAndCloudCounterRepresentation() {
-    Counter<Long> c1 = Counter.longs("c1", SUM);
-    Counter<Double> c2 = Counter.doubles("c2", MAX);
-    Counter<Double> c3 = Counter.doubles("c3", MIN);
-    Counter<Double> c4 = Counter.doubles("c4", MEAN);
-    Counter<Integer> c5 = Counter.ints("c5", MIN);
-    Counter<Boolean> c6 = Counter.booleans("c6", AND);
-    Counter<Boolean> c7 = Counter.booleans("c7", OR);
-
-    assertEquals("c1", c1.getName());
-    assertEquals(SUM, c1.getKind());
-    MetricUpdate cc = flush(c1);
-    assertEquals("c1", cc.getName().getName());
-    assertEquals("SUM", cc.getKind());
-    assertEquals(0L, asLong(cc.getScalar()).longValue());
-    c1.addValue(123L).addValue(-13L);
-    cc = flush(c1);
-    assertEquals(110L, asLong(cc.getScalar()).longValue());
-
-    assertEquals("c2", c2.getName());
-    assertEquals(MAX, c2.getKind());
-    cc = flush(c2);
-    assertEquals("c2", cc.getName().getName());
-    assertEquals("MAX", cc.getKind());
-    assertEquals(Double.NEGATIVE_INFINITY, asDouble(cc.getScalar()), EPSILON);
-    c2.resetToValue(0.0).addValue(Math.PI).addValue(Math.E);
-    cc = flush(c2);
-    assertEquals(Math.PI, asDouble(cc.getScalar()), EPSILON);
-
-    assertEquals("c3", c3.getName());
-    assertEquals(MIN, c3.getKind());
-    c3.addValue(Math.PI).addValue(-Math.PI).addValue(-Math.sqrt(2));
-    cc = flush(c3);
-    assertEquals("c3", cc.getName().getName());
-    assertEquals("MIN", cc.getKind());
-    assertEquals(-Math.PI, asDouble(cc.getScalar()), EPSILON);
-
-    assertEquals("c4", c4.getName());
-    assertEquals(MEAN, c4.getKind());
-    cc = flush(c4); // zero-count means are not sent to the service
-    assertEquals(null, cc);
-    c4.addValue(Math.PI).addValue(Math.E).addValue(Math.sqrt(2));
-    cc = flush(c4);
-    assertEquals("c4", cc.getName().getName());
-    assertEquals("MEAN", cc.getKind());
-    Object ms = cc.getMeanSum();
-    Object mc = cc.getMeanCount();
-    assertEquals(Math.PI + Math.E + Math.sqrt(2), asDouble(ms), EPSILON);
-    assertEquals(3, asLong(mc).longValue());
-    c4.addValue(2.0).addValue(5.0);
-    cc = flush(c4);
-    ms = cc.getMeanSum();
-    mc = cc.getMeanCount();
-    assertEquals(7.0, asDouble(ms), EPSILON);
-    assertEquals(2L, asLong(mc).longValue());
-
-    assertEquals("c5", c5.getName());
-    assertEquals(MIN, c5.getKind());
-    cc = flush(c5);
-    assertEquals("c5", cc.getName().getName());
-    assertEquals("MIN", cc.getKind());
-    assertEquals(Integer.MAX_VALUE, asLong(cc.getScalar()).longValue());
-    c5.addValue(123).addValue(-13);
-    cc = flush(c5);
-    assertEquals(-13, asLong(cc.getScalar()).longValue());
-
-    assertEquals("c6", c6.getName());
-    assertEquals(AND, c6.getKind());
-    cc = flush(c6);
-    assertEquals("c6", cc.getName().getName());
-    assertEquals("AND", cc.getKind());
-    assertEquals(true, asBoolean(cc.getScalar()));
-    c6.addValue(false);
-    cc = flush(c6);
-    assertEquals(false, asBoolean(cc.getScalar()));
-
-    assertEquals("c7", c7.getName());
-    assertEquals(OR, c7.getKind());
-    cc = flush(c7);
-    assertEquals("c7", cc.getName().getName());
-    assertEquals("OR", cc.getKind());
-    assertEquals(false, asBoolean(cc.getScalar()));
-    c7.addValue(true);
-    cc = flush(c7);
-    assertEquals(true, asBoolean(cc.getScalar()));
-  }
 
   @Test
   public void testCompatibility() {
@@ -211,6 +135,13 @@ public class CounterTest {
     c.resetToValue(100L).addValue(17L).addValue(49L);
     expectedTotal = expectedDelta = 166;
     assertOK(expectedTotal, expectedDelta, c);
+
+    Counter<Long> other = Counter.longs("sum-long", SUM);
+    other.addValue(12L);
+    expectedDelta = 12L;
+    expectedTotal += 12L;
+    c.merge(other);
+    assertOK(expectedTotal, expectedDelta, c);
   }
 
   @Test
@@ -240,6 +171,13 @@ public class CounterTest {
 
     c.resetToValue(Math.sqrt(17)).addValue(17.0).addValue(49.0);
     expectedTotal = expectedDelta = Math.sqrt(17.0) + 17.0 + 49.0;
+    assertOK(expectedTotal, expectedDelta, c);
+
+    Counter<Double> other = Counter.doubles("sum-double", SUM);
+    other.addValue(12 * Math.PI);
+    expectedDelta = 12 * Math.PI;
+    expectedTotal += 12 * Math.PI;
+    c.merge(other);
     assertOK(expectedTotal, expectedDelta, c);
   }
 
@@ -272,6 +210,12 @@ public class CounterTest {
     c.resetToValue(100L).addValue(171L).addValue(49L);
     expectedTotal = expectedDelta = 171;
     assertOK(expectedTotal, expectedDelta, c);
+
+    Counter<Long> other = Counter.longs("max-long", MAX);
+    other.addValue(12L);
+    expectedDelta = 12L;
+    c.merge(other);
+    assertOK(expectedTotal, expectedDelta, c);
   }
 
   @Test
@@ -299,6 +243,12 @@ public class CounterTest {
 
     c.resetToValue(Math.sqrt(17)).addValue(171.0).addValue(49.0);
     expectedTotal = expectedDelta = 171.0;
+    assertOK(expectedTotal, expectedDelta, c);
+
+    Counter<Double> other = Counter.doubles("max-double", MAX);
+    other.addValue(12 * Math.PI);
+    expectedDelta = 12 * Math.PI;
+    c.merge(other);
     assertOK(expectedTotal, expectedDelta, c);
   }
 
@@ -331,6 +281,12 @@ public class CounterTest {
     c.resetToValue(100L).addValue(171L).addValue(49L);
     expectedTotal = expectedDelta = 49;
     assertOK(expectedTotal, expectedDelta, c);
+
+    Counter<Long> other = Counter.longs("min-long", MIN);
+    other.addValue(42L);
+    expectedTotal = expectedDelta = 42L;
+    c.merge(other);
+    assertOK(expectedTotal, expectedDelta, c);
   }
 
   @Test
@@ -358,6 +314,12 @@ public class CounterTest {
 
     c.resetToValue(Math.sqrt(17)).addValue(171.0).addValue(0.0);
     expectedTotal = expectedDelta = 0.0;
+    assertOK(expectedTotal, expectedDelta, c);
+
+    Counter<Double> other = Counter.doubles("min-double", MIN);
+    other.addValue(42 * Math.E);
+    expectedDelta = 42 * Math.E;
+    c.merge(other);
     assertOK(expectedTotal, expectedDelta, c);
   }
 
@@ -419,6 +381,15 @@ public class CounterTest {
     expTotal = expDelta = 166;
     expCountTotal = expCountDelta = 5;
     assertMean(expTotal, expDelta, expCountTotal, expCountDelta, c);
+
+    Counter<Long> other = Counter.longs("mean-long", MEAN);
+    other.addValue(12L).addValue(44L).addValue(-5L);
+    expTotal += 12L + 44L - 5L;
+    expDelta += 12L + 44L - 5L;
+    expCountTotal += 3;
+    expCountDelta += 3;
+    c.merge(other);
+    assertMean(expTotal, expDelta, expCountTotal, expCountDelta, c);
   }
 
   @Test
@@ -457,6 +428,15 @@ public class CounterTest {
     c.resetMeanToValue(3L, Math.sqrt(17)).addValue(17.0).addValue(49.0);
     expTotal = expDelta = Math.sqrt(17.0) + 17.0 + 49.0;
     expCountTotal = expCountDelta = 5;
+    assertMean(expTotal, expDelta, expCountTotal, expCountDelta, c);
+
+    Counter<Double> other = Counter.doubles("mean-double", MEAN);
+    other.addValue(3 * Math.PI).addValue(12 * Math.E);
+    expTotal += 3 * Math.PI + 12 * Math.E;
+    expDelta += 3 * Math.PI + 12 * Math.E;
+    expCountTotal += 2;
+    expCountDelta += 2;
+    c.merge(other);
     assertMean(expTotal, expDelta, expCountTotal, expCountDelta, c);
   }
 
@@ -529,7 +509,6 @@ public class CounterTest {
     assertBool(expectedTotal, expectedDelta, c);
   }
 
-
   // Incompatibility tests.
 
   @Test(expected = IllegalArgumentException.class)
@@ -573,21 +552,38 @@ public class CounterTest {
   }
 
   @Test
-  public void testExtraction() {
-    Counter<?>[] counters = {Counter.longs("c1", SUM),
-                             Counter.doubles("c2", MAX)};
-    CounterSet set = new CounterSet();
-    for (Counter<?> c : counters) {
-      set.addCounter(c);
+  public void testMergeIncompatibleCounters() {
+    Counter<Long> longSums = Counter.longs("longsums", SUM);
+    Counter<Long> longMean = Counter.longs("longmean", MEAN);
+    Counter<Long> longMin = Counter.longs("longmin", MIN);
+
+    Counter<Long> otherLongSums = Counter.longs("othersums", SUM);
+    Counter<Long> otherLongMean = Counter.longs("otherlongmean", MEAN);
+
+    Counter<Double> doubleSums = Counter.doubles("doublesums", SUM);
+    Counter<Double> doubleMean = Counter.doubles("doublemean", MEAN);
+
+    Counter<Boolean> boolAnd = Counter.booleans("and", AND);
+    Counter<Boolean> boolOr = Counter.booleans("or", OR);
+
+    List<Counter<Long>> longCounters =
+        Arrays.asList(longSums, longMean, longMin, otherLongSums, otherLongMean);
+    for (Counter<Long> left : longCounters) {
+      for (Counter<Long> right : longCounters) {
+        if (left != right) {
+          assertIncompatibleMerge(left, right);
+        }
+      }
     }
 
-    Set<MetricUpdate> cloudCountersFromSet = new HashSet<>(
-        CloudCounterUtils.extractCounters(set, true));
+    assertIncompatibleMerge(doubleSums, doubleMean);
+    assertIncompatibleMerge(boolAnd, boolOr);
+  }
 
-    Set<MetricUpdate> cloudCountersFromArray =
-        new HashSet<>(CounterTestUtils.extractCounterUpdates(Arrays.asList(counters), true));
-
-    assertEquals(cloudCountersFromSet, cloudCountersFromArray);
-    assertEquals(2, cloudCountersFromSet.size());
+  private <T> void assertIncompatibleMerge(Counter<T> left, Counter<T> right) {
+    thrown.expect(IllegalArgumentException.class);
+    thrown.expectMessage("Counters");
+    thrown.expectMessage("are incompatible");
+    left.merge(right);
   }
 }
