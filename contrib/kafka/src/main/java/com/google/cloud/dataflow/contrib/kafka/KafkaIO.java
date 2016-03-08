@@ -73,28 +73,29 @@ import java.util.NoSuchElementException;
 
 import javax.annotation.Nullable;
 
-// {@link Coder}
-// generally, feel free to drop @param and @return tags -- relatively unused in google style.
-// probably worth javadoccing the splitting behavior extensively here,
-
 /**
- * Dataflow Source for consuming Kafka sources.
+ * Dataflow support for consuming Kafka topics as {@link Unbounded} sources.
  *
- * <pre>
+ * <p>
+ * The Kafka partitions
+ * are evenly distributed among splits (workers). Dataflow checkpointing is fully supported and
+ * each split can resume from previous checkpoint. See
+ * {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions)} for more details on
+ * splits and checkpoint support.
+ *
+ * <pre>{@code
  * Usage:
- *        UnboundedSource&lt;String, ?&gt; kafkaSource = KafkaSource
- *            .&lt;String&gt;unboundedValueSourceBuilder()
- *            .withBootstrapServers("broker_1:9092,broker_2:9092)
- *            .withTopics(ImmutableList.of("topic_a", "topic_b")
- *            .withValueCoder(StringUtf8Coder.of())
- *            .withTimestampFn(timestampFn)
- *            .withWatermarkFn(watermarkFn)
- *            .build();
- *
- *        pipeline
- *          .apply(Read.from(kafkaSource).named("read_topic_a_and_b"))
- *          ....
- * </pre>
+ *   pipeline
+ *     .apply("read_topic_a_and_b",
+ *        KafkaIO.read()
+ *         .withBootstrapServers("broker_1:9092,broker_2:9092")
+ *         .withTopics(ImmutableList.of("topic_a", "topic_b")) // or withTopicPartitions(List<>)
+ *         .withValueCoder(StringUtf8Coder.of())
+ *         .withTimestampFn(timestampFn) // optional
+ *         .withWatermarkFn(watermarkFn)) // optional
+ *     .apply(Values.<String>create()) // discard keys
+ *     ...
+ *}</pre>
  */
 public class KafkaIO {
 
@@ -509,6 +510,15 @@ public class KafkaIO {
       this.consumerConfig = consumerConfig;
     }
 
+    /**
+     * The partitions are evenly distributed among the splits. The number of splits returned is
+     * {@code min(desiredNumSplits, totalNumPartitions)}, though better not to depend on the exact
+     * count.
+     *
+     * <p> It is important to assign the partitions deterministically so that we can support
+     * resuming a split from last checkpoint. The Kafka partitions are sorted by
+     * {@code <topic, partition>} and then assigned to splits in round-robin order.
+     */
     @Override
     public List<UnboundedKafkaSource<K, V, T>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
