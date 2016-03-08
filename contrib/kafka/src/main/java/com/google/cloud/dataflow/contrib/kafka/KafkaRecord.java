@@ -16,9 +16,9 @@
 
 package com.google.cloud.dataflow.contrib.kafka;
 
-import java.io.Serializable;
-
 import com.google.cloud.dataflow.sdk.values.KV;
+
+import java.io.Serializable;
 
 /**
  * KafkaRecord contains key and value of the record as well as metadata for the record (topic name,
