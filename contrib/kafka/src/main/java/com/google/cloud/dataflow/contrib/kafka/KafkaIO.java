@@ -118,7 +118,7 @@ public class KafkaIO {
   /**
    * Creates and uninitialized {@link Read} {@link PTransform}. Before use, basic Kafka
    * configuration should set with {@link Read#withBootstrapServers(String)} and
-   * {@link Read#withTopics(List<String>)}. Other optional settings include key and value coders,
+   * {@link Read#withTopics(List)}. Other optional settings include key and value coders,
    * custom timestamp and watermark functions. Additionally, {@link Read#withMetadata()} provides
    * access to Kafka metadata for each record (topic name, partition, offset).
    */
@@ -183,7 +183,7 @@ public class KafkaIO {
           }
         };
 
-    public Read(
+    private Read(
         List<String> topics,
         List<TopicPartition> topicPartitions,
         Coder<K> keyCoder,
@@ -219,7 +219,7 @@ public class KafkaIO {
     /**
      * Returns a new {@link Read} that reads from the topics. All the partitions are from each
      * of the topics is read.
-     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions) for description
+     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions)} for description
      * of how the partitions are distributed among the splits.
      */
     public Read<K, V> withTopics(List<String> topics) {
@@ -232,7 +232,7 @@ public class KafkaIO {
     /**
      * Returns a new {@link Read} that reads from the partitions. This allows reading only a subset
      * of partitions for one or more topics when (if ever) needed.
-     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions) for description
+     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions)} for description
      * of how the partitions are distributed among the splits.
      */
     public Read<K, V> withTopicPartitions(List<TopicPartition> topicPartitions) {
@@ -314,7 +314,7 @@ public class KafkaIO {
     }
 
     /**
-     * Similar to {@link Read.Unbounded#withMaxNumRecords(long)}.
+     * Similar to {@link com.google.cloud.dataflow.sdk.io.Read.Unbounded#withMaxNumRecords(long)}.
      * Mainly used for tests and demo applications.
      */
     public Read<K, V> withMaxNumRecords(long maxNumRecords) {
@@ -323,7 +323,8 @@ public class KafkaIO {
     }
 
     /**
-     * Similar to {@link Read.Unbounded#withMaxReadTime(Duration)}.
+     * Similar to
+     * {@link com.google.cloud.dataflow.sdk.io.Read.Unbounded#withMaxReadTime(Duration)}.
      * Mainly used for tests and demo
      * applications.
      */
@@ -334,7 +335,7 @@ public class KafkaIO {
 
     /**
      * A read transform that includes Kafka metadata along with key and value.
-     * @see {@link KafkaRecord}
+     * @see KafkaRecord
      */
     public ReadWithMetadata<K, V> withMetadata() {
       return new ReadWithMetadata<K, V>(this,
@@ -395,6 +396,10 @@ public class KafkaIO {
     }
   }
 
+  /**
+   * Similar to {@link Read}, except that the transform returns a PCollection of
+   * {@link KafkaRecord} which includes Kafka metadata : topic name, partition, offset.
+   */
   public static class ReadWithMetadata<K, V>
                       extends PTransform<PInput, PCollection<KafkaRecord<K, V>>> {
 

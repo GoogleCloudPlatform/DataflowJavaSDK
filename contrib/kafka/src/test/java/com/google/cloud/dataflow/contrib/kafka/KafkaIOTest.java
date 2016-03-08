@@ -239,7 +239,7 @@ public class KafkaIOTest {
         .withTopicPartitions(ImmutableList.of(new TopicPartition("test", 5)))
         .withConsumerFactoryFn(new ConsumerFactoryFn(topics, 10, numElements)) // 10 partitions
         .withValueCoder(BigEndianLongCoder.of())
-        .withMaxNumRecords(numElements/10);
+        .withMaxNumRecords(numElements / 10);
 
     PCollection<Long> input = p
         .apply(reader)
