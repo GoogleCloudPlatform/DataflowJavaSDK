@@ -115,11 +115,11 @@ public class KafkaIO {
   }
 
   /**
-   * Creates and uninitialized {@ Read} transform. Before use, basic Kafka configuration should set
-   * with {@link Read#withBootstrapServers(String)}, {@link Read#withTopics(List<String>)}.
-   * Other optional settings include key and value coders, custom timestamp and watermark
-   * functions. Additionally {@link Read#withMetadata()} provides access to Kafka metadata for
-   * each record (topic name, partition, and offset).
+   * Creates and uninitialized {@link Read} {@link PTransform}. Before use, basic Kafka
+   * configuration should set with {@link Read#withBootstrapServers(String)} and
+   * {@link Read#withTopics(List<String>)}. Other optional settings include key and value coders,
+   * custom timestamp and watermark functions. Additionally, {@link Read#withMetadata()} provides
+   * access to Kafka metadata for each record (topic name, partition, offset).
    */
   public static Read<byte[], byte[]> read() {
     return new Read<byte[], byte[]>(
@@ -136,8 +136,8 @@ public class KafkaIO {
   }
 
   /**
-   * A transform to read from Kafka topics. See {@link KafkaIO#read()} for more information on
-   * configuration.
+   * A {@link PTransform} to read from Kafka topics. See {@link KafkaIO#read()} for more
+   * information on configuration.
    */
   public static class Read<K, V> extends PTransform<PInput, PCollection<KV<K, V>>> {
 
@@ -154,7 +154,7 @@ public class KafkaIO {
     private final Duration maxReadTime; // bounded read, mainly for testing
 
     /**
-     * set of properties that are not required or don't make sense for our consumer.
+     * A set of properties that are not required or don't make sense for our consumer.
      */
     private static final Map<String, String> ignoredConsumerProperties = ImmutableMap.of(
         ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "Set keyDecoderFn instead",
@@ -206,12 +206,21 @@ public class KafkaIO {
       this.maxReadTime = maxReadTime;
     }
 
+    /**
+     * Returns a new {@link Read} with Kafka consumer pointing to {@code bootstrapServers}.
+     */
     public Read<K, V> withBootstrapServers(String bootstrapServers) {
       return updateConsumerProperties(
           ImmutableMap.<String, Object>of(
               ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers));
     }
 
+    /**
+     * Returns a new {@link Read} that reads from the topics. All the partitions are from each
+     * of the topics is read.
+     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions) for description
+     * of how the partitions are distributed among the splits.
+     */
     public Read<K, V> withTopics(List<String> topics) {
       checkState(topicPartitions.isEmpty(), "Only topics or topicPartitions can be set, not both");
 
@@ -219,6 +228,12 @@ public class KafkaIO {
           timestampFn, watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
     }
 
+    /**
+     * Returns a new {@link Read} that reads from the partitions. This allows reading only a subset
+     * of partitions for one or more topics when (if ever) needed.
+     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions) for description
+     * of how the partitions are distributed among the splits.
+     */
     public Read<K, V> withTopicPartitions(List<TopicPartition> topicPartitions) {
       checkState(topics.isEmpty(), "Only topics or topicPartitions can be set, not both");
 
@@ -227,7 +242,7 @@ public class KafkaIO {
     }
 
     /**
-     * Set {@link Coder} for key bytes.
+     * Returns a new {@link Read} with {@link Coder} for key bytes.
      * <p> Since this changes the type for key, settings that depend on the type
      * ({@link #withTimestampFn(SerializableFunction)} and
      *  {@link #withWatermarkFn(SerializableFunction)}) make sense only after the coders are set.
@@ -240,7 +255,7 @@ public class KafkaIO {
     }
 
     /**
-     * Set {@link Coder} for value bytes.
+     * Returns a new {@link Read} with {@link Coder} for value bytes.
      * <p> Since this changes the type for key, settings that depend on the type
      * ({@link #withTimestampFn(SerializableFunction)} and
      *  {@link #withWatermarkFn(SerializableFunction)}) make sense only after the coders are set.
@@ -273,7 +288,7 @@ public class KafkaIO {
 
     /**
      * A factory to create Kafka {@link Consumer} from consumer configuration.
-     * Mainly used for tests. Default factory function creates a {@link KafkaConsumer}.
+     * Mainly used for tests. Default is {@link KafkaConsumer}.
      */
     public Read<K, V> withConsumerFactoryFn(
         SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn) {
@@ -307,7 +322,8 @@ public class KafkaIO {
     }
 
     /**
-     * Similar to {@link Read.Unbounded#withMaxReadTime(Duration)}. Mainly used for tests and demo
+     * Similar to {@link Read.Unbounded#withMaxReadTime(Duration)}.
+     * Mainly used for tests and demo
      * applications.
      */
     public Read<K, V> withMaxReadTime(Duration maxReadTime) {
@@ -325,6 +341,7 @@ public class KafkaIO {
           watermarkFn != null ? unwrapKafkaAndThen(watermarkFn) : null);
     }
 
+    // utility method to convert KafkRecord<K, V> to user KV<K, V> before applying user functions
     private static <KeyT, ValueT, OutT> SerializableFunction<KafkaRecord<KeyT, ValueT>, OutT>
       unwrapKafkaAndThen(final SerializableFunction<KV<KeyT, ValueT>, OutT> fn) {
         return new SerializableFunction<KafkaRecord<KeyT, ValueT>, OutT>() {
@@ -334,8 +351,13 @@ public class KafkaIO {
         };
       }
 
+    /**
+     * Creates an {@link UnboundedSource<KafkaRecord<K, V>, ?>} with the configuration in
+     * {@link ReadWithMetadata}. Primary use case is unit tests, should not be used in an
+     * application.
+     */
     @VisibleForTesting
-    public UnboundedKafkaSource<K, V, KV<K, V>> makeSource() {
+    UnboundedKafkaSource<K, V, KV<K, V>> makeSource() {
       return new UnboundedKafkaSource<K, V, KV<K, V>>(
           -1,
           topics,
@@ -394,20 +416,32 @@ public class KafkaIO {
     // the user to set all those before Reader.withMetaData(). we still need to let users
     // override timestamp functions (in cases where these functions need metadata).
 
+    /**
+     * A function to assign a timestamp to a record. Default is processing timestamp.
+     */
     public ReadWithMetadata<K, V> withTimestampFn(
         SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn) {
       checkNotNull(timestampFn);
       return new ReadWithMetadata<K, V>(kvRead, timestampFn, watermarkFn);
     }
 
+    /**
+     * A function to calculate watermark after a record. Default is last record timestamp
+     * @see #withTimestampFn(SerializableFunction)
+     */
     public ReadWithMetadata<K, V> withWatermarkFn(
         SerializableFunction<KafkaRecord<K, V>, Instant> watermarkFn) {
       checkNotNull(watermarkFn);
       return new ReadWithMetadata<K, V>(kvRead, timestampFn, watermarkFn);
     }
 
+    /**
+     * Creates an {@link UnboundedSource<KafkaRecord<K, V>, ?>} with the configuration in
+     * {@link ReadWithMetadata}. Primary use case is unit tests, should not be used in an
+     * application.
+     */
     @VisibleForTesting
-    public UnboundedKafkaSource<K, V, KafkaRecord<K, V>> makeSource() {
+    UnboundedKafkaSource<K, V, KafkaRecord<K, V>> makeSource() {
       return new UnboundedKafkaSource<>(
           -1,
           kvRead.topics,
