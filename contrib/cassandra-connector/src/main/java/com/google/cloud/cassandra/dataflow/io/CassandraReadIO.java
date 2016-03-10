@@ -1,183 +1,188 @@
 package com.google.cloud.cassandra.dataflow.io;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
+
+import javax.swing.text.html.parser.Entity;
+
+import org.joda.time.Instant;
+
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Session;
+import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.mapping.Mapper;
 import com.datastax.driver.mapping.MappingManager;
-import com.datastax.driver.mapping.Result;
+import com.google.cloud.dataflow.sdk.coders.Coder;
+import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
+import com.google.cloud.dataflow.sdk.io.BoundedSource;
+import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 
-/**
- * Class to create read operation from Cassandra using entities in a
- * Google Dataflow pipeline.
- * 
- * To read from a cassandra database table : 
- * String query = QueryBuilder.select().all()
-				.from(Utils.KEYSPACE, "emp_info").toString();
- * CassandraReadIO.Read.Bound<String> bound = new Read.Bound<String>(Utils.HOSTS, 
- * 						Utils.KEYSPACE, Utils.PORT, EmployeeDetails.class,query);
- * CassandraReadIO.Read.CassandraReadOperation<String> cassandraRead = new Read.
- * 						CassandraReadOperation<>(bound);
- * PipelineOptions options = PipelineOptionsFactory.create();
- * Pipeline p = Pipeline.create(options);
- * PCollection pcollection = p.apply(Create.of(cassandraRead
- *				.apply()));
- *				p.run();		
- *
- */
 public class CassandraReadIO {
 
-	/*
-	 * This class connects to cassandra cluster and performs read operation.
-	 */
-	public static class Read {
+	static class Source extends BoundedSource{
+		CassandraReadConfiguration configuration;
 
-		public static class Bound<T> {
-
-			private static final long serialVersionUID = 0;
-
-			private final String[] _hosts;
-			private final String _keyspace;
-			private final int _port;
-			private final Class _entityName;
-			private final String _query;
-
-			public Bound(String[] hosts, String keyspace, int port, Class entityName,
-					String query) {
-				_hosts = hosts;
-				_keyspace = keyspace;
-				_port = port;
-				_entityName = entityName;
-				_query = query;
-			}
-
-			public String[] getHosts() {
-				return _hosts;
-			}
-
-			public String getKeyspace() {
-				return _keyspace;
-			}
-
-			public int getPort() {
-				return _port;
-			}
-
-			public Class getEntityName() {
-				return _entityName;
-			}
-
-			public String getQuery() {
-				return _query;
-			}
+		Source(CassandraReadConfiguration config) throws IOException{
+			this.configuration = config;
 		}
 
-		/**
-	     * This class defines configuration for a cassandra connection, a table, entity name and query.
-	     * It also retrives a resultset and transform to List of specific entity type 
-	     */
-		public static class CassandraReadOperation<T> implements
-				java.io.Serializable {
-
-			private static final long serialVersionUID = 0;
-
-			private final String[] _hosts;
-			private final int _port;
-			private final String _keyspace;
-			private final Class _entityName;
-			private final String _query;
-
-			private transient Cluster _cluster;
-			private transient Session _session;
-			private transient MappingManager _manager;
-
-			private synchronized Cluster getCluster() {
-				if (_cluster == null) {
-					_cluster = Cluster.builder().addContactPoints(_hosts)
-					 .withPort(_port) .withoutMetrics()
-							.withoutJMXReporting().build();
-				}
-
-				return _cluster;
-			}
-
-			private synchronized Session getSession() {
-
-				if (_session == null) {
-					Cluster cluster = getCluster();
-					_session = cluster.connect(_keyspace);
-				}
-
-				return _session;
-			}
-
-			private synchronized MappingManager getManager() {
-				if (_manager == null) {
-					Session session = getSession();
-					_manager = new MappingManager(_session);
-				}
-				return _manager;
-			}
-
-			public CassandraReadOperation(Bound<T> bound) {
-				_hosts = bound.getHosts();
-				_port = bound.getPort();
-				_keyspace = bound.getKeyspace();
-				_entityName = bound.getEntityName();
-				_query = bound.getQuery();
-			}
-
-			public CassandraRead<T> createReader() {
-				return new CassandraRead<T>(this, getManager());
-			}
-
-			public void finalize() {
-				getSession().close();
-				getCluster().close();
-			}
-
-			/**
-			 * Method retrieve rows from cassandra and transform to List
-			 * of specific entity type 
-			 */ 
-			public List<T> apply() {
-				List<T> lstEmp = new ArrayList<T>();
-
-				ResultSet rs = getSession().execute(_query);
-				Result r = createReader().read(rs, _entityName);
-				while (r.iterator().hasNext()) {
-					lstEmp.add((T) r.iterator().next());
-				}
-				return lstEmp;
-			}
+		@Override
+		public Coder<Entity> getDefaultOutputCoder() {
+			return (Coder<Entity>) SerializableCoder.of(configuration.get_entityName());
 		}
 
-		/*
-		 * This class converts the ResultSet to the entity map
-		 */
-		private static class CassandraRead<T> {
-			private final CassandraReadOperation _op;
-			private final MappingManager _manager;
-			private Mapper<T> _mapper;
-
-			public CassandraRead(CassandraReadOperation op,
-					MappingManager manager) {
-				_op = op;
-				_manager = manager;
+		@Override
+		public void validate(){}
+		
+		private static class Reader<T> extends BoundedReader{
+			CassandraReadConfiguration configuration;
+			static Cluster cluster;
+			static Session session;
+			ResultSet rs;
+			Iterator itr;
+			Object currentEntity;
+			
+			Reader(CassandraReadConfiguration configuration){
+				this.configuration = configuration;
 			}
 			
-			/**
-			 * method will map the entity with resultset and returns map of specific entity type
-			 */ 
-			@SuppressWarnings("unchecked")
-			public Result<T> read(ResultSet rs, Class entityName) {
-				if(_mapper==null){
-					_mapper = (Mapper<T>) _manager.mapper(entityName);
+			/*
+			 * advances the reader to the next record
+			 */
+			@Override
+			public boolean advance() throws IOException {
+				if (itr.hasNext()) {
+					currentEntity = itr.next();
+					return true;
+				} else {
+					return false;
 				}
-				return _mapper.map(rs);
 			}
+
+			/* Creates a cassandra connection, session and resultSet and 
+			 * map the entity with resultSet and advances to the next result.
+			 * Initializes the reader and advances the reader to the first record.
+			 * @return true, if a record was read else false if there is no more input available.
+			 */
+			@Override
+			public boolean start() throws IOException {				
+				cluster = Cluster.builder().addContactPoints(configuration.getHost()).withPort(configuration.getPort()).build();
+				session = cluster.connect();
+				rs = session.execute(configuration.getQuery());
+				final MappingManager _manager =new MappingManager(session);
+				Mapper _mapper = null;			
+				if(_mapper==null){
+					_mapper = (Mapper) _manager.mapper(configuration.get_entityName());
+				}						
+				itr=_mapper.map(rs).iterator();						
+				return advance();
+			}
+
+			@Override
+			public void close() throws IOException {
+				session.close();
+				cluster.close();
+			}
+
+			@Override
+			public Object getCurrent() throws NoSuchElementException {
+				return currentEntity;
+			}
+
+			@Override
+			public Instant getCurrentTimestamp() throws NoSuchElementException {
+				return Instant.now();
+			}
+
+			@Override
+			public BoundedSource getCurrentSource() {
+				return null;
+			}	
+			
+		}
+
+		/* method splits a source into desired number of sources.
+		 * (non-Javadoc)
+		 * @see com.google.cloud.dataflow.sdk.io.BoundedSource#splitIntoBundles(long, com.google.cloud.dataflow.sdk.options.PipelineOptions)
+		 * 
+		 * Cassandra cluster token range is split into desired number of smaller ranges
+		 * queries are built from start and end token ranges
+		 * split sources are built by providing token range queries and other configurations
+		 * rowkey is the partitionkey of the cassandara table
+		 */
+		@Override
+		public List<BoundedSource> splitIntoBundles(long desiredSplits,
+				PipelineOptions paramPipelineOptions) throws Exception {
+			int max_exponent =127;		
+			long split_exponent = max_exponent/desiredSplits;
+			long token_split_range = (long) Math.pow(2, (split_exponent));
+			long min_start_token = -(long) Math.pow(2, max_exponent);
+			long start_token=0L,end_token = 0;
+			List<BoundedSource> sourceList = new ArrayList<>();
+			if(desiredSplits==1){
+				sourceList.add(this);
+				return sourceList;
+			}
+			String query = null;
+			for(int split =1;split<=desiredSplits;split++){
+				if(split==1){			//for first split will query token range starting from -2**(127-1)
+					 start_token = min_start_token;	
+					 end_token =  token_split_range;
+					 query = queryBuilder(start_token, end_token);
+					 configuration.setQuery(query);
+					 sourceList.add(new 	CassandraReadIO.Source(
+								new CassandraReadConfiguration(configuration.getHost(), configuration.getKeypace(),
+										configuration.getPort(), configuration.getTable(),configuration.getQuery(),configuration.getRowKey(),configuration.get_entityName())));
+				}else{
+					token_split_range = (long) Math.pow(2, (split_exponent));
+					 start_token = end_token;
+					
+					 end_token =  token_split_range;
+					 query = queryBuilder(start_token, end_token);
+					 configuration.setQuery(query);
+					 sourceList.add(new 	CassandraReadIO.Source(
+								new CassandraReadConfiguration(configuration.getHost(), configuration.getKeypace(),
+										configuration.getPort(), configuration.getTable(),configuration.getQuery(),configuration.getRowKey(),configuration.get_entityName())));
+				}		
+				split_exponent = split_exponent*2;
+			}
+			return sourceList;
+		}
+		/*
+		 * builds query using starttoken and endtoken
+		 */
+		public String queryBuilder(long startToken,long endToken){
+			String query= QueryBuilder.select().from(configuration.getKeypace(),configuration.getTable()).where(QueryBuilder.gte("token("+configuration.getRowKey()+")",startToken)).and(QueryBuilder.lt("token("+configuration.getRowKey()+")",endToken)).toString();
+			return query;
+		}
+	
+		
+		@Override
+		public long getEstimatedSizeBytes(PipelineOptions paramPipelineOptions)
+				throws Exception {
+			return 0;
+		}
+
+		@Override
+		public boolean producesSortedKeys(PipelineOptions paramPipelineOptions)
+				throws Exception {
+			return false;
+		}
+
+		@Override
+		public BoundedReader createReader(PipelineOptions paramPipelineOptions)
+				throws IOException {
+			return new Reader(configuration);
 		}
 	}
+	
+	  public static BoundedSource read(
+			  CassandraReadConfiguration config) throws IOException {
+		    return new Source(config);
+		  }
 
-}
+		
+}	
