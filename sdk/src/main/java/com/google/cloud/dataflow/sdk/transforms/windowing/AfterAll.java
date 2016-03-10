@@ -40,59 +40,34 @@ public class AfterAll<W extends BoundedWindow> extends OnceTrigger<W> {
     Preconditions.checkArgument(subTriggers.size() > 1);
   }
 
+  /**
+   * Returns an {@code AfterAll} {@code Trigger} with the given subtriggers.
+   */
   @SafeVarargs
   public static <W extends BoundedWindow> OnceTrigger<W> of(
       OnceTrigger<W>... triggers) {
     return new AfterAll<W>(Arrays.<Trigger<W>>asList(triggers));
   }
 
-  private TriggerResult result(TriggerContext c) {
-    // If all children have finished, then they must have each fired at least once.
-    if (c.trigger().areAllSubtriggersFinished()) {
-      return TriggerResult.FIRE_AND_FINISH;
-    }
-
-    return TriggerResult.CONTINUE;
-  }
-
   @Override
-  public TriggerResult onElement(OnElementContext c) throws Exception {
+  public void onElement(OnElementContext c) throws Exception {
     for (ExecutableTrigger<W> subTrigger : c.trigger().unfinishedSubTriggers()) {
       // Since subTriggers are all OnceTriggers, they must either CONTINUE or FIRE_AND_FINISH.
       // invokeElement will automatically mark the finish bit if they return FIRE_AND_FINISH.
-      subTrigger.invokeElement(c);
+      subTrigger.invokeOnElement(c);
     }
-
-    return result(c);
   }
 
   @Override
-  public MergeResult onMerge(OnMergeContext c) throws Exception {
-    // CONTINUE if merging returns CONTINUE for at least one sub-trigger
-    // FIRE_AND_FINISH if merging returns FIRE or FIRE_AND_FINISH for at least one sub-trigger
-    //   *and* FIRE, FIRE_AND_FINISH, or FINISH for all other sub-triggers.
-    // FINISH if merging returns FINISH for all sub-triggers.
-    boolean fired = false;
+  public void onMerge(OnMergeContext c) throws Exception {
     for (ExecutableTrigger<W> subTrigger : c.trigger().subTriggers()) {
-      MergeResult result = subTrigger.invokeMerge(c);
-      if (MergeResult.CONTINUE.equals(result)) {
-        return MergeResult.CONTINUE;
-      }
-      fired |= result.isFire();
+      subTrigger.invokeOnMerge(c);
     }
-
-    return fired ? MergeResult.FIRE_AND_FINISH : MergeResult.ALREADY_FINISHED;
-  }
-
-  @Override
-  public TriggerResult onTimer(OnTimerContext c) throws Exception {
-    for (ExecutableTrigger<W> subTrigger : c.trigger().unfinishedSubTriggers()) {
-      // Since subTriggers are all OnceTriggers, they must either CONTINUE or FIRE_AND_FINISH.
-      // invokeTimer will automatically mark the finish bit if they return FIRE_AND_FINISH.
-      subTrigger.invokeTimer(c);
+    boolean allFinished = true;
+    for (ExecutableTrigger<W> subTrigger1 : c.trigger().subTriggers()) {
+      allFinished &= c.forTrigger(subTrigger1).trigger().isFinished();
     }
-
-    return result(c);
+    c.trigger().setFinished(allFinished);
   }
 
   @Override
@@ -111,5 +86,32 @@ public class AfterAll<W extends BoundedWindow> extends OnceTrigger<W> {
   @Override
   public OnceTrigger<W> getContinuationTrigger(List<Trigger<W>> continuationTriggers) {
     return new AfterAll<W>(continuationTriggers);
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * @return {@code true} if all subtriggers return {@code true}.
+   */
+  @Override
+  public boolean shouldFire(TriggerContext context) throws Exception {
+    for (ExecutableTrigger<W> subtrigger : context.trigger().subTriggers()) {
+      if (!context.forTrigger(subtrigger).trigger().isFinished()
+          && !subtrigger.invokeShouldFire(context)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Invokes {@link #onFire} for all subtriggers, eliding redundant calls to {@link #shouldFire}
+   * because they all must be ready to fire.
+   */
+  @Override
+  public void onOnlyFiring(TriggerContext context) throws Exception {
+    for (ExecutableTrigger<W> subtrigger : context.trigger().subTriggers()) {
+      subtrigger.invokeOnFire(context);
+    }
   }
 }

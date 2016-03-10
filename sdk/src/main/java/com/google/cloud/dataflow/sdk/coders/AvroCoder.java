@@ -65,22 +65,19 @@ import javax.annotation.Nullable;
 /**
  * A {@link Coder} using Avro binary format.
  *
+ * <p>Each instance of {@code AvroCoder<T>} encapsulates an Avro schema for objects of type
+ * {@code T}.
  *
- * <p>The Avro schema is generated using reflection on the element type, using
- * Avro's <a href="http://avro.apache.org/docs/current/api/java/index.html">
- * org.apache.avro.reflect.ReflectData</a>,
- * and encoded as part of the {@code Coder} instance.
+ * <p>The Avro schema may be provided explicitly via {@link AvroCoder#of(Class, Schema)} or
+ * omitted via {@link AvroCoder#of(Class)}, in which case it will be inferred
+ * using Avro's {@link org.apache.avro.reflect.ReflectData}.
  *
  * <p>For complete details about schema generation and how it can be controlled please see
- * the <a href="http://avro.apache.org/docs/current/api/java/index.html">
- * org.apache.avro.reflect package</a>.
+ * the {@link org.apache.avro.reflect} package.
  * Only concrete classes with a no-argument constructor can be mapped to Avro records.
- * All inherited fields that are not static or transient are used. Fields are not permitted to be
- * null unless annotated by
- * <a href="http://avro.apache.org/docs/current/api/java/org/apache/avro/reflect/Nullable.html">
- * org.apache.avro.reflect.Nullable</a> or a
- * <a href="http://avro.apache.org/docs/current/api/java/org/apache/avro/reflect/Union.html">
- * org.apache.avro.reflect.Union</a> containing null.
+ * All inherited fields that are not static or transient are included. Fields are not permitted to
+ * be null unless annotated by {@link Nullable} or a {@link Union} schema
+ * containing {@code "null"}.
  *
  * <p>To use, specify the {@code Coder} type on a PCollection:
  * <pre>
@@ -174,19 +171,42 @@ public class AvroCoder<T> extends StandardCoder<T> {
 
   private final List<String> nonDeterministicReasons;
 
-  private final DatumWriter<T> writer;
-  private final DatumReader<T> reader;
-  private final EncoderFactory encoderFactory = new EncoderFactory();
-  private final DecoderFactory decoderFactory = new DecoderFactory();
+  // Factories allocated by .get() are thread-safe and immutable.
+  private static final EncoderFactory ENCODER_FACTORY = EncoderFactory.get();
+  private static final DecoderFactory DECODER_FACTORY = DecoderFactory.get();
+  // Cache the old encoder/decoder and let the factories reuse them when possible. To be threadsafe,
+  // these are ThreadLocal. This code does not need to be re-entrant as AvroCoder does not use
+  // an inner coder.
+  private final ThreadLocal<BinaryDecoder> decoder;
+  private final ThreadLocal<BinaryEncoder> encoder;
+  private final ThreadLocal<DatumWriter<T>> writer;
+  private final ThreadLocal<DatumReader<T>> reader;
 
   protected AvroCoder(Class<T> type, Schema schema) {
     this.type = type;
     this.schema = schema;
 
-    nonDeterministicReasons = new AvroDeterminismChecker()
-        .check(TypeDescriptor.of(type), schema);
-    this.reader = createDatumReader();
-    this.writer = createDatumWriter();
+    nonDeterministicReasons = new AvroDeterminismChecker().check(TypeDescriptor.of(type), schema);
+
+    // Decoder and Encoder start off null for each thread. They are allocated and potentially
+    // reused inside encode/decode.
+    this.decoder = new ThreadLocal<>();
+    this.encoder = new ThreadLocal<>();
+
+    // Reader and writer are allocated once per thread and are "final" for thread-local Coder
+    // instance.
+    this.reader = new ThreadLocal<DatumReader<T>>() {
+      @Override
+      public DatumReader<T> initialValue() {
+        return createDatumReader();
+      }
+    };
+    this.writer = new ThreadLocal<DatumWriter<T>>() {
+      @Override
+      public DatumWriter<T> initialValue() {
+        return createDatumWriter();
+      }
+    };
   }
 
   /**
@@ -236,17 +256,22 @@ public class AvroCoder<T> extends StandardCoder<T> {
   }
 
   @Override
-  public void encode(T value, OutputStream outStream, Context context)
-      throws IOException {
-    BinaryEncoder encoder = encoderFactory.directBinaryEncoder(outStream, null);
-    writer.write(value, encoder);
-    encoder.flush();
+  public void encode(T value, OutputStream outStream, Context context) throws IOException {
+    // Get a BinaryEncoder instance from the ThreadLocal cache and attempt to reuse it.
+    BinaryEncoder encoderInstance = ENCODER_FACTORY.directBinaryEncoder(outStream, encoder.get());
+    // Save the potentially-new instance for reuse later.
+    encoder.set(encoderInstance);
+    writer.get().write(value, encoderInstance);
+    // Direct binary encoder does not buffer any data and need not be flushed.
   }
 
   @Override
   public T decode(InputStream inStream, Context context) throws IOException {
-    BinaryDecoder decoder = decoderFactory.directBinaryDecoder(inStream, null);
-    return reader.read(null, decoder);
+    // Get a BinaryDecoder instance from the ThreadLocal cache and attempt to reuse it.
+    BinaryDecoder decoderInstance = DECODER_FACTORY.directBinaryDecoder(inStream, decoder.get());
+    // Save the potentially-new instance for later.
+    decoder.set(decoderInstance);
+    return reader.get().read(null, decoderInstance);
   }
 
   @Override
@@ -263,9 +288,9 @@ public class AvroCoder<T> extends StandardCoder<T> {
   }
 
   /**
-   * Raises an exception describing reasons why the type may not be deterministically
-   * encoded using the given Schema, the directBinaryEncoder, and the ReflectDatumWriter
-   * or GenericDatumWriter.
+   * @throws NonDeterministicException when the type may not be deterministically
+   * encoded using the given {@link Schema}, the {@code directBinaryEncoder}, and the
+   * {@link ReflectDatumWriter} or {@link GenericDatumWriter}.
    */
   @Override
   public void verifyDeterministic() throws NonDeterministicException {
@@ -275,12 +300,12 @@ public class AvroCoder<T> extends StandardCoder<T> {
   }
 
   /**
-   * Returns a new DatumReader that can be used to read from
-   * an Avro file directly. Assumes the schema used to read is
-   * the same as the schema that was used when writing.
+   * Returns a new {@link DatumReader} that can be used to read from an Avro file directly. Assumes
+   * the schema used to read is the same as the schema that was used when writing.
    *
    * @deprecated For {@code AvroCoder} internal use only.
    */
+  // TODO: once we can remove this deprecated function, inline in constructor.
   @Deprecated
   public DatumReader<T> createDatumReader() {
     if (type.equals(GenericRecord.class)) {
@@ -291,11 +316,11 @@ public class AvroCoder<T> extends StandardCoder<T> {
   }
 
   /**
-   * Returns a new DatumWriter that can be used to write to
-   * an Avro file directly.
+   * Returns a new {@link DatumWriter} that can be used to write to an Avro file directly.
    *
    * @deprecated For {@code AvroCoder} internal use only.
    */
+  // TODO: once we can remove this deprecated function, inline in constructor.
   @Deprecated
   public DatumWriter<T> createDatumWriter() {
     if (type.equals(GenericRecord.class)) {
@@ -313,7 +338,7 @@ public class AvroCoder<T> extends StandardCoder<T> {
   }
 
   /**
-   * Proxy to use in place of serializing the AvroCoder. This allows the fields
+   * Proxy to use in place of serializing the {@link AvroCoder}. This allows the fields
    * to remain final.
    */
   private static class SerializedAvroCoderProxy<T> implements Serializable {
@@ -337,7 +362,7 @@ public class AvroCoder<T> extends StandardCoder<T> {
    * Helper class encapsulating the various pieces of state maintained by the
    * recursive walk used for checking if the encoding will be deterministic.
    */
-  protected static class AvroDeterminismChecker {
+  private static class AvroDeterminismChecker {
 
     // Reasons that the original type are not deterministic. This accumulates
     // the actual output.

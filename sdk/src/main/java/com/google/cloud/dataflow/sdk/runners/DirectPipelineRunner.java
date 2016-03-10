@@ -17,6 +17,7 @@
 package com.google.cloud.dataflow.sdk.runners;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
 
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.Pipeline.PipelineVisitor;
@@ -24,12 +25,14 @@ import com.google.cloud.dataflow.sdk.PipelineResult;
 import com.google.cloud.dataflow.sdk.coders.CannotProvideCoderException;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.ListCoder;
+import com.google.cloud.dataflow.sdk.io.AvroIO;
+import com.google.cloud.dataflow.sdk.io.FileBasedSink;
+import com.google.cloud.dataflow.sdk.io.TextIO;
 import com.google.cloud.dataflow.sdk.options.DirectPipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions.CheckEnabled;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsValidator;
-import com.google.cloud.dataflow.sdk.runners.dataflow.MapAggregatorValues;
 import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
 import com.google.cloud.dataflow.sdk.transforms.Combine;
@@ -37,9 +40,14 @@ import com.google.cloud.dataflow.sdk.transforms.Combine.KeyedCombineFn;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.cloud.dataflow.sdk.transforms.Partition;
+import com.google.cloud.dataflow.sdk.transforms.Partition.PartitionFn;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.util.AppliedCombineFn;
 import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
+import com.google.cloud.dataflow.sdk.util.MapAggregatorValues;
+import com.google.cloud.dataflow.sdk.util.PerKeyCombineFnRunner;
+import com.google.cloud.dataflow.sdk.util.PerKeyCombineFnRunners;
 import com.google.cloud.dataflow.sdk.util.SerializableUtils;
 import com.google.cloud.dataflow.sdk.util.TestCredential;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
@@ -49,6 +57,7 @@ import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollectionList;
 import com.google.cloud.dataflow.sdk.values.PCollectionView;
+import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.cloud.dataflow.sdk.values.POutput;
 import com.google.cloud.dataflow.sdk.values.PValue;
@@ -230,6 +239,10 @@ public class DirectPipelineRunner
       PTransform<InputT, OutputT> transform, InputT input) {
     if (transform instanceof Combine.GroupedValues) {
       return (OutputT) applyTestCombine((Combine.GroupedValues) transform, (PCollection) input);
+    } else if (transform instanceof TextIO.Write.Bound) {
+      return (OutputT) applyTextIOWrite((TextIO.Write.Bound) transform, (PCollection<?>) input);
+    } else if (transform instanceof AvroIO.Write.Bound) {
+      return (OutputT) applyAvroIOWrite((AvroIO.Write.Bound) transform, (PCollection<?>) input);
     } else {
       return super.apply(transform, input);
     }
@@ -240,7 +253,8 @@ public class DirectPipelineRunner
       PCollection<KV<K, Iterable<InputT>>> input) {
 
     PCollection<KV<K, OutputT>> output = input
-        .apply(ParDo.of(TestCombineDoFn.create(transform, input, testSerializability, rand)));
+        .apply(ParDo.of(TestCombineDoFn.create(transform, input, testSerializability, rand))
+            .withSideInputs(transform.getSideInputs()));
 
     try {
       output.setCoder(transform.getDefaultOutputCoder(input));
@@ -248,6 +262,143 @@ public class DirectPipelineRunner
       // let coder inference occur later, if it can
     }
     return output;
+  }
+
+  private static class ElementProcessingOrderPartitionFn<T> implements PartitionFn<T> {
+    private int elementNumber;
+    @Override
+    public int partitionFor(T elem, int numPartitions) {
+      return elementNumber++ % numPartitions;
+    }
+  }
+
+  /**
+   * Applies TextIO.Write honoring user requested sharding controls (i.e. withNumShards)
+   * by applying a partition function based upon the number of shards the user requested.
+   */
+  private static class DirectTextIOWrite<T> extends PTransform<PCollection<T>, PDone> {
+    private final TextIO.Write.Bound<T> transform;
+
+    private DirectTextIOWrite(TextIO.Write.Bound<T> transform) {
+      this.transform = transform;
+    }
+
+    @Override
+    public PDone apply(PCollection<T> input) {
+      checkState(transform.getNumShards() > 1,
+          "DirectTextIOWrite is expected to only be used when sharding controls are required.");
+
+      // Evenly distribute all the elements across the partitions.
+      PCollectionList<T> partitionedElements =
+          input.apply(Partition.of(transform.getNumShards(),
+                                   new ElementProcessingOrderPartitionFn<T>()));
+
+      // For each input PCollection partition, create a write transform that represents
+      // one of the specific shards.
+      for (int i = 0; i < transform.getNumShards(); ++i) {
+        /*
+         * This logic mirrors the file naming strategy within
+         * {@link FileBasedSink#generateDestinationFilenames()}
+         */
+        String outputFilename = IOChannelUtils.constructName(
+            transform.getFilenamePrefix(),
+            transform.getShardNameTemplate(),
+            getFileExtension(transform.getFilenameSuffix()),
+            i,
+            transform.getNumShards());
+
+        String transformName = String.format("%s(Shard:%s)", transform.getName(), i);
+        partitionedElements.get(i).apply(transformName,
+            transform.withNumShards(1).withShardNameTemplate("").withSuffix("").to(outputFilename));
+      }
+      return PDone.in(input.getPipeline());
+    }
+  }
+
+  /**
+   * Returns the file extension to be used. If the user did not request a file
+   * extension then this method returns the empty string. Otherwise this method
+   * adds a {@code "."} to the beginning of the users extension if one is not present.
+   *
+   * <p>This is copied from {@link FileBasedSink} to not expose it.
+   */
+  private static String getFileExtension(String usersExtension) {
+    if (usersExtension == null || usersExtension.isEmpty()) {
+      return "";
+    }
+    if (usersExtension.startsWith(".")) {
+      return usersExtension;
+    }
+    return "." + usersExtension;
+  }
+
+  /**
+   * Apply the override for TextIO.Write.Bound if the user requested sharding controls
+   * greater than one.
+   */
+  private <T> PDone applyTextIOWrite(TextIO.Write.Bound<T> transform, PCollection<T> input) {
+    if (transform.getNumShards() <= 1) {
+      // By default, the DirectPipelineRunner outputs to only 1 shard. Since the user never
+      // requested sharding controls greater than 1, we default to outputting to 1 file.
+      return super.apply(transform.withNumShards(1), input);
+    }
+    return input.apply(new DirectTextIOWrite<>(transform));
+  }
+
+  /**
+   * Applies AvroIO.Write honoring user requested sharding controls (i.e. withNumShards)
+   * by applying a partition function based upon the number of shards the user requested.
+   */
+  private static class DirectAvroIOWrite<T> extends PTransform<PCollection<T>, PDone> {
+    private final AvroIO.Write.Bound<T> transform;
+
+    private DirectAvroIOWrite(AvroIO.Write.Bound<T> transform) {
+      this.transform = transform;
+    }
+
+    @Override
+    public PDone apply(PCollection<T> input) {
+      checkState(transform.getNumShards() > 1,
+          "DirectAvroIOWrite is expected to only be used when sharding controls are required.");
+
+      // Evenly distribute all the elements across the partitions.
+      PCollectionList<T> partitionedElements =
+          input.apply(Partition.of(transform.getNumShards(),
+                                   new ElementProcessingOrderPartitionFn<T>()));
+
+      // For each input PCollection partition, create a write transform that represents
+      // one of the specific shards.
+      for (int i = 0; i < transform.getNumShards(); ++i) {
+        /*
+         * This logic mirrors the file naming strategy within
+         * {@link FileBasedSink#generateDestinationFilenames()}
+         */
+        String outputFilename = IOChannelUtils.constructName(
+            transform.getFilenamePrefix(),
+            transform.getShardNameTemplate(),
+            getFileExtension(transform.getFilenameSuffix()),
+            i,
+            transform.getNumShards());
+
+        String transformName = String.format("%s(Shard:%s)", transform.getName(), i);
+        partitionedElements.get(i).apply(transformName,
+            transform.withNumShards(1).withShardNameTemplate("").withSuffix("").to(outputFilename));
+      }
+      return PDone.in(input.getPipeline());
+    }
+  }
+
+  /**
+   * Apply the override for AvroIO.Write.Bound if the user requested sharding controls
+   * greater than one.
+   */
+  private <T> PDone applyAvroIOWrite(AvroIO.Write.Bound<T> transform, PCollection<T> input) {
+    if (transform.getNumShards() <= 1) {
+      // By default, the DirectPipelineRunner outputs to only 1 shard. Since the user never
+      // requested sharding controls greater than 1, we default to outputting to 1 file.
+      return super.apply(transform.withNumShards(1), input);
+    }
+    return input.apply(new DirectAvroIOWrite<>(transform));
   }
 
   /**
@@ -261,7 +412,7 @@ public class DirectPipelineRunner
    */
   public static class TestCombineDoFn<K, InputT, AccumT, OutputT>
       extends DoFn<KV<K, Iterable<InputT>>, KV<K, OutputT>> {
-    private final KeyedCombineFn<? super K, ? super InputT, AccumT, OutputT> fn;
+    private final PerKeyCombineFnRunner<? super K, ? super InputT, AccumT, OutputT> fnRunner;
     private final Coder<AccumT> accumCoder;
     private final boolean testSerializability;
     private final Random rand;
@@ -273,21 +424,21 @@ public class DirectPipelineRunner
         Random rand) {
 
       AppliedCombineFn<? super K, ? super InputT, ?, OutputT> fn = transform.getAppliedFn(
-            input.getPipeline().getCoderRegistry(), input.getCoder());
+          input.getPipeline().getCoderRegistry(), input.getCoder(), input.getWindowingStrategy());
 
       return new TestCombineDoFn(
-          fn.getFn(),
+          PerKeyCombineFnRunners.create(fn.getFn()),
           fn.getAccumulatorCoder(),
           testSerializability,
           rand);
     }
 
     public TestCombineDoFn(
-        KeyedCombineFn<? super K, ? super InputT, AccumT, OutputT> fn,
+        PerKeyCombineFnRunner<? super K, ? super InputT, AccumT, OutputT> fnRunner,
         Coder<AccumT> accumCoder,
         boolean testSerializability,
         Random rand) {
-      this.fn = fn;
+      this.fnRunner = fnRunner;
       this.accumCoder = accumCoder;
       this.testSerializability = testSerializability;
       this.rand = rand;
@@ -302,15 +453,15 @@ public class DirectPipelineRunner
       Iterable<InputT> values = c.element().getValue();
       List<AccumT> groupedPostShuffle =
           ensureSerializableByCoder(ListCoder.of(accumCoder),
-              addInputsRandomly(fn, key, values, rand),
-              "After addInputs of KeyedCombineFn " + fn.toString());
+              addInputsRandomly(fnRunner, key, values, rand, c),
+              "After addInputs of KeyedCombineFn " + fnRunner.fn().toString());
       AccumT merged =
           ensureSerializableByCoder(accumCoder,
-              fn.mergeAccumulators(key, groupedPostShuffle),
-              "After mergeAccumulators of KeyedCombineFn " + fn.toString());
+            fnRunner.mergeAccumulators(key, groupedPostShuffle, c),
+            "After mergeAccumulators of KeyedCombineFn " + fnRunner.fn().toString());
       // Note: The serializability of KV<K, OutputT> is ensured by the
       // runner itself, since it's a transform output.
-      c.output(KV.of(key, fn.extractOutput(key, merged)));
+      c.output(KV.of(key, fnRunner.extractOutput(key, merged, c)));
     }
 
     /**
@@ -319,27 +470,32 @@ public class DirectPipelineRunner
      * <p>Visible for testing purposes only.
      */
     public static <K, AccumT, InputT> List<AccumT> addInputsRandomly(
-        KeyedCombineFn<? super K, ? super InputT, AccumT, ?> fn,
+        PerKeyCombineFnRunner<? super K, ? super InputT, AccumT, ?> fnRunner,
         K key,
         Iterable<InputT> values,
-        Random random) {
+        Random random,
+        DoFn<?, ?>.ProcessContext c) {
       List<AccumT> out = new ArrayList<AccumT>();
       int i = 0;
-      AccumT accumulator = fn.createAccumulator(key);
+      AccumT accumulator = fnRunner.createAccumulator(key, c);
       boolean hasInput = false;
 
       for (InputT value : values) {
-        accumulator = fn.addInput(key, accumulator, value);
+        accumulator = fnRunner.addInput(key, accumulator, value, c);
         hasInput = true;
 
         // For each index i, flip a 1/2^i weighted coin for whether to
         // create a new accumulator after index i is added, i.e. [0]
         // is guaranteed, [1] is an even 1/2, [2] is 1/4, etc. The
         // goal is to partition the inputs into accumulators, and make
-        // the accumulators potentially lumpy.
+        // the accumulators potentially lumpy.  Also compact about half
+        // of the accumulators.
         if (i == 0 || random.nextInt(1 << Math.min(i, 30)) == 0) {
+          if (i % 2 == 0) {
+            accumulator = fnRunner.compact(key, accumulator, c);
+          }
           out.add(accumulator);
-          accumulator = fn.createAccumulator(key);
+          accumulator = fnRunner.createAccumulator(key, c);
           hasInput = false;
         }
         i++;
@@ -962,9 +1118,9 @@ public class DirectPipelineRunner
   /////////////////////////////////////////////////////////////////////////////
 
   private final DirectPipelineOptions options;
-  private boolean testSerializability = true;
-  private boolean testEncodability = true;
-  private boolean testUnorderedness = true;
+  private boolean testSerializability;
+  private boolean testEncodability;
+  private boolean testUnorderedness;
 
   /** Returns a new DirectPipelineRunner. */
   private DirectPipelineRunner(DirectPipelineOptions options) {
@@ -980,8 +1136,15 @@ public class DirectPipelineRunner
 
     LOG.debug("DirectPipelineRunner using random seed {}.", randomSeed);
     rand = new Random(randomSeed);
+
+    testSerializability = options.isTestSerializability();
+    testEncodability = options.isTestEncodability();
+    testUnorderedness = options.isTestUnorderedness();
   }
 
+  /**
+   * Get the options used in this {@link Pipeline}.
+   */
   public DirectPipelineOptions getPipelineOptions() {
     return options;
   }

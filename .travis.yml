@@ -1,35 +1,28 @@
 language: java
 
+sudo: false
+
 notifications:
   email:
-    recipients:
-      - dataflow-sdk-build-notifications+travis@google.com
+    # Group email notifications are disabled for now, since we cannot do it on a per-branch basis.
+    # Right now, it would trigger a notification for each fork, which generates a lot of spam.
+    # recipients:
+    #  - dataflow-sdk-build-notifications+travis@google.com
     on_success: change
     on_failure: always
 
-os:
-  - linux
-  - osx
-
-env:
-  matrix:
-    - CUSTOM_JDK="default"
-    - CUSTOM_JDK="oraclejdk8"
-    - CUSTOM_JDK="oraclejdk7"
-    - CUSTOM_JDK="openjdk7"
-
 matrix:
-  exclude:
-     # On OSX, run with default JDK only.
-     - os: osx
-       env: CUSTOM_JDK="oraclejdk8"
-     - os: osx
-       env: CUSTOM_JDK="oraclejdk7"
-     - os: osx
-       env: CUSTOM_JDK="openjdk7"
-     # On Linux, run with specific JDKs only.
-     - os: linux
-       env: CUSTOM_JDK="default"
+  include:
+    # On OSX, run with default JDK only.
+    - os: osx
+      env: MAVEN_OVERRIDE=""
+    # On Linux, run with specific JDKs only.
+    - os: linux
+      env: CUSTOM_JDK="oraclejdk8" MAVEN_OVERRIDE="-DforkCount=0"
+    - os: linux
+      env: CUSTOM_JDK="oraclejdk7" MAVEN_OVERRIDE="-DforkCount=0"
+    - os: linux
+      env: CUSTOM_JDK="openjdk7" MAVEN_OVERRIDE="-DforkCount=0"
 
 before_install:
   - if [ "$TRAVIS_OS_NAME" == "osx" ]; then export JAVA_HOME=$(/usr/libexec/java_home); fi
@@ -39,6 +32,5 @@ install:
   - travis_retry mvn install clean -U -DskipTests=true
 
 script:
-  - travis_retry mvn versions:set -DnewVersion=manual_build
-  - travis_retry mvn install -U
+  - travis_retry mvn $MAVEN_OVERRIDE install -U
   - travis_retry travis/test_wordcount.sh

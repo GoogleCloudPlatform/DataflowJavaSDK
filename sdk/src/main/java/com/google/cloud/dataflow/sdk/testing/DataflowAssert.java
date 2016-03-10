@@ -18,6 +18,7 @@ package com.google.cloud.dataflow.sdk.testing;
 
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertThat;
 
 import com.google.cloud.dataflow.sdk.Pipeline;
@@ -28,6 +29,7 @@ import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.coders.MapCoder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
 import com.google.cloud.dataflow.sdk.options.StreamingOptions;
+import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
@@ -234,7 +236,6 @@ public class DataflowAssert {
       }
     }
 
-
     /**
      * Applies a {@link SerializableFunction} to check the elements of the {@code Iterable}.
      *
@@ -297,14 +298,37 @@ public class DataflowAssert {
       }
     }
 
-
     /**
      * Checks that the {@code Iterable} is empty.
      *
-     * <p> Returns this {@code IterableAssert}.
+     * <p>Returns this {@code IterableAssert}.
      */
     public IterableAssert<T> empty() {
       return satisfies(new AssertContainsInAnyOrderRelation<T>(), Collections.<T>emptyList());
+    }
+
+    /**
+     * @throws UnsupportedOperationException always
+     * @deprecated {@link Object#equals(Object)} is not supported on DataflowAssert objects.
+     *    If you meant to test object equality, use a variant of {@link #containsInAnyOrder}
+     *    instead.
+     */
+    @Deprecated
+    @Override
+    public boolean equals(Object o) {
+      throw new UnsupportedOperationException(
+          "If you meant to test object equality, use .containsInAnyOrder instead.");
+    }
+
+    /**
+     * @throws UnsupportedOperationException always.
+     * @deprecated {@link Object#hashCode()} is not supported on DataflowAssert objects.
+     */
+    @Deprecated
+    @Override
+    public int hashCode() {
+      throw new UnsupportedOperationException(
+          String.format("%s.hashCode() is not supported.", IterableAssert.class.getSimpleName()));
     }
 
     /**
@@ -334,7 +358,7 @@ public class DataflowAssert {
      * Checks that the {@code Iterable} contains elements that match the provided matchers,
      * in any order.
      *
-     * <p> Returns this {@code IterableAssert}.
+     * <p>Returns this {@code IterableAssert}.
      */
     @SafeVarargs
     final IterableAssert<T> containsInAnyOrder(
@@ -360,6 +384,31 @@ public class DataflowAssert {
     }
 
     /**
+     * Always throws an {@link UnsupportedOperationException}: users are probably looking for
+     * {@link #isEqualTo}.
+     */
+    @Deprecated
+    @Override
+    public boolean equals(Object o) {
+      throw new UnsupportedOperationException(
+          String.format(
+              "tests for Java equality of the %s object, not the PCollection in question. "
+                  + "Call a test method, such as isEqualTo.",
+              getClass().getSimpleName()));
+    }
+
+    /**
+     * @throws UnsupportedOperationException always.
+     * @deprecated {@link Object#hashCode()} is not supported on DataflowAssert objects.
+     */
+    @Deprecated
+    @Override
+    public int hashCode() {
+      throw new UnsupportedOperationException(
+          String.format("%s.hashCode() is not supported.", SingletonAssert.class.getSimpleName()));
+    }
+
+    /**
      * Sets the coder to use for elements of type {@code T}, as needed
      * for internal purposes.
      *
@@ -378,8 +427,7 @@ public class DataflowAssert {
         return coder.get();
       } else {
         throw new IllegalStateException(
-            "Attempting to access the coder of an IterableAssert"
-                + " that has not been set yet.");
+            "Attempting to access the coder of an IterableAssert that has not been set yet.");
       }
     }
 
@@ -422,6 +470,16 @@ public class DataflowAssert {
      */
     public SingletonAssert<T> isEqualTo(T expectedValue) {
       return satisfies(new AssertIsEqualToRelation<T>(), expectedValue);
+    }
+
+    /**
+     * Checks that the value of this {@code SingletonAssert}'s view is not equal
+     * to the expected value.
+     *
+     * <p>Returns this {@code SingletonAssert}.
+     */
+    public SingletonAssert<T> notEqualTo(T expectedValue) {
+      return satisfies(new AssertNotEqualToRelation<T>(), expectedValue);
     }
 
     /**
@@ -673,6 +731,24 @@ public class DataflowAssert {
   }
 
   /**
+   * A {@link SerializableFunction} that verifies that an actual value is not equal to an
+   * expected value.
+   */
+  private static class AssertNotEqualTo<T> implements SerializableFunction<T, Void> {
+    private T expected;
+
+    public AssertNotEqualTo(T expected) {
+      this.expected = expected;
+    }
+
+    @Override
+    public Void apply(T actual) {
+      assertThat(actual, not(equalTo(expected)));
+      return null;
+    }
+  }
+
+  /**
    * A {@link SerializableFunction} that verifies that an {@code Iterable} contains
    * expected items in any order.
    */
@@ -690,9 +766,8 @@ public class DataflowAssert {
       this((T[]) expected.toArray());
     }
 
-    @SuppressWarnings("unchecked")
     public AssertContainsInAnyOrder(Iterable<T> expected) {
-      this(Lists.newArrayList(expected));
+      this(Lists.<T>newArrayList(expected));
     }
 
     @Override
@@ -722,6 +797,17 @@ public class DataflowAssert {
     @Override
     public SerializableFunction<T, Void> assertFor(T expected) {
       return new AssertIsEqualTo<T>(expected);
+    }
+  }
+
+  /**
+   * An {@link AssertRelation} implementing the binary predicate that two objects are not equal.
+   */
+  private static class AssertNotEqualToRelation<T>
+      implements AssertRelation<T, T> {
+    @Override
+    public SerializableFunction<T, Void> assertFor(T expected) {
+      return new AssertNotEqualTo<T>(expected);
     }
   }
 

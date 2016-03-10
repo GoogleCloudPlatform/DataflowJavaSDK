@@ -16,194 +16,155 @@
 
 package com.google.cloud.dataflow.sdk.transforms.windowing;
 
-import static com.google.cloud.dataflow.sdk.WindowMatchers.isSingleWindowedValue;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.when;
 
-import com.google.cloud.dataflow.sdk.WindowMatchers;
-import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger.MergeResult;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger.OnceTrigger;
-import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger.TriggerResult;
-import com.google.cloud.dataflow.sdk.util.TimeDomain;
 import com.google.cloud.dataflow.sdk.util.TriggerTester;
-import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
-import com.google.cloud.dataflow.sdk.values.TimestampedValue;
+import com.google.cloud.dataflow.sdk.util.TriggerTester.SimpleTriggerTester;
 
-import org.hamcrest.Matchers;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
 
 /**
  * Tests for {@link OrFinallyTrigger}.
  */
 @RunWith(JUnit4.class)
 public class OrFinallyTriggerTest {
-  @Mock private Trigger<IntervalWindow> mockActual;
-  @Mock private OnceTrigger<IntervalWindow> mockUntil;
 
-  private TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester;
-  private IntervalWindow firstWindow;
+  private SimpleTriggerTester<IntervalWindow> tester;
 
-  public void setUp(WindowFn<?, IntervalWindow> windowFn) throws Exception {
-    MockitoAnnotations.initMocks(this);
-
-    Trigger<IntervalWindow> underTest =
-        new OrFinallyTrigger<IntervalWindow>(mockActual, mockUntil);
-
-    tester = TriggerTester.nonCombining(
-        windowFn, underTest, AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
-    firstWindow = new IntervalWindow(new Instant(0), new Instant(10));
-  }
-
-  private void injectElement(int element, TriggerResult result1, TriggerResult result2)
-      throws Exception {
-    if (result1 != null) {
-      when(mockActual.onElement(
-          Mockito.<Trigger<IntervalWindow>.OnElementContext>any()))
-          .thenReturn(result1);
-    }
-    if (result2 != null) {
-      when(mockUntil.onElement(
-          Mockito.<Trigger<IntervalWindow>.OnElementContext>any()))
-          .thenReturn(result2);
-    }
-    tester.injectElements(
-        TimestampedValue.of(element, new Instant(element)));
-  }
-
+  /**
+   * Tests that for {@code OrFinally(actual, ...)} when {@code actual}
+   * fires and finishes, the {@code OrFinally} also fires and finishes.
+   */
   @Test
-  public void testOnElementActualFires() throws Exception {
-    setUp(FixedWindows.of(Duration.millis(10)));
+  public void testActualFiresAndFinishes() throws Exception {
+    tester = TriggerTester.forTrigger(
+        new OrFinallyTrigger<>(
+            AfterPane.<IntervalWindow>elementCountAtLeast(2),
+            AfterPane.<IntervalWindow>elementCountAtLeast(100)),
+        FixedWindows.of(Duration.millis(100)));
 
-    injectElement(1, TriggerResult.FIRE, TriggerResult.CONTINUE);
-    injectElement(2, TriggerResult.FIRE_AND_FINISH, TriggerResult.CONTINUE);
+    IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(100));
 
-    // This should do nothing (we've already fired and finished)
-    injectElement(3, TriggerResult.FIRE, TriggerResult.FIRE_AND_FINISH);
+    // Not yet firing
+    tester.injectElements(1);
+    assertFalse(tester.shouldFire(window));
+    assertFalse(tester.isMarkedFinished(window));
 
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1), 1, 0, 10),
-        isSingleWindowedValue(Matchers.containsInAnyOrder(2), 2, 0, 10)));
-    assertTrue(tester.isMarkedFinished(firstWindow));
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(firstWindow);
+    // The actual fires and finishes
+    tester.injectElements(2);
+    assertTrue(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertTrue(tester.isMarkedFinished(window));
   }
 
+  /**
+   * Tests that for {@code OrFinally(actual, ...)} when {@code actual}
+   * fires but does not finish, the {@code OrFinally} also fires and also does not
+   * finish.
+   */
   @Test
-  public void testOnElementUntilFires() throws Exception {
-    setUp(FixedWindows.of(Duration.millis(10)));
+  public void testActualFiresOnly() throws Exception {
+    tester = TriggerTester.forTrigger(
+        new OrFinallyTrigger<>(
+            Repeatedly.forever(AfterPane.<IntervalWindow>elementCountAtLeast(2)),
+            AfterPane.<IntervalWindow>elementCountAtLeast(100)),
+        FixedWindows.of(Duration.millis(100)));
 
-    injectElement(1, TriggerResult.CONTINUE, TriggerResult.CONTINUE);
-    injectElement(2, TriggerResult.CONTINUE, TriggerResult.FIRE_AND_FINISH);
+    IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(100));
 
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2), 1, 0, 10)));
-    assertTrue(tester.isMarkedFinished(firstWindow));
+    // Not yet firing
+    tester.injectElements(1);
+    assertFalse(tester.shouldFire(window));
+    assertFalse(tester.isMarkedFinished(window));
+
+    // The actual fires but does not finish
+    tester.injectElements(2);
+    assertTrue(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertFalse(tester.isMarkedFinished(window));
+
+    // And again
+    tester.injectElements(3, 4);
+    assertTrue(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertFalse(tester.isMarkedFinished(window));
   }
 
+  /**
+   * Tests that if the first trigger rewinds to be non-finished in the merged window,
+   * then it becomes the currently active trigger again, with real triggers.
+   */
   @Test
-  public void testOnElementUntilFiresAndFinishes() throws Exception {
-    setUp(FixedWindows.of(Duration.millis(10)));
+  public void testShouldFireAfterMerge() throws Exception {
+    tester = TriggerTester.forTrigger(
+        AfterEach.inOrder(
+            AfterPane.<IntervalWindow>elementCountAtLeast(5)
+                .orFinally(AfterWatermark.<IntervalWindow>pastEndOfWindow()),
+            Repeatedly.forever(AfterPane.<IntervalWindow>elementCountAtLeast(1))),
+        Sessions.withGapDuration(Duration.millis(10)));
 
-    injectElement(1, TriggerResult.CONTINUE, TriggerResult.CONTINUE);
-    injectElement(2, TriggerResult.CONTINUE, TriggerResult.FIRE_AND_FINISH);
+    // Finished the orFinally in the first window
+    tester.injectElements(1);
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(1), new Instant(11));
+    assertFalse(tester.shouldFire(firstWindow));
+    tester.advanceInputWatermark(new Instant(11));
+    assertTrue(tester.shouldFire(firstWindow));
+    tester.fireIfShouldFire(firstWindow);
 
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2), 1, 0, 10)));
-    assertTrue(tester.isMarkedFinished(firstWindow));
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(firstWindow);
+    // Set up second window where it is not done
+    tester.injectElements(5);
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(5), new Instant(15));
+    assertFalse(tester.shouldFire(secondWindow));
+
+    // Merge them, if the merged window were on the second trigger, it would be ready
+    tester.mergeWindows();
+    IntervalWindow mergedWindow = new IntervalWindow(new Instant(1), new Instant(15));
+    assertFalse(tester.shouldFire(mergedWindow));
+
+    // Now adding 3 more makes the main trigger ready to fire
+    tester.injectElements(1, 2, 3, 4, 5);
+    tester.mergeWindows();
+    assertTrue(tester.shouldFire(mergedWindow));
   }
 
+  /**
+   * Tests that for {@code OrFinally(actual, until)} when {@code actual}
+   * fires but does not finish, then {@code until} fires and finishes, the
+   * whole thing fires and finished.
+   */
   @Test
-  public void testOnTimerFinishesUntil() throws Exception {
-    setUp(FixedWindows.of(Duration.millis(10)));
+  public void testActualFiresButUntilFinishes() throws Exception {
+    tester = TriggerTester.forTrigger(
+        new OrFinallyTrigger<IntervalWindow>(
+            Repeatedly.forever(AfterPane.<IntervalWindow>elementCountAtLeast(2)),
+                AfterPane.<IntervalWindow>elementCountAtLeast(3)),
+        FixedWindows.of(Duration.millis(10)));
 
-    injectElement(1, TriggerResult.CONTINUE, TriggerResult.CONTINUE);
+    IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(10));
 
-    // Timer fires for until, which says continue
-    when(mockUntil.onTimer(Mockito.<Trigger<IntervalWindow>.OnTimerContext>any()))
-        .thenReturn(TriggerResult.CONTINUE);
-    when(mockActual.onTimer(Mockito.<Trigger<IntervalWindow>.OnTimerContext>any()))
-        .thenReturn(TriggerResult.CONTINUE);
-    tester.fireTimer(firstWindow, new Instant(11), TimeDomain.EVENT_TIME);
+    // Before any firing
+    tester.injectElements(1);
+    assertFalse(tester.shouldFire(window));
+    assertFalse(tester.isMarkedFinished(window));
 
-    injectElement(2, TriggerResult.FIRE, TriggerResult.CONTINUE);
+    // The actual fires but doesn't finish
+    tester.injectElements(2);
+    assertTrue(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertFalse(tester.isMarkedFinished(window));
 
-    injectElement(3, TriggerResult.CONTINUE, TriggerResult.CONTINUE);
-
-    // Timer fires for until, which says FIRE, so we fire and finish
-    when(mockUntil.onTimer(Mockito.<Trigger<IntervalWindow>.OnTimerContext>any()))
-        .thenReturn(TriggerResult.FIRE_AND_FINISH);
-    tester.fireTimer(firstWindow, new Instant(12), TimeDomain.EVENT_TIME);
-
-    assertThat(tester.extractOutput(), Matchers.containsInAnyOrder(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2), 1, 0, 10),
-        isSingleWindowedValue(Matchers.containsInAnyOrder(3), 3, 0, 10)));
-    assertTrue(tester.isMarkedFinished(firstWindow));
-
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(firstWindow);
-  }
-
-  @Test
-  public void testMergeActualFires() throws Exception {
-    setUp(Sessions.withGapDuration(Duration.millis(10)));
-
-    when(mockActual.onElement(Mockito.<Trigger<IntervalWindow>.OnElementContext>any()))
-        .thenReturn(TriggerResult.CONTINUE);
-    when(mockUntil.onElement(Mockito.<Trigger<IntervalWindow>.OnElementContext>any()))
-        .thenReturn(TriggerResult.CONTINUE);
-
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),
-        TimestampedValue.of(12, new Instant(12)));
-
-    when(mockActual.onMerge(Mockito.<Trigger<IntervalWindow>.OnMergeContext>any()))
-        .thenReturn(MergeResult.FIRE);
-    when(mockUntil.onMerge(Mockito.<Trigger<IntervalWindow>.OnMergeContext>any()))
-        .thenReturn(MergeResult.CONTINUE);
-
-    tester.injectElements(TimestampedValue.of(5, new Instant(5)));
-
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 5, 12), 1, 1, 22)));
-    tester.assertHasOnlyGlobalAndPaneInfoFor(new IntervalWindow(new Instant(1), new Instant(22)));
-  }
-
-  @Test
-  public void testMergeUntilFires() throws Exception {
-    setUp(Sessions.withGapDuration(Duration.millis(10)));
-
-    when(mockActual.onElement(Mockito.<Trigger<IntervalWindow>.OnElementContext>any()))
-        .thenReturn(TriggerResult.CONTINUE);
-    when(mockUntil.onElement(Mockito.<Trigger<IntervalWindow>.OnElementContext>any()))
-        .thenReturn(TriggerResult.CONTINUE);
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),
-        TimestampedValue.of(12, new Instant(12)));
-
-    when(mockActual.onMerge(Mockito.<Trigger<IntervalWindow>.OnMergeContext>any()))
-        .thenReturn(MergeResult.CONTINUE);
-    when(mockUntil.onMerge(Mockito.<Trigger<IntervalWindow>.OnMergeContext>any()))
-        .thenReturn(MergeResult.FIRE_AND_FINISH);
-
-    tester.injectElements(
-        TimestampedValue.of(5, new Instant(5)));
-
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 5, 12), 1, 1, 22)));
-    // the until fired during the merge
-    assertTrue(tester.isMarkedFinished(new IntervalWindow(new Instant(1), new Instant(22))));
-
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(
-        new IntervalWindow(new Instant(1), new Instant(22)));
+    // The until fires and finishes; the trigger is finished
+    tester.injectElements(3);
+    assertTrue(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertTrue(tester.isMarkedFinished(window));
   }
 
   @Test
@@ -231,100 +192,18 @@ public class OrFinallyTriggerTest {
   }
 
   @Test
-  public void testOrFinallyRealTriggersFixedWindow() throws Exception {
-    // Test an orFinally with a composite trigger, and make sure it properly resets state, etc.
-    tester = TriggerTester.nonCombining(FixedWindows.of(Duration.millis(50)),
-        Repeatedly.<IntervalWindow>forever(
-            // This element count should never fire because the orFinally fires sooner, every time
-            AfterPane.<IntervalWindow>elementCountAtLeast(12)
-                .orFinally(AfterAll.<IntervalWindow>of(
-                    AfterProcessingTime.<IntervalWindow>pastFirstElementInPane()
-                        .plusDelayOf(Duration.millis(5)),
-                    AfterPane.<IntervalWindow>elementCountAtLeast(5)))),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
-
-    // First, fire processing time then the 5 element
-
-    tester.advanceProcessingTime(new Instant(0));
-    tester.injectElements(
-        TimestampedValue.of(0, new Instant(0)),
-        TimestampedValue.of(1, new Instant(0)),
-        TimestampedValue.of(2, new Instant(1)),
-        TimestampedValue.of(3, new Instant(1)));
-    tester.advanceProcessingTime(new Instant(5));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
-
-    tester.injectElements(
-        TimestampedValue.of(4, new Instant(1)));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(0, 1, 2, 3, 4), 0, 0, 50)));
-
-    tester.assertHasOnlyGlobalAndPaneInfoFor(new IntervalWindow(new Instant(0), new Instant(50)));
-
-    // Then fire 6 new elements, then processing time
-    tester.injectElements(
-        TimestampedValue.of(6, new Instant(2)),
-        TimestampedValue.of(7, new Instant(3)),
-        TimestampedValue.of(8, new Instant(4)),
-        TimestampedValue.of(9, new Instant(5)),
-        TimestampedValue.of(10, new Instant(2)),
-        TimestampedValue.of(11, new Instant(3)));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
-    tester.advanceProcessingTime(new Instant(15));
-
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(6, 7, 8, 9, 10, 11), 2, 0, 50)));
-
-    // Finally, fire 3 more elements and verify the base of the orFinally doesn't fire.
-    TimestampedValue.of(100, new Instant(1));
-    TimestampedValue.of(101, new Instant(1));
-    TimestampedValue.of(102, new Instant(1));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
-  }
-
-  @Test
-  public void testOrFinallyMergingWindowSomeFinished() throws Exception {
-    Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        Sessions.withGapDuration(windowDuration),
-        AfterProcessingTime.<IntervalWindow>pastFirstElementInPane()
-            .plusDelayOf(Duration.millis(5))
-            .orFinally(AfterPane.<IntervalWindow>elementCountAtLeast(5)),
-        AccumulationMode.ACCUMULATING_FIRED_PANES,
-        Duration.millis(100));
-
-    tester.advanceProcessingTime(new Instant(10));
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),  // in [1, 11), timer for 15
-        TimestampedValue.of(2, new Instant(1)),  // in [1, 11) count = 1
-        TimestampedValue.of(3, new Instant(2))); // in [2, 12), timer for 16
-
-    // Enough data comes in for 2 that combined, we should fire
-    tester.injectElements(
-        TimestampedValue.of(4, new Instant(2)),
-        TimestampedValue.of(5, new Instant(2)));
-
-    // This fires, because the earliest element in [1, 12) arrived at time 10
-    assertThat(tester.extractOutput(), Matchers.contains(WindowMatchers.isSingleWindowedValue(
-        Matchers.containsInAnyOrder(1, 2, 3, 4, 5), 1, 1, 12)));
-
-    assertTrue(tester.isMarkedFinished(new IntervalWindow(new Instant(1), new Instant(12))));
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(
-        new IntervalWindow(new Instant(1), new Instant(12)));
-  }
-
-  @Test
   public void testContinuation() throws Exception {
     OnceTrigger<IntervalWindow> triggerA = AfterProcessingTime.pastFirstElementInPane();
     OnceTrigger<IntervalWindow> triggerB = AfterWatermark.pastEndOfWindow();
     Trigger<IntervalWindow> aOrFinallyB = triggerA.orFinally(triggerB);
     Trigger<IntervalWindow> bOrFinallyA = triggerB.orFinally(triggerA);
     assertEquals(
-        triggerA.getContinuationTrigger().orFinally(triggerB.getContinuationTrigger()),
+        Repeatedly.forever(
+            triggerA.getContinuationTrigger().orFinally(triggerB.getContinuationTrigger())),
         aOrFinallyB.getContinuationTrigger());
     assertEquals(
-        triggerB.getContinuationTrigger().orFinally(triggerA.getContinuationTrigger()),
+        Repeatedly.forever(
+            triggerB.getContinuationTrigger().orFinally(triggerA.getContinuationTrigger())),
         bOrFinallyA.getContinuationTrigger());
   }
 }

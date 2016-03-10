@@ -19,10 +19,12 @@ package com.google.cloud.dataflow.sdk.coders;
 import com.google.cloud.dataflow.sdk.util.ExposedByteArrayOutputStream;
 import com.google.cloud.dataflow.sdk.util.StreamUtils;
 import com.google.cloud.dataflow.sdk.util.VarInt;
+import com.google.common.base.Utf8;
+import com.google.common.io.ByteStreams;
+import com.google.common.io.CountingOutputStream;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
@@ -33,9 +35,9 @@ import java.io.UTFDataFormatException;
 import java.nio.charset.StandardCharsets;
 
 /**
- * A {@code StringUtf8Coder} encodes Java Strings in UTF-8 encoding.
+ * A {@link Coder} that encodes {@link String Strings} in UTF-8 encoding.
  * If in a nested context, prefixes the string with an integer length field,
- * encoded via the {@link VarIntCoder}.
+ * encoded via a {@link VarIntCoder}.
  */
 public class StringUtf8Coder extends AtomicCoder<String> {
 
@@ -48,7 +50,6 @@ public class StringUtf8Coder extends AtomicCoder<String> {
 
   private static final StringUtf8Coder INSTANCE = new StringUtf8Coder();
 
-  // Writes a string with VarInt size prefix, supporting large strings.
   private static void writeString(String value, DataOutputStream dos)
       throws IOException {
     byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
@@ -56,7 +57,6 @@ public class StringUtf8Coder extends AtomicCoder<String> {
     dos.write(bytes);
   }
 
-  // Reads a string with VarInt size prefix, supporting large strings.
   private static String readString(DataInputStream dis) throws IOException {
     int len = VarInt.decodeInt(dis);
     if (len < 0) {
@@ -104,14 +104,22 @@ public class StringUtf8Coder extends AtomicCoder<String> {
     }
   }
 
-  @Override
-  public void verifyDeterministic() { }
-
+  /**
+   * {@inheritDoc}
+   *
+   * @return {@code true}. This coder is injective.
+   */
   @Override
   public boolean consistentWithEquals() {
     return true;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the byte size of the UTF-8 encoding of the a string or, in a nested context,
+   * the byte size of the encoding plus the encoded length prefix.
+   */
   @Override
   protected long getEncodedElementByteSize(String value, Context context)
       throws Exception {
@@ -119,11 +127,13 @@ public class StringUtf8Coder extends AtomicCoder<String> {
       throw new CoderException("cannot encode a null String");
     }
     if (context.isWholeStream) {
-      return value.getBytes(StandardCharsets.UTF_8).length;
+      return Utf8.encodedLength(value);
     } else {
-      DataOutputStream stream = new DataOutputStream(new ByteArrayOutputStream());
+      CountingOutputStream countingStream =
+          new CountingOutputStream(ByteStreams.nullOutputStream());
+      DataOutputStream stream = new DataOutputStream(countingStream);
       writeString(value, stream);
-      return stream.size();
+      return countingStream.getCount();
     }
   }
 }

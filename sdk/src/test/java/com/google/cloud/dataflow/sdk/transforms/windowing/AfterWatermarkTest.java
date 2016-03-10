@@ -16,23 +16,24 @@
 
 package com.google.cloud.dataflow.sdk.transforms.windowing;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.when;
 
-import com.google.cloud.dataflow.sdk.WindowMatchers;
-import com.google.cloud.dataflow.sdk.util.TimeDomain;
+import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger.OnceTrigger;
 import com.google.cloud.dataflow.sdk.util.TriggerTester;
-import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
-import com.google.cloud.dataflow.sdk.values.TimestampedValue;
+import com.google.cloud.dataflow.sdk.util.TriggerTester.SimpleTriggerTester;
 
-import org.hamcrest.Matchers;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
 
 /**
  * Tests the {@link AfterWatermark} triggers.
@@ -40,209 +41,298 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public class AfterWatermarkTest {
 
-  @Test
-  public void testFirstInPaneWithFixedWindow() throws Exception {
-    Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        FixedWindows.of(windowDuration),
-        AfterWatermark.<IntervalWindow>pastFirstElementInPane().plusDelayOf(Duration.millis(5)),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+  @Mock private OnceTrigger<IntervalWindow> mockEarly;
+  @Mock private OnceTrigger<IntervalWindow> mockLate;
 
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1))); // first in window [0, 10), timer set for 6
-    tester.advanceWatermark(new Instant(5));
-    tester.injectElements(
-        TimestampedValue.of(2, new Instant(9)),
-        TimestampedValue.of(3, new Instant(8)));
+  private SimpleTriggerTester<IntervalWindow> tester;
+  private static Trigger<IntervalWindow>.TriggerContext anyTriggerContext() {
+    return Mockito.<Trigger<IntervalWindow>.TriggerContext>any();
+  }
+  private static Trigger<IntervalWindow>.OnElementContext anyElementContext() {
+    return Mockito.<Trigger<IntervalWindow>.OnElementContext>any();
+  }
 
-    tester.advanceWatermark(new Instant(6));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        WindowMatchers.isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2, 3), 1, 0, 10)));
+  private void injectElements(int... elements) throws Exception {
+    for (int element : elements) {
+      doNothing().when(mockEarly).onElement(anyElementContext());
+      doNothing().when(mockLate).onElement(anyElementContext());
+      tester.injectElements(element);
+    }
+  }
 
-    // This element belongs in the window that has already fired. It should not be re-output because
-    // that trigger (which was one-time) has already gone off.
-    tester.injectElements(
-        TimestampedValue.of(6, new Instant(2)));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
+  @Before
+  public void setUp() {
+    MockitoAnnotations.initMocks(this);
+  }
 
-    assertTrue(tester.isMarkedFinished(new IntervalWindow(new Instant(0), new Instant(10))));
-    assertFalse(tester.isMarkedFinished(new IntervalWindow(new Instant(10), new Instant(20))));
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(
-        new IntervalWindow(new Instant(0), new Instant(10)));
+  public void testRunningAsTrigger(OnceTrigger<IntervalWindow> mockTrigger, IntervalWindow window)
+      throws Exception {
+
+    // Don't fire due to mock saying no
+    when(mockTrigger.shouldFire(anyTriggerContext())).thenReturn(false);
+    assertFalse(tester.shouldFire(window)); // not ready
+
+    // Fire due to mock trigger; early trigger is required to be a OnceTrigger
+    when(mockTrigger.shouldFire(anyTriggerContext())).thenReturn(true);
+    assertTrue(tester.shouldFire(window)); // ready
+    tester.fireIfShouldFire(window);
+    assertFalse(tester.isMarkedFinished(window));
   }
 
   @Test
-  public void testAlignAndDelay() throws Exception {
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        FixedWindows.of(Duration.standardMinutes(1)),
-        AfterWatermark.<IntervalWindow>pastFirstElementInPane()
-            .alignedTo(Duration.standardMinutes(1))
-            .plusDelayOf(Duration.standardMinutes(5)),
-        AccumulationMode.DISCARDING_FIRED_PANES,
+  public void testEarlyAndAtWatermark() throws Exception {
+    tester = TriggerTester.forTrigger(
+        AfterWatermark.<IntervalWindow>pastEndOfWindow()
+            .withEarlyFirings(mockEarly),
+        FixedWindows.of(Duration.millis(100)));
 
-        // Don't drop right away at the end of the window, since we have a delay.
-        Duration.standardMinutes(10));
+    injectElements(1);
+    IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(100));
 
-    Instant zero = new Instant(0);
+    testRunningAsTrigger(mockEarly, window);
 
-    // first in window [0, 1m), timer set for 6m
-    tester.injectElements(
-        TimestampedValue.of(1, zero.plus(Duration.standardSeconds(1))),
-        TimestampedValue.of(2, zero.plus(Duration.standardSeconds(5))),
-        TimestampedValue.of(3, zero.plus(Duration.standardSeconds(55))));
-
-    // Advance almost to 6m, but not quite. No output should be produced.
-    tester.advanceWatermark(zero.plus(Duration.standardMinutes(6)).minus(1));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
-
-    // Advance to 6m and see our output
-    tester.advanceWatermark(zero.plus(Duration.standardMinutes(6)));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        WindowMatchers.isSingleWindowedValue(
-            Matchers.containsInAnyOrder(1, 2, 3),
-            zero.plus(Duration.standardSeconds(1)).getMillis(),
-            zero.getMillis(), zero.plus(Duration.standardMinutes(1)).getMillis())));
+    // Fire due to watermark
+    when(mockEarly.shouldFire(anyTriggerContext())).thenReturn(false);
+    tester.advanceInputWatermark(new Instant(100));
+    assertTrue(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertTrue(tester.isMarkedFinished(window));
   }
 
   @Test
-  public void testFirstInPaneWithMerging() throws Exception {
-    Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        Sessions.withGapDuration(windowDuration),
-        AfterWatermark.<IntervalWindow>pastFirstElementInPane().plusDelayOf(Duration.millis(5)),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+  public void testAtWatermarkAndLate() throws Exception {
+    tester = TriggerTester.forTrigger(
+        AfterWatermark.<IntervalWindow>pastEndOfWindow()
+            .withLateFirings(mockLate),
+        FixedWindows.of(Duration.millis(100)));
 
-    tester.advanceWatermark(new Instant(1));
+    injectElements(1);
+    IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(100));
 
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),  // in [1, 11), timer for 6
-        TimestampedValue.of(2, new Instant(2))); // in [2, 12), timer for 7
-    tester.advanceWatermark(new Instant(6));
+    // No early firing, just double checking
+    when(mockEarly.shouldFire(anyTriggerContext())).thenReturn(true);
+    assertFalse(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertFalse(tester.isMarkedFinished(window));
 
-    // We merged, and updated the watermark timer to the earliest timer, which was still 6.
-    assertThat(tester.extractOutput(), Matchers.contains(
-        WindowMatchers.isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2), 1, 1, 12)));
+    // Fire due to watermark
+    when(mockEarly.shouldFire(anyTriggerContext())).thenReturn(false);
+    tester.advanceInputWatermark(new Instant(100));
+    assertTrue(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertFalse(tester.isMarkedFinished(window));
 
-    assertTrue(tester.isMarkedFinished(new IntervalWindow(new Instant(1), new Instant(12))));
-
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(
-        new IntervalWindow(new Instant(1), new Instant(12)));
+    testRunningAsTrigger(mockLate, window);
   }
 
   @Test
-  public void testEndOfWindowFixedWindow() throws Exception {
-    Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        FixedWindows.of(windowDuration),
-        AfterWatermark.<IntervalWindow>pastEndOfWindow(),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+  public void testEarlyAndAtWatermarkAndLate() throws Exception {
+    tester = TriggerTester.forTrigger(
+        AfterWatermark.<IntervalWindow>pastEndOfWindow()
+            .withEarlyFirings(mockEarly)
+            .withLateFirings(mockLate),
+        FixedWindows.of(Duration.millis(100)));
 
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1))); // first in window [0, 10), timer set for 9
-    tester.advanceWatermark(new Instant(8));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
-    tester.injectElements(
-        TimestampedValue.of(2, new Instant(9)),
-        TimestampedValue.of(3, new Instant(8)));
+    injectElements(1);
+    IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(100));
 
-    tester.advanceWatermark(new Instant(9));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        WindowMatchers.isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2, 3), 1, 0, 10)));
+    testRunningAsTrigger(mockEarly, window);
 
-    // This element belongs in the window that has already fired. It should not be re-output because
-    // that trigger (which was one-time) has already gone off.
-    tester.injectElements(
-        TimestampedValue.of(6, new Instant(2)));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
+    // Fire due to watermark
+    when(mockEarly.shouldFire(anyTriggerContext())).thenReturn(false);
+    tester.advanceInputWatermark(new Instant(100));
+    assertTrue(tester.shouldFire(window));
+    tester.fireIfShouldFire(window);
+    assertFalse(tester.isMarkedFinished(window));
 
-    assertTrue(tester.isMarkedFinished(new IntervalWindow(new Instant(0), new Instant(10))));
-    assertFalse(tester.isMarkedFinished(new IntervalWindow(new Instant(10), new Instant(20))));
-
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(
-        new IntervalWindow(new Instant(0), new Instant(10)));
+    testRunningAsTrigger(mockLate, window);
   }
 
+  /**
+   * Tests that if the EOW is finished in both as well as the merged window, then
+   * it is finished in the merged result.
+   *
+   * <p>Because windows are discarded when a trigger finishes, we need to embed this
+   * in a sequence in order to check that it is re-activated. So this test is potentially
+   * sensitive to other triggers' correctness.
+   */
   @Test
-  public void testEndOfWindowWithMerging() throws Exception {
-    Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        Sessions.withGapDuration(windowDuration),
-        AfterWatermark.<IntervalWindow>pastEndOfWindow(),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+  public void testOnMergeAlreadyFinished() throws Exception {
+    tester = TriggerTester.forTrigger(
+        AfterEach.inOrder(
+            AfterWatermark.<IntervalWindow>pastEndOfWindow(),
+            Repeatedly.forever(AfterPane.<IntervalWindow>elementCountAtLeast(1))),
+        Sessions.withGapDuration(Duration.millis(10)));
 
-    tester.advanceWatermark(new Instant(1));
+    tester.injectElements(1);
+    tester.injectElements(5);
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(1), new Instant(11));
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(5), new Instant(15));
+    IntervalWindow mergedWindow = new IntervalWindow(new Instant(1), new Instant(15));
 
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),  // in [1, 11), timer for 10
-        TimestampedValue.of(2, new Instant(2))); // in [2, 12), timer for 11
-    tester.advanceWatermark(new Instant(10));
+    // Finish the AfterWatermark.pastEndOfWindow() trigger in both windows
+    tester.advanceInputWatermark(new Instant(15));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertTrue(tester.shouldFire(secondWindow));
+    tester.fireIfShouldFire(firstWindow);
+    tester.fireIfShouldFire(secondWindow);
 
-    // We merged, and updated the watermark timer to the end of the new window.
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
+    // Confirm that we are on the second trigger by probing
+    assertFalse(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    tester.injectElements(1);
+    tester.injectElements(5);
+    assertTrue(tester.shouldFire(firstWindow));
+    assertTrue(tester.shouldFire(secondWindow));
+    tester.fireIfShouldFire(firstWindow);
+    tester.fireIfShouldFire(secondWindow);
 
-    tester.injectElements(
-        TimestampedValue.of(3, new Instant(1))); // in [1, 11), timer for 10
-    tester.advanceWatermark(new Instant(11));
+    // Merging should leave it finished
+    tester.mergeWindows();
 
-    assertThat(tester.extractOutput(), Matchers.contains(
-        WindowMatchers.isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2, 3), 1, 1, 12)));
-
-    assertTrue(tester.isMarkedFinished(new IntervalWindow(new Instant(1), new Instant(12))));
-
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(
-        new IntervalWindow(new Instant(1), new Instant(12)));
+    // Confirm that we are on the second trigger by probing
+    assertFalse(tester.shouldFire(mergedWindow));
+    tester.injectElements(1);
+    assertTrue(tester.shouldFire(mergedWindow));
   }
 
+  /**
+   * Tests that the trigger rewinds to be non-finished in the merged window.
+   *
+   * <p>Because windows are discarded when a trigger finishes, we need to embed this
+   * in a sequence in order to check that it is re-activated. So this test is potentially
+   * sensitive to other triggers' correctness.
+   */
   @Test
-  public void testEndOfWindowIgnoresTimer() throws Exception {
-    Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        FixedWindows.of(windowDuration),
-        AfterWatermark.<IntervalWindow>pastEndOfWindow(),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+  public void testOnMergeRewinds() throws Exception {
+    tester = TriggerTester.forTrigger(
+        AfterEach.inOrder(
+            AfterWatermark.<IntervalWindow>pastEndOfWindow(),
+            Repeatedly.forever(AfterPane.<IntervalWindow>elementCountAtLeast(1))),
+        Sessions.withGapDuration(Duration.millis(10)));
 
-    tester.fireTimer(new IntervalWindow(new Instant(0), new Instant(10)),
-        new Instant(15), TimeDomain.EVENT_TIME);
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)));
-    tester.fireTimer(new IntervalWindow(new Instant(0), new Instant(10)),
-        new Instant(9), TimeDomain.EVENT_TIME);
+    tester.injectElements(1);
+    tester.injectElements(5);
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(1), new Instant(11));
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(5), new Instant(15));
+    IntervalWindow mergedWindow = new IntervalWindow(new Instant(1), new Instant(15));
+
+    // Finish the AfterWatermark.pastEndOfWindow() trigger in only the first window
+    tester.advanceInputWatermark(new Instant(11));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    tester.fireIfShouldFire(firstWindow);
+
+    // Confirm that we are on the second trigger by probing
+    assertFalse(tester.shouldFire(firstWindow));
+    tester.injectElements(1);
+    assertTrue(tester.shouldFire(firstWindow));
+    tester.fireIfShouldFire(firstWindow);
+
+    // Merging should re-activate the watermark trigger in the merged window
+    tester.mergeWindows();
+
+    // Confirm that we are not on the second trigger by probing
+    assertFalse(tester.shouldFire(mergedWindow));
+    tester.injectElements(1);
+    assertFalse(tester.shouldFire(mergedWindow));
+
+    // And confirm that advancing the watermark fires again
+    tester.advanceInputWatermark(new Instant(15));
+    assertTrue(tester.shouldFire(mergedWindow));
   }
 
+  /**
+   * Tests that if the EOW is finished in both as well as the merged window, then
+   * it is finished in the merged result.
+   *
+   * <p>Because windows are discarded when a trigger finishes, we need to embed this
+   * in a sequence in order to check that it is re-activated. So this test is potentially
+   * sensitive to other triggers' correctness.
+   */
   @Test
-  public void testFireDeadline() throws Exception {
-    BoundedWindow window = new IntervalWindow(new Instant(0), new Instant(10));
+  public void testEarlyAndLateOnMergeAlreadyFinished() throws Exception {
+    tester = TriggerTester.forTrigger(
+        AfterWatermark.<IntervalWindow>pastEndOfWindow()
+            .withEarlyFirings(AfterPane.<IntervalWindow>elementCountAtLeast(100))
+            .withLateFirings(AfterPane.<IntervalWindow>elementCountAtLeast(1)),
+        Sessions.withGapDuration(Duration.millis(10)));
 
-    assertEquals(new Instant(9), AfterWatermark.pastEndOfWindow()
-        .getWatermarkThatGuaranteesFiring(window));
-    assertEquals(GlobalWindow.INSTANCE.maxTimestamp(),
-        AfterWatermark.pastEndOfWindow().getWatermarkThatGuaranteesFiring(GlobalWindow.INSTANCE));
-    assertEquals(new Instant(19),
-        AfterWatermark
-            .pastFirstElementInPane()
-            .plusDelayOf(Duration.millis(10)).getWatermarkThatGuaranteesFiring(window));
+    tester.injectElements(1);
+    tester.injectElements(5);
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(1), new Instant(11));
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(5), new Instant(15));
+    IntervalWindow mergedWindow = new IntervalWindow(new Instant(1), new Instant(15));
+
+    // Finish the AfterWatermark.pastEndOfWindow() bit of the trigger in both windows
+    tester.advanceInputWatermark(new Instant(15));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertTrue(tester.shouldFire(secondWindow));
+    tester.fireIfShouldFire(firstWindow);
+    tester.fireIfShouldFire(secondWindow);
+
+    // Confirm that we are on the late trigger by probing
+    assertFalse(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    tester.injectElements(1);
+    tester.injectElements(5);
+    assertTrue(tester.shouldFire(firstWindow));
+    assertTrue(tester.shouldFire(secondWindow));
+    tester.fireIfShouldFire(firstWindow);
+    tester.fireIfShouldFire(secondWindow);
+
+    // Merging should leave it on the late trigger
+    tester.mergeWindows();
+
+    // Confirm that we are on the late trigger by probing
+    assertFalse(tester.shouldFire(mergedWindow));
+    tester.injectElements(1);
+    assertTrue(tester.shouldFire(mergedWindow));
   }
 
+  /**
+   * Tests that the trigger rewinds to be non-finished in the merged window.
+   *
+   * <p>Because windows are discarded when a trigger finishes, we need to embed this
+   * in a sequence in order to check that it is re-activated. So this test is potentially
+   * sensitive to other triggers' correctness.
+   */
   @Test
-  public void testContinuation() throws Exception {
-    Trigger<?> endOfWindow = AfterWatermark.pastEndOfWindow();
-    assertEquals(endOfWindow, endOfWindow.getContinuationTrigger());
-    assertEquals(
-        endOfWindow,
-        endOfWindow.getContinuationTrigger().getContinuationTrigger());
+  public void testEarlyAndLateOnMergeRewinds() throws Exception {
+    tester = TriggerTester.forTrigger(
+        AfterWatermark.<IntervalWindow>pastEndOfWindow()
+            .withEarlyFirings(AfterPane.<IntervalWindow>elementCountAtLeast(100))
+            .withLateFirings(AfterPane.<IntervalWindow>elementCountAtLeast(1)),
+        Sessions.withGapDuration(Duration.millis(10)));
 
-    Trigger<?> firstElementAligned =
-        AfterWatermark.pastFirstElementInPane().alignedTo(Duration.standardDays(1));
-    assertEquals(
-        firstElementAligned,
-        firstElementAligned.getContinuationTrigger());
-    assertEquals(
-        firstElementAligned,
-        firstElementAligned.getContinuationTrigger().getContinuationTrigger());
+    tester.injectElements(1);
+    tester.injectElements(5);
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(1), new Instant(11));
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(5), new Instant(15));
+    IntervalWindow mergedWindow = new IntervalWindow(new Instant(1), new Instant(15));
+
+    // Finish the AfterWatermark.pastEndOfWindow() bit of the trigger in only the first window
+    tester.advanceInputWatermark(new Instant(11));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    tester.fireIfShouldFire(firstWindow);
+
+    // Confirm that we are on the late trigger by probing
+    assertFalse(tester.shouldFire(firstWindow));
+    tester.injectElements(1);
+    assertTrue(tester.shouldFire(firstWindow));
+    tester.fireIfShouldFire(firstWindow);
+
+    // Merging should re-activate the early trigger in the merged window
+    tester.mergeWindows();
+
+    // Confirm that we are not on the second trigger by probing
+    assertFalse(tester.shouldFire(mergedWindow));
+    tester.injectElements(1);
+    assertFalse(tester.shouldFire(mergedWindow));
+
+    // And confirm that advancing the watermark fires again
+    tester.advanceInputWatermark(new Instant(15));
+    assertTrue(tester.shouldFire(mergedWindow));
   }
 }

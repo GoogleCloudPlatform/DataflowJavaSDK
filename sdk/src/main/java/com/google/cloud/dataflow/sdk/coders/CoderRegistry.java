@@ -18,6 +18,7 @@ package com.google.cloud.dataflow.sdk.coders;
 
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.cloud.dataflow.sdk.coders.CannotProvideCoderException.ReasonCode;
+import com.google.cloud.dataflow.sdk.coders.protobuf.ProtoCoder;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
 import com.google.cloud.dataflow.sdk.values.KV;
@@ -27,6 +28,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import com.google.protobuf.ByteString;
 
 import org.joda.time.Instant;
 import org.slf4j.Logger;
@@ -48,19 +50,31 @@ import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
- * A {@code CoderRegistry} allows registering the default {@link Coder} to use for a Java class,
+ * A {@link CoderRegistry} allows registering the default {@link Coder} to use for a Java class,
  * and looking up and instantiating the default {@link Coder} for a Java type.
  *
- * <p>{@code CoderRegistry} uses the following mechanisms to determine a default {@link Coder} for a
+ * <p>{@link CoderRegistry} uses the following mechanisms to determine a default {@link Coder} for a
  * Java class, in order of precedence:
  * <ol>
- *   <li>Registration: A {@link Coder} class can be registered explicitly via
- *       {@link #registerCoder}.  Built-in types are registered via
- *       {@link #registerStandardCoders()}.
+ *   <li>Registration:
+ *     <ul>
+ *       <li>A {@link CoderFactory} can be registered to handle a particular class via
+ *           {@link #registerCoder(Class, CoderFactory)}.</li>
+ *       <li>A {@link Coder} class with the static methods to satisfy
+ *           {@link CoderFactories#fromStaticMethods} can be registered via
+ *           {@link #registerCoder(Class, Class)}.</li>
+ *       <li>Built-in types are registered via
+ *           {@link #registerStandardCoders()}.</li>
+ *     </ul>
  *   <li>Annotations: {@link DefaultCoder} can be used to annotate a type with
- *       the default {@code Coder} type.
- *   <li>Inheritance: {@code Serializable} objects are given a default
- *       {@code Coder} of {@link SerializableCoder}.
+ *       the default {@code Coder} type. The {@link Coder} class must satisfy the requirements
+ *       of {@link CoderProviders#fromStaticMethods}.
+ *   <li>Fallback: A fallback {@link CoderProvider} is used to attempt to provide a {@link Coder}
+ *       for any type. By default, this is {@link SerializableCoder#PROVIDER}, which can provide
+ *       a {@link Coder} for any type that is serializable via Java serialization. The fallback
+ *       {@link CoderProvider} can be get and set via {@link #getFallbackCoderProvider()}
+ *       and {@link #setFallbackCoderProvider}. Multiple fallbacks can be chained together using
+ *       {@link CoderProviders#firstOf}.
  * </ol>
  */
 public class CoderRegistry implements CoderProvider {
@@ -68,13 +82,16 @@ public class CoderRegistry implements CoderProvider {
   private static final Logger LOG = LoggerFactory.getLogger(CoderRegistry.class);
 
   public CoderRegistry() {
-    setFallbackCoderProvider(SerializableCoder.PROVIDER);
+    setFallbackCoderProvider(
+        CoderProviders.firstOf(ProtoCoder.coderProvider(), SerializableCoder.PROVIDER));
   }
 
   /**
    * Registers standard Coders with this CoderRegistry.
    */
   public void registerStandardCoders() {
+    registerCoder(Byte.class, ByteCoder.class);
+    registerCoder(ByteString.class, ByteStringCoder.class);
     registerCoder(Double.class, DoubleCoder.class);
     registerCoder(Instant.class, InstantCoder.class);
     registerCoder(Integer.class, VarIntCoder.class);
@@ -248,11 +265,11 @@ public class CoderRegistry implements CoderProvider {
 
       List<Object> components = factory.getInstanceComponents(exampleValue);
       if (components == null) {
-        throw new CannotProvideCoderException(
-            "Cannot provide coder based on value with class "
-            + clazz + ": The registered CoderFactory with class "
-            + factory.getClass() + " failed to decompose the value, "
-            + "which is required in order to provide Coders for the components.");
+        throw new CannotProvideCoderException(String.format(
+            "Cannot provide coder based on value with class %s: The registered CoderFactory with "
+            + "class %s failed to decompose the value, which is required in order to provide "
+            + "Coders for the components.",
+            clazz.getCanonicalName(), factory.getClass().getCanonicalName()));
       }
 
       // componentcoders = components.map(this.getDefaultCoder)
@@ -263,7 +280,9 @@ public class CoderRegistry implements CoderProvider {
           componentCoders.add(componentCoder);
         } catch (CannotProvideCoderException exc) {
           throw new CannotProvideCoderException(
-              "Cannot provide coder based on value with class " + clazz, exc);
+              String.format("Cannot provide coder based on value with class %s",
+                  clazz.getCanonicalName()),
+              exc);
         }
       }
 
@@ -466,8 +485,8 @@ public class CoderRegistry implements CoderProvider {
       knownCoders = new Coder<?>[typeArgs.length];
     } else if (typeArgs.length != knownCoders.length) {
       throw new IllegalArgumentException(
-          "Class " + baseClass + " has " + typeArgs.length + " parameters, "
-          + "but " + knownCoders.length + " coders are requested.");
+          String.format("Class %s has %d parameters, but %d coders are requested.",
+              baseClass.getCanonicalName(), typeArgs.length, knownCoders.length));
     }
 
     Map<Type, Coder<?>> context = new HashMap<>();
@@ -639,8 +658,8 @@ public class CoderRegistry implements CoderProvider {
       return coderFactoryOrNull;
     } else {
       throw new CannotProvideCoderException(
-          "Cannot provide coder based on value with class "
-          + clazz + ": No CoderFactory has been registered for the class.");
+          String.format("Cannot provide coder based on value with class %s: No CoderFactory has "
+              + "been registered for the class.", clazz.getCanonicalName()));
     }
   }
 
@@ -769,7 +788,9 @@ public class CoderRegistry implements CoderProvider {
         typeArgumentCoders.add(typeArgumentCoder);
       } catch (CannotProvideCoderException exc) {
          throw new CannotProvideCoderException(
-          "Cannot provide coder for parameterized type " + type,
+          String.format("Cannot provide coder for parameterized type %s: %s",
+              type,
+              exc.getMessage()),
           exc);
       }
     }

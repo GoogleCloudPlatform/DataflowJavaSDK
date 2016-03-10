@@ -22,10 +22,14 @@ import com.google.common.reflect.Parameter;
 import com.google.common.reflect.TypeToken;
 
 import java.io.Serializable;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.util.List;
+
+import javax.annotation.Nullable;
 
 /**
  * A description of a Java type, including actual generic parameters where possible.
@@ -49,7 +53,7 @@ public abstract class TypeDescriptor<T> implements Serializable {
   private final TypeToken<T> token;
 
   /**
-   * Creates a TypeDescriptor wrapping the provided token.
+   * Creates a {@link TypeDescriptor} wrapping the provided token.
    * This constructor is private so Guava types do not leak.
    */
   private TypeDescriptor(TypeToken<T> token) {
@@ -64,6 +68,80 @@ public abstract class TypeDescriptor<T> implements Serializable {
    */
   protected TypeDescriptor() {
     token = new TypeToken<T>(getClass()) {};
+  }
+
+  /**
+   * Creates a {@link TypeDescriptor} representing the type parameter {@code T}, which should
+   * resolve to a concrete type in the context of the class {@code clazz}.
+   *
+   * <p>Unlike {@link TypeDescriptor#TypeDescriptor(Class)} this will also use context's of the
+   * enclosing instances while attempting to resolve the type. This means that the types of any
+   * classes instantiated in the concrete instance should be resolvable.
+   */
+  protected TypeDescriptor(Object instance) {
+    TypeToken<?> unresolvedToken = new TypeToken<T>(getClass()) {};
+
+    // While we haven't fully resolved the parameters, refine it using the captured
+    // enclosing instance of the object.
+    unresolvedToken = TypeToken.of(instance.getClass()).resolveType(unresolvedToken.getType());
+
+    if (hasUnresolvedParameters(unresolvedToken.getType())) {
+      for (Field field : instance.getClass().getDeclaredFields()) {
+        Object fieldInstance = getEnclosingInstance(field, instance);
+        if (fieldInstance != null) {
+          unresolvedToken =
+              TypeToken.of(fieldInstance.getClass()).resolveType(unresolvedToken.getType());
+          if (!hasUnresolvedParameters(unresolvedToken.getType())) {
+            break;
+          }
+        }
+      }
+    }
+
+    // Once we've either fully resolved the parameters or exhausted enclosing instances, we have
+    // the best approximation to the token we can get.
+    @SuppressWarnings("unchecked")
+    TypeToken<T> typedToken = (TypeToken<T>) unresolvedToken;
+    token = typedToken;
+  }
+
+  private boolean hasUnresolvedParameters(Type type) {
+    if (type instanceof TypeVariable) {
+      return true;
+    } else if (type instanceof ParameterizedType) {
+      ParameterizedType param = (ParameterizedType) type;
+      for (Type arg : param.getActualTypeArguments()) {
+        if (hasUnresolvedParameters(arg)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Returns the enclosing instance if the field is synthetic and it is able to access it, or
+   * {@literal null} if not.
+   */
+  @Nullable
+  private Object getEnclosingInstance(Field field, Object instance) {
+    if (!field.isSynthetic()) {
+      return null;
+    }
+
+    boolean accessible = field.isAccessible();
+    try {
+      field.setAccessible(true);
+      return field.get(instance);
+    } catch (IllegalArgumentException | IllegalAccessException e) {
+      // If we fail to get the enclosing instance field, do nothing. In the worst case, we won't
+      // refine the type based on information in this enclosing class -- that is consistent with
+      // previous behavior and is still a correct answer that can be fixed by returning the correct
+      // type descriptor.
+      return null;
+    } finally {
+      field.setAccessible(accessible);
+    }
   }
 
   /**
@@ -93,14 +171,14 @@ public abstract class TypeDescriptor<T> implements Serializable {
   }
 
   /**
-   * Returns the {@code Type} represented by this {@link TypeDescriptor}.
+   * Returns the {@link Type} represented by this {@link TypeDescriptor}.
    */
   public Type getType() {
     return token.getType();
   }
 
   /**
-   * Returns the {@code Class} underlying the {@code Type} represented by
+   * Returns the {@link Class} underlying the {@link Type} represented by
    * this {@link TypeDescriptor}.
    */
   public Class<? super T> getRawType() {
@@ -130,8 +208,8 @@ public abstract class TypeDescriptor<T> implements Serializable {
   }
 
   /**
-   * Returns a {@code TypeVariable} for the named type parameter. Throws
-   * {@code IllegalArgumentException} if a type variable by the requested type parameter is not
+   * Returns a {@link TypeVariable} for the named type parameter. Throws
+   * {@link IllegalArgumentException} if a type variable by the requested type parameter is not
    * found.
    *
    * <p>For example, {@code new TypeDescriptor<List>(){}.getTypeParameter("T")} returns a
@@ -161,14 +239,14 @@ public abstract class TypeDescriptor<T> implements Serializable {
    * Returns true if this type is assignable from the given type.
    */
   public final boolean isSupertypeOf(TypeDescriptor<?> source) {
-    return token.isAssignableFrom(source.token);
+    return token.isSupertypeOf(source.token);
   }
 
   /**
    * Return true if this type is a subtype of the given type.
    */
   public final boolean isSubtypeOf(TypeDescriptor<?> parent) {
-    return parent.token.isAssignableFrom(token);
+    return token.isSubtypeOf(parent.token);
   }
 
   /**
@@ -186,7 +264,7 @@ public abstract class TypeDescriptor<T> implements Serializable {
   }
 
   /**
-   * Returns a {@code TypeDescriptor} representing the given
+   * Returns a {@link TypeDescriptor} representing the given
    * type, with type variables resolved according to the specialization
    * in this type.
    *

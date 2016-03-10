@@ -41,6 +41,8 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
+import javax.annotation.Nullable;
+
 /**
  * Implementations of {@link PCollectionView} shared across the SDK.
  *
@@ -96,7 +98,7 @@ public class PCollectionViews {
       WindowingStrategy<?, W> windowingStrategy,
       Coder<KV<K, V>> valueCoder) {
 
-    return new MapPCollectionView(pipeline, windowingStrategy, valueCoder);
+    return new MapPCollectionView<K, V, W>(pipeline, windowingStrategy, valueCoder);
   }
 
   /**
@@ -107,7 +109,7 @@ public class PCollectionViews {
       Pipeline pipeline,
       WindowingStrategy<?, W> windowingStrategy,
       Coder<KV<K, V>> valueCoder) {
-    return new MultimapPCollectionView(pipeline, windowingStrategy, valueCoder);
+    return new MultimapPCollectionView<K, V, W>(pipeline, windowingStrategy, valueCoder);
   }
 
   /**
@@ -117,16 +119,18 @@ public class PCollectionViews {
    *
    * <p>Instantiate via {@link PCollectionViews#singletonView}.
    */
-  private static class SingletonPCollectionView<T, W extends BoundedWindow>
+  public static class SingletonPCollectionView<T, W extends BoundedWindow>
      extends PCollectionViewBase<T, T, W> {
-    private byte[] encodedDefaultValue;
-    private transient T defaultValue;
-    private Coder<T> valueCoder;
+    @Nullable private byte[] encodedDefaultValue;
+    @Nullable private transient T defaultValue;
+    @Nullable private Coder<T> valueCoder;
+    private boolean hasDefault;
 
-    public SingletonPCollectionView(
+    private SingletonPCollectionView(
         Pipeline pipeline, WindowingStrategy<?, W> windowingStrategy,
         boolean hasDefault, T defaultValue, Coder<T> valueCoder) {
       super(pipeline, windowingStrategy, valueCoder);
+      this.hasDefault = hasDefault;
       this.defaultValue = defaultValue;
       this.valueCoder = valueCoder;
       if (hasDefault) {
@@ -138,25 +142,37 @@ public class PCollectionViews {
       }
     }
 
-    @Override
-    protected T fromElements(Iterable<WindowedValue<T>> contents) {
-      if (encodedDefaultValue != null && defaultValue == null) {
-        try {
-          defaultValue = CoderUtils.decodeFromByteArray(valueCoder, encodedDefaultValue);
-        } catch (IOException e) {
-          throw new RuntimeException("Unexpected IOException: ", e);
+    /**
+     * Returns the default value that was specified.
+     *
+     * <p>For internal use only.
+     *
+     * @throws NoSuchElementException if no default was specified.
+     */
+    public T getDefaultValue() {
+      if (!hasDefault) {
+        throw new NoSuchElementException("Empty PCollection accessed as a singleton view.");
+      }
+      // Lazily decode the default value once
+      synchronized (this) {
+        if (encodedDefaultValue != null) {
+          try {
+            defaultValue = CoderUtils.decodeFromByteArray(valueCoder, encodedDefaultValue);
+            encodedDefaultValue = null;
+          } catch (IOException e) {
+            throw new RuntimeException("Unexpected IOException: ", e);
+          }
         }
       }
+      return defaultValue;
+    }
 
+    @Override
+    protected T fromElements(Iterable<WindowedValue<T>> contents) {
       try {
         return Iterables.getOnlyElement(contents).getValue();
       } catch (NoSuchElementException exc) {
-        if (encodedDefaultValue != null) {
-          return defaultValue;
-        } else {
-          throw new NoSuchElementException(
-              "Empty PCollection accessed as a singleton view.");
-        }
+        return getDefaultValue();
       } catch (IllegalArgumentException exc) {
         throw new IllegalArgumentException(
             "PCollection with more than one element "
@@ -172,22 +188,23 @@ public class PCollectionViews {
    *
    * <p>Instantiate via {@link PCollectionViews#iterableView}.
    */
-  private static class IterablePCollectionView<T, W extends BoundedWindow>
+  public static class IterablePCollectionView<T, W extends BoundedWindow>
       extends PCollectionViewBase<T, Iterable<T>, W> {
-    public IterablePCollectionView(
+    private IterablePCollectionView(
         Pipeline pipeline, WindowingStrategy<?, W> windowingStrategy, Coder<T> valueCoder) {
       super(pipeline, windowingStrategy, valueCoder);
     }
 
     @Override
     protected Iterable<T> fromElements(Iterable<WindowedValue<T>> contents) {
-      return Iterables.transform(contents, new Function<WindowedValue<T>, T>() {
+      return Iterables.unmodifiableIterable(
+          Iterables.transform(contents, new Function<WindowedValue<T>, T>() {
         @SuppressWarnings("unchecked")
         @Override
         public T apply(WindowedValue<T> input) {
           return input.getValue();
         }
-      });
+      }));
     }
   }
 
@@ -198,9 +215,9 @@ public class PCollectionViews {
    *
    * <p>Instantiate via {@link PCollectionViews#listView}.
    */
-  private static class ListPCollectionView<T, W extends BoundedWindow>
+  public static class ListPCollectionView<T, W extends BoundedWindow>
       extends PCollectionViewBase<T, List<T>, W> {
-    public ListPCollectionView(
+    private ListPCollectionView(
         Pipeline pipeline, WindowingStrategy<?, W> windowingStrategy, Coder<T> valueCoder) {
       super(pipeline, windowingStrategy, valueCoder);
     }
@@ -224,11 +241,11 @@ public class PCollectionViews {
    *
    * <p>For internal use only.
    */
-  private static class MultimapPCollectionView<K, V, W extends BoundedWindow>
+  public static class MultimapPCollectionView<K, V, W extends BoundedWindow>
       extends PCollectionViewBase<KV<K, V>, Map<K, Iterable<V>>, W> {
-    public MultimapPCollectionView(
+    private MultimapPCollectionView(
         Pipeline pipeline,
-        WindowingStrategy<KV<K, V>, W> windowingStrategy,
+        WindowingStrategy<?, W> windowingStrategy,
         Coder<KV<K, V>> valueCoder) {
       super(pipeline, windowingStrategy, valueCoder);
     }
@@ -243,7 +260,7 @@ public class PCollectionViews {
       // Safe covariant cast that Java cannot express without rawtypes, even with unchecked casts
       @SuppressWarnings({"unchecked", "rawtypes"})
       Map<K, Iterable<V>> resultMap = (Map) multimap.asMap();
-      return resultMap;
+      return Collections.unmodifiableMap(resultMap);
     }
   }
 
@@ -253,11 +270,11 @@ public class PCollectionViews {
    *
    * <p>For internal use only.
    */
-  private static class MapPCollectionView<K, V, W extends BoundedWindow>
+  public static class MapPCollectionView<K, V, W extends BoundedWindow>
       extends PCollectionViewBase<KV<K, V>, Map<K, V>, W> {
-    public MapPCollectionView(
+    private MapPCollectionView(
         Pipeline pipeline,
-        WindowingStrategy<KV<K, V>, W> windowingStrategy,
+        WindowingStrategy<?, W> windowingStrategy,
         Coder<KV<K, V>> valueCoder) {
       super(pipeline, windowingStrategy, valueCoder);
     }
@@ -270,9 +287,10 @@ public class PCollectionViews {
       Map<K, V> map = new HashMap<>();
       for (WindowedValue<KV<K, V>> elem : elements) {
         KV<K, V> kv = elem.getValue();
-        if (map.put(kv.getKey(), kv.getValue()) != null) {
+        if (map.containsKey(kv.getKey())) {
           throw new IllegalArgumentException("Duplicate values for " + kv.getKey());
         }
+        map.put(kv.getKey(), kv.getValue());
       }
       return Collections.unmodifiableMap(map);
     }
@@ -360,7 +378,7 @@ public class PCollectionViews {
       // Safe cast: It is required that the rest of the SDK maintain the invariant that
       // this tag is only used to access the contents of an appropriately typed underlying
       // PCollection
-      @SuppressWarnings({"rawtypes, unchecked"})
+      @SuppressWarnings({"rawtypes", "unchecked"})
       TupleTag<Iterable<WindowedValue<?>>> untypedTag = (TupleTag) tag;
       return untypedTag;
     }

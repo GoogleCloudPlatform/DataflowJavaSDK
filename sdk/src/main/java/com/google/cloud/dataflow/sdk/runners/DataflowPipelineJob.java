@@ -30,10 +30,10 @@ import com.google.api.services.dataflow.model.MetricUpdate;
 import com.google.cloud.dataflow.sdk.PipelineResult;
 import com.google.cloud.dataflow.sdk.runners.dataflow.DataflowAggregatorTransforms;
 import com.google.cloud.dataflow.sdk.runners.dataflow.DataflowMetricUpdateExtractor;
-import com.google.cloud.dataflow.sdk.runners.dataflow.MapAggregatorValues;
 import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.util.AttemptAndTimeBoundedExponentialBackOff;
 import com.google.cloud.dataflow.sdk.util.AttemptBoundedExponentialBackOff;
+import com.google.cloud.dataflow.sdk.util.MapAggregatorValues;
 import com.google.cloud.dataflow.sdk.util.MonitoringUtil;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
@@ -118,10 +118,16 @@ public class DataflowPipelineJob implements PipelineResult {
     this.aggregatorTransforms = aggregatorTransforms;
   }
 
+  /**
+   * Get the id of this job.
+   */
   public String getJobId() {
     return jobId;
   }
 
+  /**
+   * Get the project this job exists in.
+   */
   public String getProjectId() {
     return projectId;
   }
@@ -142,6 +148,9 @@ public class DataflowPipelineJob implements PipelineResult {
     return replacedByJob;
   }
 
+  /**
+   * Get the Cloud Dataflow API Client used by this job.
+   */
   public Dataflow getDataflowClient() {
     return dataflowClient;
   }

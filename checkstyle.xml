@@ -78,9 +78,9 @@ page at http://checkstyle.sourceforge.net/config.html -->
 
   <!-- Allow use of comment to suppress javadocstyle -->
   <module name="SuppressionCommentFilter">
-    <property name="offCommentFormat" value="JAVADOCSTYLE OFF"/>
-    <property name="onCommentFormat" value="JAVADOCSTYLE ON"/>
-    <property name="checkFormat" value="JavadocStyle"/>
+    <property name="offCommentFormat" value="CHECKSTYLE.OFF\: ([\w\|]+)"/>
+    <property name="onCommentFormat" value="CHECKSTYLE.ON\: ([\w\|]+)"/>
+    <property name="checkFormat" value="$1"/>
   </module>
 
   <!-- All Java AST specific tests live under TreeWalker module. -->
@@ -110,7 +110,7 @@ page at http://checkstyle.sourceforge.net/config.html -->
       <!-- Checks for out of order import statements. -->
 
       <property name="severity" value="error"/>
-      <property name="groups" value="com.google,android,com,Jama,junit,net,org,sun,java,javax"/>
+      <property name="groups" value="com.google,android,com,io,Jama,junit,net,org,sun,java,javax"/>
       <!-- This ensures that static imports go first. -->
       <property name="option" value="top"/>
       <property name="tokens" value="STATIC_IMPORT, IMPORT"/>

@@ -19,8 +19,13 @@ import com.google.cloud.dataflow.sdk.annotations.Experimental;
 import com.google.cloud.dataflow.sdk.annotations.Experimental.Kind;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
+import com.google.cloud.dataflow.sdk.transforms.Combine.KeyedCombineFn;
+import com.google.cloud.dataflow.sdk.transforms.CombineWithContext.KeyedCombineFnWithContext;
 import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
+import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
+import com.google.cloud.dataflow.sdk.transforms.windowing.OutputTimeFn;
 
+import java.io.IOException;
 import java.io.Serializable;
 
 /**
@@ -32,34 +37,60 @@ import java.io.Serializable;
  *
  * <p>Currently, this can only be used in a step immediately following a {@link GroupByKey}.
  *
+ * @param <K> The type of key that must be used with the state tag. Contravariant: methods should
+ *            accept values of type {@code KeyedStateTag<? super K, StateT>}.
  * @param <StateT> The type of state being tagged.
  */
 @Experimental(Kind.STATE)
-public interface StateTag<StateT extends State> extends Serializable {
+public interface StateTag<K, StateT extends State> extends Serializable {
 
   /**
    * Visitor for binding a {@link StateTag} and to the associated {@link State}.
+   *
+   * @param <K> the type of key this binder embodies.
    */
-  public interface StateBinder {
-    <T> ValueState<T> bindValue(StateTag<ValueState<T>> address, Coder<T> coder);
+  public interface StateBinder<K> {
+    <T> ValueState<T> bindValue(StateTag<? super K, ValueState<T>> address, Coder<T> coder);
 
-    <T> BagState<T> bindBag(StateTag<BagState<T>> address, Coder<T> elemCoder);
+    <T> BagState<T> bindBag(StateTag<? super K, BagState<T>> address, Coder<T> elemCoder);
 
-    <InputT, AccumT, OutputT> CombiningValueStateInternal<InputT, AccumT, OutputT>
+    <InputT, AccumT, OutputT> AccumulatorCombiningState<InputT, AccumT, OutputT>
     bindCombiningValue(
-        StateTag<CombiningValueStateInternal<InputT, AccumT, OutputT>> address,
+        StateTag<? super K, AccumulatorCombiningState<InputT, AccumT, OutputT>> address,
         Coder<AccumT> accumCoder, CombineFn<InputT, AccumT, OutputT> combineFn);
 
-    <T> WatermarkStateInternal bindWatermark(StateTag<WatermarkStateInternal> address);
+    <InputT, AccumT, OutputT> AccumulatorCombiningState<InputT, AccumT, OutputT>
+    bindKeyedCombiningValue(
+        StateTag<? super K, AccumulatorCombiningState<InputT, AccumT, OutputT>> address,
+        Coder<AccumT> accumCoder, KeyedCombineFn<? super K, InputT, AccumT, OutputT> combineFn);
+
+    <InputT, AccumT, OutputT> AccumulatorCombiningState<InputT, AccumT, OutputT>
+    bindKeyedCombiningValueWithContext(
+        StateTag<? super K, AccumulatorCombiningState<InputT, AccumT, OutputT>> address,
+        Coder<AccumT> accumCoder,
+        KeyedCombineFnWithContext<? super K, InputT, AccumT, OutputT> combineFn);
+
+    /**
+     * Bind to a watermark {@link StateTag}.
+     *
+     * <p>This accepts the {@link OutputTimeFn} that dictates how watermark hold timestamps
+     * added to the returned {@link WatermarkHoldState} are to be combined.
+     */
+    <W extends BoundedWindow> WatermarkHoldState<W> bindWatermark(
+        StateTag<? super K, WatermarkHoldState<W>> address,
+        OutputTimeFn<? super W> outputTimeFn);
   }
 
+  /** Append the UTF-8 encoding of this tag to the given {@link Appendable}. */
+  void appendTo(Appendable sb) throws IOException;
+
   /**
-   * Returns the identifier for this state cell.
+   * Returns the user-provided name of this state cell.
    */
   String getId();
 
   /**
    * Use the {@code binder} to create an instance of {@code StateT} appropriate for this address.
    */
-  StateT bind(StateBinder binder);
+  StateT bind(StateBinder<? extends K> binder);
 }

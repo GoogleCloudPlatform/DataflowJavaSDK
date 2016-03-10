@@ -21,6 +21,7 @@ import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
 import com.google.common.base.Splitter;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 
@@ -63,6 +64,11 @@ public class StateNamespaces {
     }
 
     @Override
+    public Object getCacheKey() {
+      return GLOBAL_STRING;
+    }
+
+    @Override
     public boolean equals(Object obj) {
       return obj == this || obj instanceof GlobalNamespace;
     }
@@ -75,6 +81,11 @@ public class StateNamespaces {
     @Override
     public String toString() {
       return "Global";
+    }
+
+    @Override
+    public void appendTo(Appendable sb) throws IOException {
+      sb.append(GLOBAL_STRING);
     }
   }
 
@@ -104,6 +115,19 @@ public class StateNamespaces {
       } catch (CoderException e) {
         throw new RuntimeException("Unable to generate string key from window " + window, e);
       }
+    }
+
+    @Override
+    public void appendTo(Appendable sb) throws IOException {
+      sb.append('/').append(CoderUtils.encodeToBase64(windowCoder, window)).append('/');
+    }
+
+    /**
+     * State in the same window will all be evicted together.
+     */
+    @Override
+    public Object getCacheKey() {
+      return window;
     }
 
     @Override
@@ -169,6 +193,21 @@ public class StateNamespaces {
       } catch (CoderException e) {
         throw new RuntimeException("Unable to generate string key from window " + window, e);
       }
+    }
+
+    @Override
+    public void appendTo(Appendable sb) throws IOException {
+      sb.append('/').append(CoderUtils.encodeToBase64(windowCoder, window));
+      sb.append('/').append(Integer.toString(triggerIndex, TRIGGER_RADIX).toUpperCase());
+      sb.append('/');
+    }
+
+    /**
+     * State in the same window will all be evicted together.
+     */
+    @Override
+    public Object getCacheKey() {
+      return window;
     }
 
     @Override

@@ -22,6 +22,8 @@ import static org.junit.Assert.assertEquals;
 
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.CoderRegistry.IncompatibleCoderException;
+import com.google.cloud.dataflow.sdk.coders.Proto2CoderTestMessages.MessageA;
+import com.google.cloud.dataflow.sdk.coders.protobuf.ProtoCoder;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
@@ -33,6 +35,7 @@ import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
 import com.google.common.collect.ImmutableList;
+import com.google.protobuf.Duration;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -82,6 +85,17 @@ public class CoderRegistryTest {
   }
 
   @Test
+  public void testProtoCoderFallbackCoderProvider() throws Exception {
+    CoderRegistry registry = getStandardRegistry();
+
+    // MessageA is a Protocol Buffers test message with syntax 2
+    assertEquals(registry.getDefaultCoder(MessageA.class), ProtoCoder.of(MessageA.class));
+
+    // Duration is a Protocol Buffers default type with syntax 3
+    assertEquals(registry.getDefaultCoder(Duration.class), ProtoCoder.of(Duration.class));
+  }
+
+  @Test
   public void testAvroFallbackCoderProvider() throws Exception {
     CoderRegistry registry = getStandardRegistry();
     registry.setFallbackCoderProvider(AvroCoder.PROVIDER);
@@ -119,6 +133,7 @@ public class CoderRegistryTest {
   @Test
   public void testRegisterInstantiatedCoderInvalidRawtype() throws Exception {
     thrown.expect(IllegalArgumentException.class);
+    thrown.expectMessage("may not be used with unspecialized generic classes");
     CoderRegistry registry = new CoderRegistry();
     registry.registerCoder(List.class, new MyListCoder());
   }
@@ -133,6 +148,11 @@ public class CoderRegistryTest {
   public void testSimpleUnknownDefaultCoder() throws Exception {
     CoderRegistry registry = getStandardRegistry();
     thrown.expect(CannotProvideCoderException.class);
+    thrown.expectMessage(allOf(
+        containsString(UnknownType.class.getCanonicalName()),
+        containsString("No CoderFactory has been registered"),
+        containsString("does not have a @DefaultCoder annotation"),
+        containsString("does not implement Serializable")));
     registry.getDefaultCoder(UnknownType.class);
   }
 
@@ -190,6 +210,11 @@ public class CoderRegistryTest {
     TypeDescriptor<List<UnknownType>> listUnknownToken = new TypeDescriptor<List<UnknownType>>() {};
 
     thrown.expect(CannotProvideCoderException.class);
+    thrown.expectMessage(String.format(
+        "Cannot provide coder for parameterized type %s: Unable to provide a default Coder for %s",
+        listUnknownToken,
+        UnknownType.class.getCanonicalName()));
+
     registry.getDefaultCoder(listUnknownToken);
   }
 

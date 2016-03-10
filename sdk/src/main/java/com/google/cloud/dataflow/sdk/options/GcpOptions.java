@@ -17,6 +17,7 @@
 package com.google.cloud.dataflow.sdk.options;
 
 import com.google.api.client.auth.oauth2.Credential;
+import com.google.api.client.googleapis.auth.oauth2.GoogleOAuthConstants;
 import com.google.cloud.dataflow.sdk.util.CredentialFactory;
 import com.google.cloud.dataflow.sdk.util.GcpCredentialFactory;
 import com.google.cloud.dataflow.sdk.util.InstanceBuilder;
@@ -40,18 +41,13 @@ import java.util.regex.Pattern;
 /**
  * Options used to configure Google Cloud Platform project and credentials.
  *
- * <p>These options configure which of the following 4 different mechanisms for obtaining a
+ * <p>These options configure which of the following three different mechanisms for obtaining a
  * credential are used:
  * <ol>
  *   <li>
  *     It can fetch the
  *     <a href="https://developers.google.com/accounts/docs/application-default-credentials">
  *     application default credentials</a>.
- *   </li>
- *   <li>
- *     It can run the gcloud tool in a subprocess to obtain a credential.
- *     This is the preferred mechanism.  The property "GCloudPath" can be
- *     used to specify where we search for gcloud data.
  *   </li>
  *   <li>
  *     The user can specify a client secrets file and go through the OAuth2
@@ -63,9 +59,10 @@ import java.util.regex.Pattern;
  *     with the service account name.
  *   </li>
  * </ol>
- * The default mechanism is to use the
+ *
+ * <p>The default mechanism is to use the
  * <a href="https://developers.google.com/accounts/docs/application-default-credentials">
- * application default credentials</a> falling back to gcloud. The other options can be
+ * application default credentials</a>. The other options can be
  * used by setting the corresponding properties.
  */
 @Description("Options used to configure Google Cloud Platform project and credentials.")
@@ -159,7 +156,7 @@ public interface GcpOptions extends GoogleApiDebugOptions, PipelineOptions {
    */
   @Description("The class of the credential factory that should be created and used to create "
       + "credentials. If gcpCredential has not been set explicitly, an instance of this class will "
-      + "be constructed and used as a credential factory. The default credential factory will")
+      + "be constructed and used as a credential factory.")
   @Default.Class(GcpCredentialFactory.class)
   Class<? extends CredentialFactory> getCredentialFactoryClass();
   void setCredentialFactoryClass(
@@ -180,8 +177,8 @@ public interface GcpOptions extends GoogleApiDebugOptions, PipelineOptions {
   void setGcpCredential(Credential value);
 
   /**
-   * Attempts to get infer the default project based upon the environment this application
-   * is executing within. Currently this only supports getting the default project from gCloud.
+   * Attempts to infer the default project based upon the environment this application
+   * is executing within. Currently this only supports getting the default project from gcloud.
    */
   public static class DefaultProjectFactory implements DefaultValueFactory<String> {
     private static final Logger LOG = LoggerFactory.getLogger(DefaultProjectFactory.class);
@@ -189,19 +186,25 @@ public interface GcpOptions extends GoogleApiDebugOptions, PipelineOptions {
     @Override
     public String create(PipelineOptions options) {
       try {
-        File configDir;
+        File configFile;
         if (getEnvironment().containsKey("CLOUDSDK_CONFIG")) {
-          configDir = new File(getEnvironment().get("CLOUDSDK_CONFIG"));
+          configFile = new File(getEnvironment().get("CLOUDSDK_CONFIG"), "properties");
         } else if (isWindows() && getEnvironment().containsKey("APPDATA")) {
-          configDir = new File(getEnvironment().get("APPDATA"), "gcloud");
+          configFile = new File(getEnvironment().get("APPDATA"), "gcloud/properties");
         } else {
-          configDir = new File(System.getProperty("user.home"), ".config/gcloud");
+          // New versions of gcloud use this file
+          configFile = new File(
+              System.getProperty("user.home"),
+              ".config/gcloud/configurations/config_default");
+          if (!configFile.exists()) {
+            // Old versions of gcloud use this file
+            configFile = new File(System.getProperty("user.home"), ".config/gcloud/properties");
+          }
         }
         String section = null;
         Pattern projectPattern = Pattern.compile("^project\\s*=\\s*(.*)$");
         Pattern sectionPattern = Pattern.compile("^\\[(.*)\\]$");
-        for (String line : Files.readLines(
-            new File(configDir, "properties"), StandardCharsets.UTF_8)) {
+        for (String line : Files.readLines(configFile, StandardCharsets.UTF_8)) {
           line = line.trim();
           if (line.isEmpty() || line.startsWith(";")) {
             continue;
@@ -213,7 +216,7 @@ public interface GcpOptions extends GoogleApiDebugOptions, PipelineOptions {
             matcher = projectPattern.matcher(line);
             if (matcher.matches()) {
               String project = matcher.group(1).trim();
-              LOG.info("Inferred default GCP project '{}' from gCloud. If this is the incorrect "
+              LOG.info("Inferred default GCP project '{}' from gcloud. If this is the incorrect "
                   + "project, please cancel this Pipeline and specify the command-line "
                   + "argument --project.", project);
               return project;
@@ -263,4 +266,26 @@ public interface GcpOptions extends GoogleApiDebugOptions, PipelineOptions {
       }
     }
   }
+
+  /**
+   * The token server URL to use for OAuth 2 authentication. Normally, the default is sufficient,
+   * but some specialized use cases may want to override this value.
+   */
+  @Description("The token server URL to use for OAuth 2 authentication. Normally, the default "
+      + "is sufficient, but some specialized use cases may want to override this value.")
+  @Default.String(GoogleOAuthConstants.TOKEN_SERVER_URL)
+  @Hidden
+  String getTokenServerUrl();
+  void setTokenServerUrl(String value);
+
+  /**
+   * The authorization server URL to use for OAuth 2 authentication. Normally, the default is
+   * sufficient, but some specialized use cases may want to override this value.
+   */
+  @Description("The authorization server URL to use for OAuth 2 authentication. Normally, the "
+      + "default is sufficient, but some specialized use cases may want to override this value.")
+  @Default.String(GoogleOAuthConstants.AUTHORIZATION_SERVER_URL)
+  @Hidden
+  String getAuthorizationServerEncodedUrl();
+  void setAuthorizationServerEncodedUrl(String value);
 }

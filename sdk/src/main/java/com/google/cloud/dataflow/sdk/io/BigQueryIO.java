@@ -31,20 +31,24 @@ import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
 import com.google.cloud.dataflow.sdk.coders.VarIntCoder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
+import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.CreateDisposition;
+import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.WriteDisposition;
 import com.google.cloud.dataflow.sdk.options.BigQueryOptions;
 import com.google.cloud.dataflow.sdk.options.GcpOptions;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
-import com.google.cloud.dataflow.sdk.runners.worker.BigQueryReader;
+import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
+import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
+import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.util.BigQueryTableInserter;
 import com.google.cloud.dataflow.sdk.util.BigQueryTableRowIterator;
 import com.google.cloud.dataflow.sdk.util.PropertyNames;
-import com.google.cloud.dataflow.sdk.util.ReaderUtils;
 import com.google.cloud.dataflow.sdk.util.Reshuffle;
+import com.google.cloud.dataflow.sdk.util.SystemDoFnInternal;
 import com.google.cloud.dataflow.sdk.util.Transport;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
@@ -54,6 +58,7 @@ import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
 import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.cloud.hadoop.util.ApiErrorExtractor;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -78,11 +83,14 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.annotation.Nullable;
+
 /**
  * {@link PTransform}s for reading and writing
  * <a href="https://developers.google.com/bigquery/">BigQuery</a> tables.
- * <p><h3>Table References</h3>
- * A fully-qualified BigQuery table name consists of three components:
+ *
+ * <h3>Table References</h3>
+ * <p>A fully-qualified BigQuery table name consists of three components:
  * <ul>
  *   <li>{@code projectId}: the Cloud project id (defaults to
  *       {@link GcpOptions#getProject()}).
@@ -96,19 +104,22 @@ import java.util.regex.Pattern;
  * Tables can be referred to as Strings, with or without the {@code projectId}.
  * A helper function is provided ({@link BigQueryIO#parseTableSpec(String)})
  * that parses the following string forms into a {@link TableReference}:
+ *
  * <ul>
  *   <li>[{@code project_id}]:[{@code dataset_id}].[{@code table_id}]
  *   <li>[{@code dataset_id}].[{@code table_id}]
  * </ul>
- * <p><h3>Reading</h3>
- * To read from a BigQuery table, apply a {@link BigQueryIO.Read} transformation.
- * This produces a {@code PCollection<TableRow>} as output:
+ *
+ * <h3>Reading</h3>
+ * <p>To read from a BigQuery table, apply a {@link BigQueryIO.Read} transformation.
+ * This produces a {@link PCollection} of {@link TableRow TableRows} as output:
  * <pre>{@code
  * PCollection<TableRow> shakespeare = pipeline.apply(
- *     BigQueryIO.Read
- *         .named("Read")
- *         .from("clouddataflow-readonly:samples.weather_stations");
+ *     BigQueryIO.Read.named("Read")
+ *                    .from("clouddataflow-readonly:samples.weather_stations"));
  * }</pre>
+ *
+ * <p>See {@link TableRow} for more information on the {@link TableRow} object.
  *
  * <p>Users may provide a query to read from rather than reading all of a BigQuery table. If
  * specified, the result obtained by executing the specified query will be used as the data of the
@@ -116,17 +127,16 @@ import java.util.regex.Pattern;
  *
  * <pre>{@code
  * PCollection<TableRow> shakespeare = pipeline.apply(
- *     BigQueryIO.Read
- *         .named("Read")
- *         .fromQuery("SELECT year, mean_temp FROM samples.weather_stations");
+ *     BigQueryIO.Read.named("Read")
+ *                    .fromQuery("SELECT year, mean_temp FROM samples.weather_stations"));
  * }</pre>
  *
  * <p>When creating a BigQuery input transform, users should provide either a query or a table.
  * Pipeline construction will fail with a validation error if neither or both are specified.
  *
- * <p><h3>Writing</h3>
- * To write to a BigQuery table, apply a {@link BigQueryIO.Write} transformation.
- * This consumes a {@code PCollection<TableRow>} as input.
+ * <h3>Writing</h3>
+ * <p>To write to a BigQuery table, apply a {@link BigQueryIO.Write} transformation.
+ * This consumes a {@link PCollection} of {@link TableRow TableRows} as input.
  * <pre>{@code
  * PCollection<TableRow> quotes = ...
  *
@@ -147,37 +157,35 @@ import java.util.regex.Pattern;
  * empty. Note that the dataset being written to must already exist. Write
  * dispositions are not supported in streaming mode.
  *
- * <p><h3>Sharding BigQuery output tables</h3>
- * A common use case is to dynamically generate BigQuery table names based on
+ * <h3>Sharding BigQuery output tables</h3>
+ * <p>A common use case is to dynamically generate BigQuery table names based on
  * the current window. To support this,
  * {@link BigQueryIO.Write#to(SerializableFunction)}
  * accepts a function mapping the current window to a tablespec. For example,
  * here's code that outputs daily tables to BigQuery:
  * <pre>{@code
  * PCollection<TableRow> quotes = ...
- * quotes.apply(Window.<TableRow>info(CalendarWindows.days(1)))
+ * quotes.apply(Window.<TableRow>into(CalendarWindows.days(1)))
  *       .apply(BigQueryIO.Write
  *         .named("Write")
  *         .withSchema(schema)
  *         .to(new SerializableFunction<BoundedWindow, String>() {
- *               public String apply(BoundedWindow window) {
- *                 String dayString = DateTimeFormat.forPattern("yyyy_MM_dd").parseDateTime(
- *                   ((DaysWindow) window).getStartDate());
- *                 return "my-project:output.output_table_" + dayString;
- *               }
- *             }));
- *
+ *           public String apply(BoundedWindow window) {
+ *             // The cast below is safe because CalendarWindows.days(1) produces IntervalWindows.
+ *             String dayString = DateTimeFormat.forPattern("yyyy_MM_dd")
+ *                  .withZone(DateTimeZone.UTC)
+ *                  .print(((IntervalWindow) window).start());
+ *             return "my-project:output.output_table_" + dayString;
+ *           }
+ *         }));
  * }</pre>
  *
  * <p>Per-window tables are not yet supported in batch mode.
  *
- * @see <a href="https://developers.google.com/resources/api-libraries/documentation/bigquery/v2/java/latest/com/google/api/services/bigquery/model/TableRow.html">TableRow</a>
- *
- * <p><h3>Permissions</h3>
- * Permission requirements depend on the
- * {@link com.google.cloud.dataflow.sdk.runners.PipelineRunner PipelineRunner} that is
- * used to execute the Dataflow job. Please refer to the documentation of corresponding
- * {@code PipelineRunner}s for more details.
+ * <h3>Permissions</h3>
+ * <p>Permission requirements depend on the {@link PipelineRunner} that is used to execute the
+ * Dataflow job. Please refer to the documentation of corresponding {@link PipelineRunner}s for
+ * more details.
  *
  * <p>Please see <a href="https://cloud.google.com/bigquery/access-control">BigQuery Access Control
  * </a> for security and permission related information specific to BigQuery.
@@ -210,8 +218,8 @@ public class BigQueryIO {
   private static final String TABLE_REGEXP = "[-\\w$@]{1,1024}";
 
   /**
-   * Matches table specifications in the form
-   * "[project_id]:[dataset_id].[table_id]" or "[dataset_id].[table_id]".
+   * Matches table specifications in the form {@code "[project_id]:[dataset_id].[table_id]"} or
+   * {@code "[dataset_id].[table_id]"}.
    */
   private static final String DATASET_TABLE_REGEXP =
       String.format("((?<PROJECT>%s):)?(?<DATASET>%s)\\.(?<TABLE>%s)", PROJECT_ID_REGEXP,
@@ -219,6 +227,7 @@ public class BigQueryIO {
 
   private static final Pattern TABLE_SPEC = Pattern.compile(DATASET_TABLE_REGEXP);
 
+  // TODO: make this private and remove improper access from BigQueryIOTranslator.
   public static final String SET_PROJECT_FROM_OPTIONS_WARNING =
       "No project specified for BigQuery table \"%1$s.%2$s\". Assuming it is in \"%3$s\". If the"
       + " table is in a different project please specify it as a part of the BigQuery table"
@@ -236,7 +245,7 @@ public class BigQueryIO {
 
   /**
    * Parse a table specification in the form
-   * "[project_id]:[dataset_id].[table_id]" or "[dataset_id].[table_id]".
+   * {@code "[project_id]:[dataset_id].[table_id]"} or {@code "[dataset_id].[table_id]"}.
    *
    * <p>If the project id is omitted, the default project id is used.
    */
@@ -255,7 +264,7 @@ public class BigQueryIO {
   }
 
   /**
-   * Returns a canonical string representation of the TableReference.
+   * Returns a canonical string representation of the {@link TableReference}.
    */
   public static String toTableSpec(TableReference ref) {
     StringBuilder sb = new StringBuilder();
@@ -272,11 +281,10 @@ public class BigQueryIO {
    * A {@link PTransform} that reads from a BigQuery table and returns a
    * {@link PCollection} of {@link TableRow TableRows} containing each of the rows of the table.
    *
-   * <p>Each TableRow record contains values indexed by column name.  Here is a
+   * <p>Each {@link TableRow} contains values indexed by column name. Here is a
    * sample processing function that processes a "line" column from rows:
-   * <pre><code>
-   * static class ExtractWordsFn extends DoFn{@literal <TableRow, String>} {
-   *   {@literal @}Override
+   * <pre>{@code
+   * static class ExtractWordsFn extends DoFn<TableRow, String> {
    *   public void processElement(ProcessContext c) {
    *     // Get the "line" field of the TableRow object, split it into words, and emit them.
    *     TableRow row = c.element();
@@ -287,18 +295,20 @@ public class BigQueryIO {
    *       }
    *     }
    *   }
-   * }
-   * </code></pre>
+   * }}</pre>
    */
   public static class Read {
+    /**
+     * Returns a {@link Read.Bound} with the given name. The BigQuery table or query to be read
+     * from has not yet been configured.
+     */
     public static Bound named(String name) {
       return new Bound().named(name);
     }
 
     /**
-     * Reads a BigQuery table specified as
-     * "[project_id]:[dataset_id].[table_id]" or "[dataset_id].[table_id]" for
-     * tables within the current project.
+     * Reads a BigQuery table specified as {@code "[project_id]:[dataset_id].[table_id]"} or
+     * {@code "[dataset_id].[table_id]"} for tables within the current project.
      */
     public static Bound from(String tableSpec) {
       return new Bound().from(tableSpec);
@@ -312,7 +322,7 @@ public class BigQueryIO {
     }
 
     /**
-     * Reads a BigQuery table specified as a TableReference object.
+     * Reads a BigQuery table specified as a {@link TableReference} object.
      */
     public static Bound from(TableReference table) {
       return new Bound().from(table);
@@ -333,59 +343,85 @@ public class BigQueryIO {
       TableReference table;
       final String query;
       final boolean validate;
+      @Nullable
+      Boolean flattenResults;
 
       private static final String QUERY_VALIDATION_FAILURE_ERROR =
           "Validation of query \"%1$s\" failed. If the query depends on an earlier stage of the"
           + " pipeline, This validation can be disabled using #withoutValidation.";
 
-      Bound() {
-        query = null;
-        table = null;
-        this.validate = true;
+      private Bound() {
+        this(null, null, null, true, null);
       }
 
-      Bound(String name, String query, TableReference reference, boolean validate) {
+      private Bound(String name, String query, TableReference reference, boolean validate,
+          Boolean flattenResults) {
         super(name);
         this.table = reference;
         this.query = query;
         this.validate = validate;
+        this.flattenResults = flattenResults;
       }
 
       /**
-       * Sets the name associated with this transformation.
+       * Returns a copy of this transform using the name associated with this transformation.
+       *
+       * <p>Does not modify this object.
        */
       public Bound named(String name) {
-        return new Bound(name, query, table, validate);
+        return new Bound(name, query, table, validate, flattenResults);
       }
 
       /**
-       * Sets the table specification.
+       * Returns a copy of this transform that reads from the specified table. Refer to
+       * {@link #parseTableSpec(String)} for the specification format.
        *
-       * <p>Refer to {@link #parseTableSpec(String)} for the specification format.
+       * <p>Does not modify this object.
        */
       public Bound from(String tableSpec) {
         return from(parseTableSpec(tableSpec));
       }
 
       /**
-       * Sets the BigQuery query to be used.
+       * Returns a copy of this transform that reads from the specified table.
+       *
+       * <p>Does not modify this object.
        */
-      public Bound fromQuery(String query) {
-        return new Bound(name, query, table, validate);
+      public Bound from(TableReference table) {
+        return new Bound(name, query, table, validate, flattenResults);
       }
 
       /**
-       * Sets the table specification.
+       * Returns a copy of this transform that reads the results of the specified query.
+       *
+       * <p>Does not modify this object.
+       *
+       * <p>By default, the query results will be flattened -- see
+       * "flattenResults" in the <a href="https://cloud.google.com/bigquery/docs/reference/v2/jobs">
+       * Jobs documentation</a> for more information.  To disable flattening, use
+       * {@link BigQueryIO.Read.Bound#withoutResultFlattening}.
        */
-      public Bound from(TableReference table) {
-        return new Bound(name, query, table, validate);
+      public Bound fromQuery(String query) {
+        return new Bound(name, query, table, validate,
+            MoreObjects.firstNonNull(flattenResults, Boolean.TRUE));
       }
 
       /**
        * Disable table validation.
        */
       public Bound withoutValidation() {
-        return new Bound(name, query, table, false);
+        return new Bound(name, query, table, false, flattenResults);
+      }
+
+      /**
+       * Disable <a href="https://cloud.google.com/bigquery/docs/reference/v2/jobs">
+       * flattening of query results</a>.
+       *
+       * <p>Only valid when a query is used ({@link #fromQuery}). Setting this option when reading
+       * from a table will cause an error during validation.
+       */
+      public Bound withoutResultFlattening() {
+        return new Bound(name, query, table, validate, false);
       }
 
       /**
@@ -399,6 +435,12 @@ public class BigQueryIO {
         } else if (table != null && query != null) {
           throw new IllegalStateException("Invalid BigQuery read operation. Specifies both a"
               + " query and a table, only one of these should be provided");
+        } else if (table != null && flattenResults != null) {
+          throw new IllegalStateException("Invalid BigQuery read operation. Specifies a"
+              + " table with a result flattening preference, which is not configurable");
+        } else if (query != null && flattenResults == null) {
+          throw new IllegalStateException("Invalid BigQuery read operation. Specifies a"
+              + " query without a result flattening preference");
         }
 
         BigQueryOptions bqOptions = input.getPipeline().getOptions().as(BigQueryOptions.class);
@@ -470,12 +512,15 @@ public class BigQueryIO {
       }
 
       /**
-       * Returns the table to write.
+       * Returns the table to write, or {@code null} if reading from a query instead.
        */
       public TableReference getTable() {
         return table;
       }
 
+      /**
+       * Returns the query to be read, or {@code null} if reading from a table instead.
+       */
       public String getQuery() {
         return query;
       }
@@ -486,7 +531,17 @@ public class BigQueryIO {
       public boolean getValidate() {
         return validate;
       }
+
+      /**
+       * Returns true/false if result flattening is enabled/disabled, or null if not applicable.
+       */
+      public Boolean getFlattenResults() {
+        return flattenResults;
+      }
     }
+
+    /** Disallow construction of utility class. */
+    private Read() {}
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -495,36 +550,36 @@ public class BigQueryIO {
    * A {@link PTransform} that writes a {@link PCollection} containing {@link TableRow TableRows}
    * to a BigQuery table.
    *
-   * <p>By default, tables will be created if they do not exist, which
-   * corresponds to a {@code CreateDisposition.CREATE_IF_NEEDED} disposition
-   * that matches the default of BigQuery's Jobs API.  A schema must be
-   * provided (via {@link Write#withSchema}), or else the transform may fail
-   * at runtime with an {@link java.lang.IllegalArgumentException}.
+   * <p>In BigQuery, each table has an encosing dataset. The dataset being written must already
+   * exist.
    *
-   * <p>The dataset being written must already exist.
+   * <p>By default, tables will be created if they do not exist, which corresponds to a
+   * {@link CreateDisposition#CREATE_IF_NEEDED} disposition that matches the default of BigQuery's
+   * Jobs API. A schema must be provided (via {@link BigQueryIO.Write#withSchema(TableSchema)}),
+   * or else the transform may fail at runtime with an {@link IllegalArgumentException}.
    *
    * <p>By default, writes require an empty table, which corresponds to
-   * a {@code WriteDisposition.WRITE_EMPTY} disposition that matches the
+   * a {@link WriteDisposition#WRITE_EMPTY} disposition that matches the
    * default of BigQuery's Jobs API.
    *
    * <p>Here is a sample transform that produces TableRow values containing
    * "word" and "count" columns:
-   * <pre><code>
-   * static class FormatCountsFn extends DoFnP{@literal <KV<String, Long>, TableRow>} {
-   *   {@literal @}Override
+   * <pre>{@code
+   * static class FormatCountsFn extends DoFn<KV<String, Long>, TableRow> {
    *   public void processElement(ProcessContext c) {
    *     TableRow row = new TableRow()
    *         .set("word", c.element().getKey())
    *         .set("count", c.element().getValue().intValue());
    *     c.output(row);
    *   }
-   * }
-   * </code></pre>
+   * }}</pre>
    */
   public static class Write {
     /**
-     * An enumeration type for the BigQuery create disposition strings publicly
-     * documented as {@code CREATE_NEVER}, and {@code CREATE_IF_NEEDED}.
+     * An enumeration type for the BigQuery create disposition strings.
+     *
+     * @see <a href="https://cloud.google.com/bigquery/docs/reference/v2/jobs#configuration.query.createDisposition">
+     * <code>configuration.query.createDisposition</code> in the BigQuery Jobs API</a>
      */
     public enum CreateDisposition {
       /**
@@ -538,7 +593,7 @@ public class BigQueryIO {
        * Specifies that tables should be created if needed. This is the default
        * behavior.
        *
-       * <p>Requires that a table schema is provided via {@link Write#withSchema}.
+       * <p>Requires that a table schema is provided via {@link BigQueryIO.Write#withSchema}.
        * This precondition is checked before starting a job. The schema is
        * not required to match an existing table's schema.
        *
@@ -551,9 +606,10 @@ public class BigQueryIO {
     }
 
     /**
-     * An enumeration type for the BigQuery write disposition strings publicly
-     * documented as {@code WRITE_TRUNCATE}, {@code WRITE_APPEND}, and
-     * {@code WRITE_EMPTY}.
+     * An enumeration type for the BigQuery write disposition strings.
+     *
+     * @see <a href="https://cloud.google.com/bigquery/docs/reference/v2/jobs#configuration.query.writeDisposition">
+     * <code>configuration.query.writeDisposition</code> in the BigQuery Jobs API</a>
      */
     public enum WriteDisposition {
       /**
@@ -561,7 +617,7 @@ public class BigQueryIO {
        *
        * <p>The replacement may occur in multiple steps - for instance by first
        * removing the existing table, then creating a replacement, then filling
-       * it in.  This is not an atomic operation, and external programs may
+       * it in. This is not an atomic operation, and external programs may
        * see the table in any of these intermediate steps.
        */
       WRITE_TRUNCATE,
@@ -578,16 +634,17 @@ public class BigQueryIO {
        * <p>If the output table is not empty, the write fails at runtime.
        *
        * <p>This check may occur long before data is written, and does not
-       * guarantee exclusive access to the table.  If two programs are run
+       * guarantee exclusive access to the table. If two programs are run
        * concurrently, each specifying the same output table and
-       * a {@link WriteDisposition} of {@code WRITE_EMPTY}, it is possible
+       * a {@link WriteDisposition} of {@link WriteDisposition#WRITE_EMPTY}, it is possible
        * for both to succeed.
        */
       WRITE_EMPTY
     }
 
     /**
-     * Sets the name associated with this transformation.
+     * Creates a write transformation with the given transform name. The BigQuery table to be
+     * written has not yet been configured.
      */
     public static Bound named(String name) {
       return new Bound().named(name);
@@ -607,20 +664,27 @@ public class BigQueryIO {
       return new Bound().to(table);
     }
 
-    /** Creates a write transformation from a function that maps windows to table specifications.
+    /**
+     * Creates a write transformation from a function that maps windows to table specifications.
      * Each time a new window is encountered, this function will be called and the resulting table
      * will be created. Records within that window will be written to the associated table.
      *
-     * <p>See {@link #parseTableSpec(String)} for the format that tableSpecFunction should return.
+     * <p>See {@link #parseTableSpec(String)} for the format that {@code tableSpecFunction} should
+     * return.
      *
-     * <p>tableSpecFunction should be determinstic. When given the same window, it should always
-     * return the same table specification.
+     * <p>{@code tableSpecFunction} should be deterministic. When given the same window, it should
+     * always return the same table specification.
      */
     public static Bound to(SerializableFunction<BoundedWindow, String> tableSpecFunction) {
       return new Bound().to(tableSpecFunction);
     }
 
-    /** Creates a write transformation from a function that maps windows to TableReference objects.
+    /**
+     * Creates a write transformation from a function that maps windows to {@link TableReference}
+     * objects.
+     *
+     * <p>{@code tableRefFunction} should be deterministic. When given the same window, it should
+     * always return the same table reference.
      */
     public static Bound toTableReference(
         SerializableFunction<BoundedWindow, TableReference> tableRefFunction) {
@@ -628,28 +692,28 @@ public class BigQueryIO {
     }
 
     /**
-     * Specifies a table schema to use in table creation.
+     * Creates a write transformation with the specified schema to use in table creation.
      *
-     * <p>The schema is required only if writing to a table that does not already
-     * exist, and {@link BigQueryIO.Write.CreateDisposition} is set to
-     * {@code CREATE_IF_NEEDED}.
+     * <p>The schema is <i>required</i> only if writing to a table that does not already
+     * exist, and {@link CreateDisposition} is set to
+     * {@link CreateDisposition#CREATE_IF_NEEDED}.
      */
     public static Bound withSchema(TableSchema schema) {
       return new Bound().withSchema(schema);
     }
 
-    /** Specifies options for creating the table. */
+    /** Creates a write transformation with the specified options for creating the table. */
     public static Bound withCreateDisposition(CreateDisposition disposition) {
       return new Bound().withCreateDisposition(disposition);
     }
 
-    /** Specifies options for writing to the table. */
+    /** Creates a write transformation with the specified options for writing to the table. */
     public static Bound withWriteDisposition(WriteDisposition disposition) {
       return new Bound().withWriteDisposition(disposition);
     }
 
     /**
-     * Disables BigQuery table validation, which is enabled by default.
+     * Creates a write transformation with BigQuery table validation disabled.
      */
     public static Bound withoutValidation() {
       return new Bound().withoutValidation();
@@ -692,16 +756,18 @@ public class BigQueryIO {
         }
       }
 
+      /**
+       * @deprecated Should be private. Instead, use one of the factory methods in
+       * {@link BigQueryIO.Write}, such as {@link BigQueryIO.Write#to(String)}, to create an
+       * instance of this class.
+       */
+      @Deprecated
       public Bound() {
-        this.table = null;
-        this.tableRefFunction = null;
-        this.schema = null;
-        this.createDisposition = CreateDisposition.CREATE_IF_NEEDED;
-        this.writeDisposition = WriteDisposition.WRITE_EMPTY;
-        this.validate = true;
+        this(null, null, null, null, CreateDisposition.CREATE_IF_NEEDED,
+            WriteDisposition.WRITE_EMPTY, true);
       }
 
-      Bound(String name, TableReference ref,
+      private Bound(String name, TableReference ref,
           SerializableFunction<BoundedWindow, TableReference> tableRefFunction, TableSchema schema,
           CreateDisposition createDisposition, WriteDisposition writeDisposition,
           boolean validate) {
@@ -715,7 +781,9 @@ public class BigQueryIO {
       }
 
       /**
-       * Sets the name associated with this transformation.
+       * Returns a copy of this write transformation, but with the specified transform name.
+       *
+       * <p>Does not modify this object.
        */
       public Bound named(String name) {
         return new Bound(name, table, tableRefFunction, schema, createDisposition,
@@ -723,27 +791,48 @@ public class BigQueryIO {
       }
 
       /**
-       * Specifies the table specification.
+       * Returns a copy of this write transformation, but writing to the specified table. Refer to
+       * {@link #parseTableSpec(String)} for the specification format.
        *
-       * <p>Refer to {@link #parseTableSpec(String)} for the specification format.
+       * <p>Does not modify this object.
        */
       public Bound to(String tableSpec) {
         return to(parseTableSpec(tableSpec));
       }
 
       /**
-       * Specifies the table to be written to.
+       * Returns a copy of this write transformation, but writing to the specified table.
+       *
+       * <p>Does not modify this object.
        */
       public Bound to(TableReference table) {
         return new Bound(name, table, tableRefFunction, schema, createDisposition,
             writeDisposition, validate);
       }
 
+      /**
+       * Returns a copy of this write transformation, but using the specified function to determine
+       * which table to write to for each window.
+       *
+       * <p>Does not modify this object.
+       *
+       * <p>{@code tableSpecFunction} should be deterministic. When given the same window, it
+       * should always return the same table specification.
+       */
       public Bound to(
           SerializableFunction<BoundedWindow, String> tableSpecFunction) {
         return toTableReference(new TranslateTableSpecFunction(tableSpecFunction));
       }
 
+      /**
+       * Returns a copy of this write transformation, but using the specified function to determine
+       * which table to write to for each window.
+       *
+       * <p>Does not modify this object.
+       *
+       * <p>{@code tableRefFunction} should be deterministic. When given the same window, it should
+       * always return the same table reference.
+       */
       public Bound toTableReference(
           SerializableFunction<BoundedWindow, TableReference> tableRefFunction) {
         return new Bound(name, table, tableRefFunction, schema, createDisposition,
@@ -751,27 +840,40 @@ public class BigQueryIO {
       }
 
       /**
-       * Specifies the table schema, used if the table is created.
+       * Returns a copy of this write transformation, but using the specified schema for rows
+       * to be written.
+       *
+       * <p>Does not modify this object.
        */
       public Bound withSchema(TableSchema schema) {
         return new Bound(name, table, tableRefFunction, schema, createDisposition,
             writeDisposition, validate);
       }
 
-      /** Specifies options for creating the table. */
+      /**
+       * Returns a copy of this write transformation, but using the specified create disposition.
+       *
+       * <p>Does not modify this object.
+       */
       public Bound withCreateDisposition(CreateDisposition createDisposition) {
         return new Bound(name, table, tableRefFunction, schema, createDisposition,
             writeDisposition, validate);
       }
 
-      /** Specifies options for writing the table. */
+      /**
+       * Returns a copy of this write transformation, but using the specified write disposition.
+       *
+       * <p>Does not modify this object.
+       */
       public Bound withWriteDisposition(WriteDisposition writeDisposition) {
         return new Bound(name, table, tableRefFunction, schema, createDisposition,
             writeDisposition, validate);
       }
 
       /**
-       * Disable table validation.
+       * Returns a copy of this write transformation, but without BigQuery table validation.
+       *
+       * <p>Does not modify this object.
        */
       public Bound withoutValidation() {
         return new Bound(name, table, tableRefFunction, schema, createDisposition,
@@ -893,19 +995,22 @@ public class BigQueryIO {
         return schema;
       }
 
-      /** Returns the table reference. */
+      /** Returns the table reference, or {@code null} if a . */
       public TableReference getTable() {
         return table;
       }
 
-      /** Returns true if table validation is enabled. */
+      /** Returns {@code true} if table validation is enabled. */
       public boolean getValidate() {
         return validate;
       }
     }
+
+    /** Disallow construction of utility class. */
+    private Write() {}
   }
 
-  public static void verifyDatasetPresence(BigQueryOptions options, TableReference table) {
+  private static void verifyDatasetPresence(BigQueryOptions options, TableReference table) {
     try {
       Bigquery client = Transport.newBigQueryClient(options).build();
       BigQueryTableRowIterator.executeWithBackOff(
@@ -926,7 +1031,7 @@ public class BigQueryIO {
     }
   }
 
-  public static void verifyTablePresence(BigQueryOptions options, TableReference table) {
+  private static void verifyTablePresence(BigQueryOptions options, TableReference table) {
     try {
       Bigquery client = Transport.newBigQueryClient(options).build();
       BigQueryTableRowIterator.executeWithBackOff(
@@ -951,9 +1056,10 @@ public class BigQueryIO {
   /**
    * Implementation of DoFn to perform streaming BigQuery write.
    */
+  @SystemDoFnInternal
   private static class StreamingWriteFn
       extends DoFn<KV<ShardedKey<String>, TableRowInfo>, Void> {
-    /** TableSchema in JSON.  Use String to make the class Serializable. */
+    /** TableSchema in JSON. Use String to make the class Serializable. */
     private final String jsonTableSchema;
 
     /** JsonTableRows to accumulate BigQuery rows in order to batch writes. */
@@ -966,6 +1072,10 @@ public class BigQueryIO {
         each time. */
     private static Set<String> createdTables =
         Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+
+    /** Tracks bytes written, exposed as "ByteCount" Counter. */
+    private Aggregator<Long, Long> byteCountAggregator =
+        createAggregator("ByteCount", new Sum.SumLongFn());
 
     /** Constructor. */
     StreamingWriteFn(TableSchema schema) {
@@ -1021,7 +1131,8 @@ public class BigQueryIO {
             TableSchema tableSchema = JSON_FACTORY.fromString(jsonTableSchema, TableSchema.class);
             Bigquery client = Transport.newBigQueryClient(options).build();
             BigQueryTableInserter inserter = new BigQueryTableInserter(client);
-            inserter.tryCreateTable(tableReference, tableSchema);
+            inserter.getOrCreateTable(tableReference, WriteDisposition.WRITE_APPEND,
+                CreateDisposition.CREATE_IF_NEEDED, tableSchema);
             createdTables.add(tableSpec);
           }
         }
@@ -1035,7 +1146,7 @@ public class BigQueryIO {
       if (!tableRows.isEmpty()) {
         try {
           BigQueryTableInserter inserter = new BigQueryTableInserter(client);
-          inserter.insertAll(tableReference, tableRows, uniqueIds);
+          inserter.insertAll(tableReference, tableRows, uniqueIds, byteCountAggregator);
         } catch (IOException e) {
           throw new RuntimeException(e);
         }
@@ -1066,9 +1177,9 @@ public class BigQueryIO {
   }
 
   /**
-   * A {@link Coder} for {@code ShardedKey}, using a wrapped key {@code Coder}.
+   * A {@link Coder} for {@link ShardedKey}, using a wrapped key {@link Coder}.
    */
-  public static class ShardedKeyCoder<KeyT>
+  private static class ShardedKeyCoder<KeyT>
       extends StandardCoder<ShardedKey<KeyT>> {
     public static <KeyT> ShardedKeyCoder<KeyT> of(Coder<KeyT> keyCoder) {
       return new ShardedKeyCoder<>(keyCoder);
@@ -1176,7 +1287,7 @@ public class BigQueryIO {
     /** TableSpec to write to. */
     private final String tableSpec;
 
-    /** User function mapping windows to TableReference in JSON. */
+    /** User function mapping windows to {@link TableReference} in JSON. */
     private final SerializableFunction<BoundedWindow, TableReference> tableRefFunction;
 
     private transient String randomUUID;
@@ -1280,7 +1391,7 @@ public class BigQueryIO {
           .apply(ParDo.of(new StreamingWriteFn(tableSchema)));
 
       // Note that the implementation to return PDone here breaks the
-      // implicit assumption about the job execution order.  If a user
+      // implicit assumption about the job execution order. If a user
       // implements a PTransform that takes PDone returned here as its
       // input, the transform may not necessarily be executed after
       // the BigQueryIO.Write.
@@ -1290,6 +1401,9 @@ public class BigQueryIO {
   }
 
   /////////////////////////////////////////////////////////////////////////////
+
+  /** Disallow construction of utility class. */
+  private BigQueryIO() {}
 
   /**
    * Direct mode read evaluator.
@@ -1304,18 +1418,28 @@ public class BigQueryIO {
       transform.table.setProjectId(options.getProject());
     }
 
-    BigQueryReader reader = null;
+    BigQueryTableRowIterator iterator;
     if (transform.query != null) {
       LOG.info("Reading from BigQuery query {}", transform.query);
-      reader = BigQueryReader.fromQuery(transform.query, options.getProject(), client);
+      iterator =
+          BigQueryTableRowIterator.fromQuery(
+              transform.query, options.getProject(), client, transform.getFlattenResults());
     } else {
-      reader = BigQueryReader.fromTable(transform.table, client);
       LOG.info("Reading from BigQuery table {}", toTableSpec(transform.table));
+      iterator = BigQueryTableRowIterator.fromTable(transform.table, client);
     }
 
-    List<WindowedValue<TableRow>> elems = ReaderUtils.readElemsFromReader(reader);
-    LOG.info("Number of records read from BigQuery: {}", elems.size());
-    context.setPCollectionWindowedValue(context.getOutput(transform), elems);
+    try (BigQueryTableRowIterator ignored = iterator) {
+      List<TableRow> elems = new ArrayList<>();
+      iterator.open();
+      while (iterator.advance()) {
+        elems.add(iterator.getCurrent());
+      }
+      LOG.info("Number of records read from BigQuery: {}", elems.size());
+      context.setPCollection(context.getOutput(transform), elems);
+    } catch (IOException | InterruptedException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   private static <K, V> List<V> getOrCreateMapListValue(Map<K, List<V>> map, K key) {

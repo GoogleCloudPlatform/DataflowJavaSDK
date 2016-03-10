@@ -79,7 +79,7 @@ public class FileBasedSourceTest {
    * <p>E.g., if {@code splitHeader} is "h" and the lines of the file are: h, a, b, h, h, c, then
    * the records in this source are a,b,c, and records a and c are split points.
    */
-  class TestFileBasedSource extends FileBasedSource<String> {
+  static class TestFileBasedSource extends FileBasedSource<String> {
 
     final String splitHeader;
 
@@ -112,12 +112,13 @@ public class FileBasedSourceTest {
     }
 
     @Override
-    public FileBasedSource<String> createForSubrangeOfFile(String fileName, long start, long end) {
+    protected FileBasedSource<String> createForSubrangeOfFile(
+        String fileName, long start, long end) {
       return new TestFileBasedSource(fileName, getMinBundleSize(), start, end, splitHeader);
     }
 
     @Override
-    public FileBasedReader<String> createSingleFileReader(PipelineOptions options) {
+    protected FileBasedReader<String> createSingleFileReader(PipelineOptions options) {
       if (splitHeader == null) {
         return new TestReader(this);
       } else {

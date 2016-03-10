@@ -40,6 +40,7 @@ public interface DataflowPipelineOptions extends
       + "See https://cloud.google.com/storage/docs/projects for further details.")
   @Override
   @Validation.Required
+  @Default.InstanceFactory(DefaultProjectFactory.class)
   String getProject();
   @Override
   void setProject(String value);
@@ -47,14 +48,14 @@ public interface DataflowPipelineOptions extends
   /**
    * GCS path for temporary files, e.g. gs://bucket/object
    *
-   * <p>Must be a valid Cloud Storage url, beginning with the prefix "gs://"
+   * <p>Must be a valid Cloud Storage URL, beginning with the prefix "gs://"
    *
    * <p>At least one of {@link #getTempLocation()} or {@link #getStagingLocation()} must be set. If
    * {@link #getTempLocation()} is not set, then the Dataflow pipeline defaults to using
    * {@link #getStagingLocation()}.
    */
   @Description("GCS path for temporary files, eg \"gs://bucket/object\". "
-      + "Must be a valid Cloud Storage url, beginning with the prefix \"gs://\". "
+      + "Must be a valid Cloud Storage URL, beginning with the prefix \"gs://\". "
       + "At least one of tempLocation or stagingLocation must be set. If tempLocation is unset, "
       + "defaults to using stagingLocation.")
   @Validation.Required(groups = {DATAFLOW_STORAGE_LOCATION})
@@ -64,14 +65,14 @@ public interface DataflowPipelineOptions extends
   /**
    * GCS path for staging local files, e.g. gs://bucket/object
    *
-   * <p>Must be a valid Cloud Storage url, beginning with the prefix "gs://"
+   * <p>Must be a valid Cloud Storage URL, beginning with the prefix "gs://"
    *
    * <p>At least one of {@link #getTempLocation()} or {@link #getStagingLocation()} must be set. If
    * {@link #getTempLocation()} is not set, then the Dataflow pipeline defaults to using
    * {@link #getStagingLocation()}.
    */
   @Description("GCS path for staging local files, e.g. \"gs://bucket/object\". "
-      + "Must be a valid Cloud Storage url, beginning with the prefix \"gs://\". "
+      + "Must be a valid Cloud Storage URL, beginning with the prefix \"gs://\". "
       + "At least one of stagingLocation or tempLocation must be set. If stagingLocation is unset, "
       + "defaults to using tempLocation.")
   @Validation.Required(groups = {DATAFLOW_STORAGE_LOCATION})
@@ -89,6 +90,19 @@ public interface DataflowPipelineOptions extends
   @Default.InstanceFactory(JobNameFactory.class)
   String getJobName();
   void setJobName(String value);
+
+  /**
+   * Whether to update the currently running pipeline with the same name as this one.
+   */
+  @Override
+  @SuppressWarnings("deprecation") // base class member deprecated in favor of this one.
+  @Description(
+      "If set, replace the existing pipeline with the name specified by --jobName with "
+          + "this pipeline, preserving state.")
+  boolean getUpdate();
+  @Override
+  @SuppressWarnings("deprecation") // base class member deprecated in favor of this one.
+  void setUpdate(boolean value);
 
   /**
    * Returns a normalized job name constructed from {@link ApplicationNameOptions#getAppName()}, the

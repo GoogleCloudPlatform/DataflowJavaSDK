@@ -16,17 +16,20 @@
 
 package com.google.cloud.dataflow.sdk.transforms;
 
+import static com.google.cloud.dataflow.sdk.testing.SystemNanoTimeSleeper.sleepMillis;
 import static org.hamcrest.Matchers.both;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThan;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.fail;
 
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
 
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -45,7 +48,10 @@ public class IntraBundleParallelizationTest {
   private static final AtomicInteger numProcessed = new AtomicInteger();
   private static final AtomicInteger numFailures = new AtomicInteger();
   private static int concurrentElements = 0;
-  private static int maxConcurrency = 0;
+  private static int maxDownstreamConcurrency = 0;
+
+  private static final AtomicInteger maxFnConcurrency = new AtomicInteger();
+  private static final AtomicInteger currentFnConcurrency = new AtomicInteger();
 
   @Before
   public void setUp() {
@@ -53,7 +59,10 @@ public class IntraBundleParallelizationTest {
     numProcessed.set(0);
     numFailures.set(0);
     concurrentElements = 0;
-    maxConcurrency = 0;
+    maxDownstreamConcurrency = 0;
+
+    maxFnConcurrency.set(0);
+    currentFnConcurrency.set(0);
   }
 
   /**
@@ -64,13 +73,15 @@ public class IntraBundleParallelizationTest {
 
     @Override
     public void processElement(ProcessContext c) {
+      startConcurrentCall();
       try {
-        Thread.sleep(DELAY_MS);
+        sleepMillis(DELAY_MS);
       } catch (InterruptedException e) {
         e.printStackTrace();
         throw new RuntimeException("Interrupted");
       }
       c.output(c.element());
+      finishConcurrentCall();
     }
   }
 
@@ -84,14 +95,19 @@ public class IntraBundleParallelizationTest {
 
     @Override
     public void processElement(ProcessContext c) {
-      numProcessed.incrementAndGet();
-      if (numSuccesses.decrementAndGet() >= 0) {
-        c.output(c.element());
-        return;
-      }
+      startConcurrentCall();
+      try {
+        numProcessed.incrementAndGet();
+        if (numSuccesses.decrementAndGet() >= 0) {
+          c.output(c.element());
+          return;
+        }
 
-      numFailures.incrementAndGet();
-      throw new RuntimeException("Expected failure");
+        numFailures.incrementAndGet();
+        throw new RuntimeException("Expected failure");
+      } finally {
+        finishConcurrentCall();
+      }
     }
   }
 
@@ -101,38 +117,55 @@ public class IntraBundleParallelizationTest {
   private static class ConcurrencyMeasuringFn<T> extends DoFn<T, T> {
     @Override
     public void processElement(ProcessContext c) {
-      synchronized (this) {
+      // Synchronize on the class to provide synchronous access irrespective of
+      // how this DoFn is called.
+      synchronized (ConcurrencyMeasuringFn.class) {
         concurrentElements++;
-        if (concurrentElements > maxConcurrency) {
-          maxConcurrency = concurrentElements;
+        if (concurrentElements > maxDownstreamConcurrency) {
+          maxDownstreamConcurrency = concurrentElements;
         }
       }
 
       c.output(c.element());
 
-      synchronized (this) {
+      synchronized (ConcurrencyMeasuringFn.class) {
         concurrentElements--;
       }
     }
   }
 
+  private static void startConcurrentCall() {
+    int currentlyExecuting = currentFnConcurrency.incrementAndGet();
+    int maxConcurrency;
+    do {
+      maxConcurrency = maxFnConcurrency.get();
+    } while (maxConcurrency < currentlyExecuting
+        && !maxFnConcurrency.compareAndSet(maxConcurrency, currentlyExecuting));
+  }
+
+  private static void finishConcurrentCall() {
+    currentFnConcurrency.decrementAndGet();
+  }
+
+  /**
+   * Test that the DoFn is parallelized up the the Max Parallelism factor within a bundle, but not
+   * greater than that amount.
+   */
   @Test
   public void testParallelization() {
-    long minDuration = Long.MAX_VALUE;
+    int maxConcurrency = Integer.MIN_VALUE;
     // Take the minimum from multiple runs.
     for (int i = 0; i < 5; ++i) {
-      minDuration = Math.min(minDuration,
+      maxConcurrency = Math.max(maxConcurrency,
           run(2 * PARALLELISM_FACTOR, PARALLELISM_FACTOR, new DelayFn<Integer>()));
     }
 
-    // The minimum is guaranteed to be >= 2x the delay interval, since no more than half the
-    // elements can be scheduled at once.
-    Assert.assertThat(minDuration,
-        greaterThanOrEqualTo(2 * DelayFn.DELAY_MS));
-    // Also, it should take <= 8x the delay interval since we should be at least
-    // parallelizing some of the work.
-    Assert.assertThat(minDuration,
-        lessThanOrEqualTo(8 * DelayFn.DELAY_MS));
+    // We should run at least some elements in parallel on some run
+    assertThat(maxConcurrency,
+        greaterThanOrEqualTo(2));
+    // No run should execute more elements concurrency than the maximum concurrency allowed.
+    assertThat(maxConcurrency,
+        lessThanOrEqualTo(PARALLELISM_FACTOR));
   }
 
   @Test(timeout = 5000L)
@@ -140,19 +173,19 @@ public class IntraBundleParallelizationTest {
     ExceptionThrowingFn<Integer> fn = new ExceptionThrowingFn<>(10);
     try {
       run(100, PARALLELISM_FACTOR, fn);
-      Assert.fail("Expected exception to propagate");
+      fail("Expected exception to propagate");
     } catch (RuntimeException e) {
-      Assert.assertThat(e.getMessage(), containsString("Expected failure"));
+      assertThat(e.getMessage(), containsString("Expected failure"));
     }
 
     // Should have processed 10 elements, but stopped before processing all
     // of them.
-    Assert.assertThat(numProcessed.get(),
+    assertThat(numProcessed.get(),
         is(both(greaterThanOrEqualTo(10))
             .and(lessThan(100))));
 
     // The first failure should prevent the scheduling of any more elements.
-    Assert.assertThat(numFailures.get(),
+    assertThat(numFailures.get(),
         is(both(greaterThanOrEqualTo(1))
             .and(lessThanOrEqualTo(PARALLELISM_FACTOR))));
   }
@@ -162,25 +195,36 @@ public class IntraBundleParallelizationTest {
     ExceptionThrowingFn<Integer> fn = new ExceptionThrowingFn<>(9);
     try {
       run(10, PARALLELISM_FACTOR, fn);
-      Assert.fail("Expected exception to propagate");
+      fail("Expected exception to propagate");
     } catch (RuntimeException e) {
-      Assert.assertThat(e.getMessage(), containsString("Expected failure"));
+      assertThat(e.getMessage(), containsString("Expected failure"));
     }
 
     // Should have processed 10 elements, but stopped before processing all
     // of them.
-    Assert.assertEquals(10, numProcessed.get());
-    Assert.assertEquals(1, numFailures.get());
+    assertEquals(10, numProcessed.get());
+    assertEquals(1, numFailures.get());
   }
 
   @Test
   public void testIntraBundleParallelizationGetName() {
-    Assert.assertEquals(
+    assertEquals(
         "IntraBundleParallelization",
         IntraBundleParallelization.of(new DelayFn<Integer>()).withMaxParallelism(1).getName());
   }
 
-  private long run(int numElements, int maxParallelism, DoFn<Integer, Integer> doFn) {
+  /**
+   * Runs the provided doFn inside of an {@link IntraBundleParallelization} transform.
+   *
+   * <p>This method assumes that the DoFn passed to it will call {@link #startConcurrentCall()}
+   * before processing each elements and {@link #finishConcurrentCall()} after each element.
+   *
+   * @param numElements the size of the input
+   * @param maxParallelism how many threads to execute in parallel
+   * @param doFn the DoFn to execute
+   * @return the maximum observed parallelism of the DoFn
+   */
+  private int run(int numElements, int maxParallelism, DoFn<Integer, Integer> doFn) {
     Pipeline pipeline = TestPipeline.create();
 
     ArrayList<Integer> data = new ArrayList<>(numElements);
@@ -194,14 +238,13 @@ public class IntraBundleParallelizationTest {
         .apply(IntraBundleParallelization.of(doFn).withMaxParallelism(maxParallelism))
         .apply(ParDo.of(downstream));
 
-    long startTime = System.currentTimeMillis();
-
     pipeline.run();
 
+    // All elements should have completed.
+    assertEquals(0, currentFnConcurrency.get());
     // Downstream methods should not see parallel threads.
-    Assert.assertEquals(1, maxConcurrency);
+    assertEquals(1, maxDownstreamConcurrency);
 
-    long endTime = System.currentTimeMillis();
-    return endTime - startTime;
+    return maxFnConcurrency.get();
   }
 }

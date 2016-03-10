@@ -28,6 +28,13 @@ import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.options.GcsOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.transforms.DoFn;
+import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
+import com.google.cloud.dataflow.sdk.transforms.PTransform;
+import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.cloud.dataflow.sdk.transforms.windowing.DefaultTrigger;
+import com.google.cloud.dataflow.sdk.transforms.windowing.GlobalWindows;
+import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
 import com.google.cloud.dataflow.sdk.util.FileIOChannelFactory;
 import com.google.cloud.dataflow.sdk.util.GcsIOChannelFactory;
 import com.google.cloud.dataflow.sdk.util.IOChannelFactory;
@@ -35,6 +42,8 @@ import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
 import com.google.cloud.dataflow.sdk.util.MimeTypes;
 import com.google.cloud.dataflow.sdk.util.Transport;
 import com.google.cloud.dataflow.sdk.util.gcsfs.GcsPath;
+import com.google.cloud.dataflow.sdk.values.KV;
+import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.hadoop.util.ApiErrorExtractor;
 import com.google.common.base.Preconditions;
 
@@ -109,6 +118,13 @@ public abstract class FileBasedSink<T> extends Sink<T> {
     this.baseOutputFilename = baseOutputFilename;
     this.extension = extension;
     this.fileNamingTemplate = fileNamingTemplate;
+  }
+
+  /**
+   * Returns the base output filename for this file based sink.
+   */
+  public String getBaseOutputFilename() {
+    return baseOutputFilename;
   }
 
   /**
@@ -339,12 +355,27 @@ public abstract class FileBasedSink<T> extends Sink<T> {
       String baseOutputFilename = getSink().baseOutputFilename;
       String fileNamingTemplate = getSink().fileNamingTemplate;
 
-      String suffix = (extension.length() == 0) ? extension : ("." + extension);
+      String suffix = getFileExtension(extension);
       for (int i = 0; i < numFiles; i++) {
         destFilenames.add(IOChannelUtils.constructName(
             baseOutputFilename, fileNamingTemplate, suffix, i, numFiles));
       }
       return destFilenames;
+    }
+
+    /**
+     * Returns the file extension to be used. If the user did not request a file
+     * extension then this method returns the empty string. Otherwise this method
+     * adds a {@code "."} to the beginning of the users extension if one is not present.
+     */
+    private String getFileExtension(String usersExtension) {
+      if (usersExtension == null || usersExtension.isEmpty()) {
+        return "";
+      }
+      if (usersExtension.startsWith(".")) {
+        return usersExtension;
+      }
+      return "." + usersExtension;
     }
 
     /**
@@ -793,6 +824,41 @@ public abstract class FileBasedSink<T> extends Sink<T> {
      */
     public void flush() throws IOException {
       flushIfPossible();
+    }
+  }
+
+  static class ReshardForWrite<T> extends PTransform<PCollection<T>, PCollection<T>> {
+    @Override
+    public PCollection<T> apply(PCollection<T> input) {
+      return input
+          // TODO: This would need to be adapted to write per-window shards.
+          .apply(Window.<T>into(new GlobalWindows())
+                       .triggering(DefaultTrigger.of())
+                       .discardingFiredPanes())
+          .apply("RandomKey", ParDo.of(
+              new DoFn<T, KV<Long, T>>() {
+                transient long counter, step;
+                @Override
+                public void startBundle(Context c) {
+                  counter = (long) (Math.random() * Long.MAX_VALUE);
+                  step = 1 + 2 * (long) (Math.random() * Long.MAX_VALUE);
+                }
+                @Override
+                public void processElement(ProcessContext c) {
+                  counter += step;
+                  c.output(KV.of(counter, c.element()));
+                }
+              }))
+          .apply(GroupByKey.<Long, T>create())
+          .apply("Ungroup", ParDo.of(
+              new DoFn<KV<Long, Iterable<T>>, T>() {
+                @Override
+                public void processElement(ProcessContext c) {
+                  for (T item : c.element().getValue()) {
+                    c.output(item);
+                  }
+                }
+              }));
     }
   }
 }

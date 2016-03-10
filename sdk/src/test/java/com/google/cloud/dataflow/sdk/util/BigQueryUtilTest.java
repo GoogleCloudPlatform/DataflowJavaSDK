@@ -16,11 +16,14 @@
 
 package com.google.cloud.dataflow.sdk.util;
 
+import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyLong;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -37,8 +40,10 @@ import com.google.api.services.bigquery.model.TableReference;
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.api.services.bigquery.model.TableSchema;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO;
-import com.google.common.base.Function;
-import com.google.common.collect.Iterators;
+import com.google.cloud.dataflow.sdk.transforms.Aggregator;
+import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
+import com.google.cloud.dataflow.sdk.transforms.Sum;
+import com.google.common.collect.ImmutableList;
 
 import org.hamcrest.Matchers;
 import org.junit.After;
@@ -51,6 +56,8 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -71,7 +78,6 @@ public class BigQueryUtilTest {
   @Mock private Bigquery.Tables mockTables;
   @Mock private Bigquery.Tables.Get mockTablesGet;
   @Mock private Bigquery.Tabledata mockTabledata;
-  @Mock private Bigquery.Tabledata.InsertAll mockInsertAll;
   @Mock private Bigquery.Tabledata.List mockTabledataList;
 
   @Before
@@ -92,7 +98,7 @@ public class BigQueryUtilTest {
     when(mockClient.tabledata())
         .thenReturn(mockTabledata);
 
-    List<TableDataInsertAllResponse> responses = new ArrayList<>();
+    final List<TableDataInsertAllResponse> responses = new ArrayList<>();
     for (List<Long> errorIndices : errorIndicesSequence) {
       List<TableDataInsertAllResponse.InsertErrors> errors = new ArrayList<>();
       for (long i : errorIndices) {
@@ -105,14 +111,20 @@ public class BigQueryUtilTest {
       responses.add(response);
     }
 
-
-    when(mockTabledata.insertAll(
-        anyString(), anyString(), anyString(), any(TableDataInsertAllRequest.class)))
-        .thenReturn(mockInsertAll);
-    when(mockInsertAll.execute())
-        .thenReturn(responses.get(0),
-            responses.subList(1, responses.size()).toArray(
-                new TableDataInsertAllResponse[responses.size() - 1]));
+    doAnswer(
+        new Answer<Bigquery.Tabledata.InsertAll>() {
+          @Override
+          public Bigquery.Tabledata.InsertAll answer(InvocationOnMock invocation) throws Throwable {
+            Bigquery.Tabledata.InsertAll mockInsertAll = mock(Bigquery.Tabledata.InsertAll.class);
+            when(mockInsertAll.execute())
+                .thenReturn(responses.get(0),
+                    responses.subList(1, responses.size()).toArray(
+                        new TableDataInsertAllResponse[responses.size() - 1]));
+            return mockInsertAll;
+          }
+        })
+        .when(mockTabledata)
+        .insertAll(anyString(), anyString(), anyString(), any(TableDataInsertAllRequest.class));
   }
 
   private void verifyInsertAll(int expectedRetries) throws IOException {
@@ -171,43 +183,61 @@ public class BigQueryUtilTest {
         .setSchema(new TableSchema()
             .setFields(Arrays.asList(
                 new TableFieldSchema()
-                    .setName("name")
-                    .setType("STRING"),
-                new TableFieldSchema()
                     .setName("time")
-                    .setType("TIMESTAMP"),
-                new TableFieldSchema()
-                    .setName("answer")
-                    .setType("INTEGER")
+                    .setType("TIMESTAMP")
             )));
   }
 
   @Test
-  public void testReadWithTime() throws IOException {
+  public void testReadWithTime() throws IOException, InterruptedException {
+    // The BigQuery JSON API returns timestamps in the following format: floating-point seconds
+    // since epoch (UTC) with microsecond precision. Test that we faithfully preserve a set of
+    // known values.
+    TableDataList input = rawDataList(
+        rawRow("1.430397296789E9"),
+        rawRow("1.45206228E9"),
+        rawRow("1.452062291E9"),
+        rawRow("1.4520622911E9"),
+        rawRow("1.45206229112E9"),
+        rawRow("1.452062291123E9"),
+        rawRow("1.4520622911234E9"),
+        rawRow("1.45206229112345E9"),
+        rawRow("1.452062291123456E9"));
     onTableGet(basicTableSchemaWithTime());
+    onTableList(input);
 
-    TableDataList dataList = rawDataList(rawRow("Arthur", "1.430397296789E9", 42));
-    onTableList(dataList);
+    // Known results verified from BigQuery's export to JSON on GCS API.
+    List<String> expected = ImmutableList.of(
+        "2015-04-30 12:34:56.789 UTC",
+        "2016-01-06 06:38:00 UTC",
+        "2016-01-06 06:38:11 UTC",
+        "2016-01-06 06:38:11.1 UTC",
+        "2016-01-06 06:38:11.12 UTC",
+        "2016-01-06 06:38:11.123 UTC",
+        "2016-01-06 06:38:11.1234 UTC",
+        "2016-01-06 06:38:11.12345 UTC",
+        "2016-01-06 06:38:11.123456 UTC");
 
-    try (BigQueryTableRowIterator iterator = BigQueryTableRowIterator.fromTable(
-        BigQueryIO.parseTableSpec("project:dataset.table"),
-        mockClient)) {
-
-      Assert.assertTrue(iterator.hasNext());
-      TableRow row = iterator.next();
-
-      Assert.assertTrue(row.containsKey("name"));
-      Assert.assertTrue(row.containsKey("time"));
-      Assert.assertTrue(row.containsKey("answer"));
-      Assert.assertEquals("Arthur", row.get("name"));
-      Assert.assertEquals("2015-04-30 12:34:56.789 UTC", row.get("time"));
-      Assert.assertEquals(42, row.get("answer"));
-
-      Assert.assertFalse(iterator.hasNext());
-
-      verifyTableGet();
-      verifyTabledataList();
+    // Download the rows, verify the interactions.
+    List<TableRow> rows = new ArrayList<>();
+    try (BigQueryTableRowIterator iterator =
+            BigQueryTableRowIterator.fromTable(
+                BigQueryIO.parseTableSpec("project:dataset.table"), mockClient)) {
+      iterator.open();
+      while (iterator.advance()) {
+        rows.add(iterator.getCurrent());
+      }
     }
+    verifyTableGet();
+    verifyTabledataList();
+
+    // Verify the timestamp converted as desired.
+    assertEquals("Expected input and output rows to have the same size",
+        expected.size(), rows.size());
+    for (int i = 0; i < expected.size(); ++i) {
+      assertEquals("i=" + i, expected.get(i), rows.get(i).get("time"));
+    }
+
   }
 
   private TableRow rawRow(Object...args) {
@@ -224,7 +254,7 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testRead() throws IOException {
+  public void testRead() throws IOException, InterruptedException {
     onTableGet(basicTableSchema());
 
     TableDataList dataList = rawDataList(rawRow("Arthur", 42));
@@ -233,16 +263,16 @@ public class BigQueryUtilTest {
     try (BigQueryTableRowIterator iterator = BigQueryTableRowIterator.fromTable(
         BigQueryIO.parseTableSpec("project:dataset.table"),
         mockClient)) {
-
-      Assert.assertTrue(iterator.hasNext());
-      TableRow row = iterator.next();
+      iterator.open();
+      Assert.assertTrue(iterator.advance());
+      TableRow row = iterator.getCurrent();
 
       Assert.assertTrue(row.containsKey("name"));
       Assert.assertTrue(row.containsKey("answer"));
       Assert.assertEquals("Arthur", row.get("name"));
       Assert.assertEquals(42, row.get("answer"));
 
-      Assert.assertFalse(iterator.hasNext());
+      Assert.assertFalse(iterator.advance());
 
       verifyTableGet();
       verifyTabledataList();
@@ -250,7 +280,7 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testReadEmpty() throws IOException {
+  public void testReadEmpty() throws IOException, InterruptedException {
     onTableGet(basicTableSchema());
 
     // BigQuery may respond with a page token for an empty table, ensure we
@@ -263,8 +293,9 @@ public class BigQueryUtilTest {
     try (BigQueryTableRowIterator iterator = BigQueryTableRowIterator.fromTable(
         BigQueryIO.parseTableSpec("project:dataset.table"),
         mockClient)) {
+      iterator.open();
 
-      Assert.assertFalse(iterator.hasNext());
+      Assert.assertFalse(iterator.advance());
 
       verifyTableGet();
       verifyTabledataList();
@@ -272,7 +303,7 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testReadMultiPage() throws IOException {
+  public void testReadMultiPage() throws IOException, InterruptedException {
     onTableGet(basicTableSchema());
 
     TableDataList page1 = rawDataList(rawRow("Row1", 1))
@@ -291,15 +322,12 @@ public class BigQueryUtilTest {
     try (BigQueryTableRowIterator iterator = BigQueryTableRowIterator.fromTable(
         BigQueryIO.parseTableSpec("project:dataset.table"),
         mockClient)) {
+      iterator.open();
 
       List<String> names = new LinkedList<>();
-      Iterators.addAll(names,
-          Iterators.transform(iterator, new Function<TableRow, String>(){
-            @Override
-            public String apply(TableRow input) {
-              return (String) input.get("name");
-            }
-          }));
+      while (iterator.advance()) {
+        names.add((String) iterator.getCurrent().get("name"));
+      }
 
       Assert.assertThat(names, Matchers.hasItems("Row1", "Row2"));
 
@@ -311,8 +339,8 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testReadOpenFailure() throws IOException {
-    thrown.expect(RuntimeException.class);
+  public void testReadOpenFailure() throws IOException, InterruptedException {
+    thrown.expect(IOException.class);
 
     when(mockClient.tables())
         .thenReturn(mockTables);
@@ -325,7 +353,7 @@ public class BigQueryUtilTest {
         BigQueryIO.parseTableSpec("project:dataset.table"),
         mockClient)) {
       try {
-        Assert.assertFalse(iterator.hasNext());  // throws.
+        iterator.open(); // throws.
       } finally {
         verifyTableGet();
       }
@@ -407,14 +435,45 @@ public class BigQueryUtilTest {
     List<TableRow> rows = new ArrayList<>();
     List<String> ids = new ArrayList<>();
     for (int i = 0; i < 25; ++i) {
-      rows.add(new TableRow());
+      rows.add(rawRow("foo", 1234));
       ids.add(new String());
     }
 
+    InMemoryLongSumAggregator byteCountAggregator = new InMemoryLongSumAggregator("ByteCount");
     try {
-      inserter.insertAll(ref, rows, ids);
+      inserter.insertAll(ref, rows, ids, byteCountAggregator);
     } finally {
       verifyInsertAll(5);
+      // Each of the 25 rows is 23 bytes: "{f=[{v=foo}, {v=1234}]}"
+      assertEquals("Incorrect byte count", 25L * 23L, byteCountAggregator.getSum());
+    }
+  }
+
+  private static class InMemoryLongSumAggregator implements Aggregator<Long, Long> {
+    private final String name;
+    private long sum = 0;
+
+    public InMemoryLongSumAggregator(String name) {
+      this.name = name;
+    }
+
+    @Override
+    public void addValue(Long value) {
+      sum += value;
+    }
+
+    @Override
+    public String getName() {
+      return name;
+    }
+
+    @Override
+    public CombineFn<Long, ?, Long> getCombineFn() {
+      return new Sum.SumLongFn();
+    }
+
+    public long getSum() {
+      return sum;
     }
   }
 }

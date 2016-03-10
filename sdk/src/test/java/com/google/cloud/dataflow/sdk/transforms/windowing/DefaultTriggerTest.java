@@ -16,156 +16,149 @@
 
 package com.google.cloud.dataflow.sdk.transforms.windowing;
 
-import static com.google.cloud.dataflow.sdk.WindowMatchers.isSingleWindowedValue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
 import com.google.cloud.dataflow.sdk.util.TriggerTester;
-import com.google.cloud.dataflow.sdk.util.WindowedValue;
-import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
-import com.google.cloud.dataflow.sdk.values.TimestampedValue;
+import com.google.cloud.dataflow.sdk.util.TriggerTester.SimpleTriggerTester;
 
-import org.hamcrest.Matchers;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import java.util.List;
-
 /**
- * Tests the {@link DefaultTrigger} in a variety of windowing modes.
+ * Tests the {@link DefaultTrigger}, which should be equivalent to
+ * {@code Repeatedly.forever(AfterWatermark.pastEndOfWindow())}.
  */
 @RunWith(JUnit4.class)
 public class DefaultTriggerTest {
 
+  SimpleTriggerTester<IntervalWindow> tester;
+
   @Test
-  public void testDefaultTriggerWithFixedWindow() throws Exception {
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        FixedWindows.of(Duration.millis(10)),
+  public void testDefaultTriggerFixedWindows() throws Exception {
+    tester = TriggerTester.forTrigger(
         DefaultTrigger.<IntervalWindow>of(),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+        FixedWindows.of(Duration.millis(100)));
 
     tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),
-        TimestampedValue.of(2, new Instant(9)),
-        TimestampedValue.of(3, new Instant(15)),
-        TimestampedValue.of(4, new Instant(19)),
-        TimestampedValue.of(5, new Instant(30)));
+        1, // [0, 100)
+        101); // [100, 200)
+
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(0), new Instant(100));
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(100), new Instant(200));
 
     // Advance the watermark almost to the end of the first window.
-    tester.advanceProcessingTime(new Instant(500));
-    tester.advanceWatermark(new Instant(8));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
+    tester.advanceInputWatermark(new Instant(99));
+    assertFalse(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
 
-    // Advance watermark to 9 (the exact end of the window), which causes the first fixed window to
-    // be emitted
-    tester.advanceWatermark(new Instant(9));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2), 1, 0, 10)));
+    // Advance watermark past end of the first window, which is then ready
+    tester.advanceInputWatermark(new Instant(100));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
 
-    // Advance watermark to 100, which causes the remaining two windows to be emitted.
-    // Since their timers were at different timestamps, they should fire in order.
-    tester.advanceWatermark(new Instant(100));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(3, 4), 15, 10, 20),
-        isSingleWindowedValue(Matchers.contains(5), 30, 30, 40)));
-    assertFalse(tester.isMarkedFinished(new IntervalWindow(new Instant(30), new Instant(40))));
-    tester.assertHasOnlyGlobalAndPaneInfoFor(
-        new IntervalWindow(new Instant(0), new Instant(10)),
-        new IntervalWindow(new Instant(10), new Instant(20)),
-        new IntervalWindow(new Instant(30), new Instant(40)));
+    // Fire, but the first window is still allowed to fire
+    tester.fireIfShouldFire(firstWindow);
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+
+    // Advance watermark to 200, then both are ready
+    tester.advanceInputWatermark(new Instant(200));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertTrue(tester.shouldFire(secondWindow));
+
+    assertFalse(tester.isMarkedFinished(firstWindow));
+    assertFalse(tester.isMarkedFinished(secondWindow));
   }
 
   @Test
-  public void testDefaultTriggerWithSessionWindow() throws Exception {
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        Sessions.withGapDuration(Duration.millis(10)),
+  public void testDefaultTriggerSlidingWindows() throws Exception {
+    tester = TriggerTester.forTrigger(
         DefaultTrigger.<IntervalWindow>of(),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+        SlidingWindows.of(Duration.millis(100)).every(Duration.millis(50)));
 
     tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),
-        TimestampedValue.of(2, new Instant(9)));
+        1, // [-50, 50), [0, 100)
+        50); // [0, 100), [50, 150)
 
-    // no output, because we merged into the [9-19) session
-    tester.advanceWatermark(new Instant(10));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(-50), new Instant(50));
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(0), new Instant(100));
+    IntervalWindow thirdWindow = new IntervalWindow(new Instant(50), new Instant(150));
 
-    tester.injectElements(
-        TimestampedValue.of(3, new Instant(15)),
-        TimestampedValue.of(4, new Instant(30)));
+    assertFalse(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    assertFalse(tester.shouldFire(thirdWindow));
 
-    tester.advanceWatermark(new Instant(100));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2, 3), 1, 1, 25),
-        isSingleWindowedValue(Matchers.contains(4), 30, 30, 40)));
-    assertFalse(tester.isMarkedFinished(new IntervalWindow(new Instant(1), new Instant(25))));
-    assertFalse(tester.isMarkedFinished(new IntervalWindow(new Instant(30), new Instant(40))));
-    tester.assertHasOnlyGlobalAndPaneInfoFor(
-        new IntervalWindow(new Instant(1), new Instant(25)),
-        new IntervalWindow(new Instant(30), new Instant(40)));
+    // At 50, the first becomes ready; it stays ready after firing
+    tester.advanceInputWatermark(new Instant(50));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    assertFalse(tester.shouldFire(thirdWindow));
+    tester.fireIfShouldFire(firstWindow);
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    assertFalse(tester.shouldFire(thirdWindow));
+
+    // At 99, the first is still the only one ready
+    tester.advanceInputWatermark(new Instant(99));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    assertFalse(tester.shouldFire(thirdWindow));
+
+    // At 100, the first and second are ready
+    tester.advanceInputWatermark(new Instant(100));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertTrue(tester.shouldFire(secondWindow));
+    assertFalse(tester.shouldFire(thirdWindow));
+    tester.fireIfShouldFire(firstWindow);
+
+    assertFalse(tester.isMarkedFinished(firstWindow));
+    assertFalse(tester.isMarkedFinished(secondWindow));
+    assertFalse(tester.isMarkedFinished(thirdWindow));
   }
 
   @Test
-  public void testDefaultTriggerWithSlidingWindow() throws Exception {
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        SlidingWindows.of(Duration.millis(10)).every(Duration.millis(5)),
+  public void testDefaultTriggerSessions() throws Exception {
+    tester = TriggerTester.forTrigger(
         DefaultTrigger.<IntervalWindow>of(),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+        Sessions.withGapDuration(Duration.millis(100)));
 
     tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),
-        TimestampedValue.of(2, new Instant(4)),
-        TimestampedValue.of(3, new Instant(9)));
+        1, // [1, 101)
+        50); // [50, 150)
+    tester.mergeWindows();
 
-    tester.advanceWatermark(new Instant(100));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2), 1, -5, 5),
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2, 3), 5, 0, 10),
-        isSingleWindowedValue(Matchers.containsInAnyOrder(3), 10, 5, 15)));
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(1), new Instant(101));
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(50), new Instant(150));
+    IntervalWindow mergedWindow = new IntervalWindow(new Instant(1), new Instant(150));
 
-    // This data is late, so it will hold the watermark to 109
-    tester.injectElements(
-        TimestampedValue.of(4, new Instant(8)));
+    // Not ready in any window yet
+    tester.advanceInputWatermark(new Instant(100));
+    assertFalse(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    assertFalse(tester.shouldFire(mergedWindow));
 
-    tester.advanceWatermark(new Instant(101));
-    assertThat(tester.getWatermarkHold(), Matchers.equalTo(new Instant(109)));
-    tester.advanceWatermark(new Instant(120));
-    List<WindowedValue<Iterable<Integer>>> output = tester.extractOutput();
-    assertThat(output, Matchers.contains(
-        isSingleWindowedValue(Matchers.contains(4), 9, 0, 10),
-        isSingleWindowedValue(Matchers.contains(4), 14, 5, 15)));
+    // The first window is "ready": the caller owns knowledge of which windows are merged away
+    tester.advanceInputWatermark(new Instant(149));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    assertFalse(tester.shouldFire(mergedWindow));
 
-    assertFalse(tester.isMarkedFinished(new IntervalWindow(new Instant(1), new Instant(10))));
-    assertFalse(tester.isMarkedFinished(new IntervalWindow(new Instant(5), new Instant(15))));
-    tester.assertHasOnlyGlobalState();
-  }
+    // Now ready on all windows
+    tester.advanceInputWatermark(new Instant(150));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertTrue(tester.shouldFire(secondWindow));
+    assertTrue(tester.shouldFire(mergedWindow));
 
-  @Test
-  public void testDefaultTriggerWithContainedSessionWindow() throws Exception {
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        Sessions.withGapDuration(Duration.millis(10)),
-        DefaultTrigger.<IntervalWindow>of(),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+    // Ensure it repeats
+    tester.fireIfShouldFire(mergedWindow);
+    assertTrue(tester.shouldFire(mergedWindow));
 
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1)),
-        TimestampedValue.of(2, new Instant(9)),
-        TimestampedValue.of(3, new Instant(7)));
-
-    tester.advanceWatermark(new Instant(20));
-    Iterable<WindowedValue<Iterable<Integer>>> extractOutput = tester.extractOutput();
-    assertThat(extractOutput, Matchers.contains(
-        isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2, 3), 1, 1, 19)));
-    tester.assertHasOnlyGlobalAndPaneInfoFor(
-        new IntervalWindow(new Instant(1), new Instant(19)));
+    assertFalse(tester.isMarkedFinished(mergedWindow));
   }
 
   @Test

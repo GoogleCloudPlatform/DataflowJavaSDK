@@ -23,7 +23,9 @@ import static com.google.api.services.datastore.client.DatastoreHelper.getProper
 import static com.google.api.services.datastore.client.DatastoreHelper.makeFilter;
 import static com.google.api.services.datastore.client.DatastoreHelper.makeOrder;
 import static com.google.api.services.datastore.client.DatastoreHelper.makeValue;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Verify.verify;
 
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.util.BackOff;
@@ -123,6 +125,11 @@ import javax.annotation.Nullable;
  * PCollection<Entity> entities = p.apply(DatastoreIO.readFrom(datasetId, query));
  * p.run();
  * } </pre>
+ *
+ * <p><b>Note:</b> Normally, a Cloud Dataflow job will read from Cloud Datastore in parallel across
+ * many workers. However, when the {@link Query} is configured with a limit using
+ * {@link com.google.api.services.datastore.DatastoreV1.Query.Builder#setLimit(int)}, then
+ * all returned results will be read by a single Dataflow worker in order to ensure correct data.
  *
  * <p>To write a {@link PCollection} to a Datastore, use {@link DatastoreIO#writeTo},
  * specifying the datastore to write to:
@@ -248,8 +255,20 @@ public class DatastoreIO {
       return new Source(host, datasetId, query, namespace);
     }
 
+    /**
+     * Returns a new {@link Source} that reads the results of the specified query.
+     *
+     * <p>Does not modify this object.
+     *
+     * <p><b>Note:</b> Normally, a Cloud Dataflow job will read from Cloud Datastore in parallel
+     * across many workers. However, when the {@link Query} is configured with a limit using
+     * {@link com.google.api.services.datastore.DatastoreV1.Query.Builder#setLimit(int)}, then all
+     * returned results will be read by a single Dataflow worker in order to ensure correct data.
+     */
     public Source withQuery(Query query) {
       checkNotNull(query, "query");
+      checkArgument(!query.hasLimit() || query.getLimit() > 0,
+          "Invalid query limit %s: must be positive", query.getLimit());
       return new Source(host, datasetId, query, namespace);
     }
 
@@ -276,6 +295,12 @@ public class DatastoreIO {
     @Override
     public List<Source> splitIntoBundles(long desiredBundleSizeBytes, PipelineOptions options)
         throws Exception {
+      // Users may request a limit on the number of results. We can currently support this by
+      // simply disabling parallel reads and using only a single split.
+      if (query.hasLimit()) {
+        return ImmutableList.of(this);
+      }
+
       long numSplits;
       try {
         numSplits = Math.round(((double) getEstimatedSizeBytes(options)) / desiredBundleSizeBytes);
@@ -301,8 +326,16 @@ public class DatastoreIO {
         return ImmutableList.of(this);
       }
 
+      List<Query> datastoreSplits;
+      try {
+        datastoreSplits = getSplitQueries(Ints.checkedCast(numSplits), options);
+      } catch (IllegalArgumentException | DatastoreException e) {
+        LOG.warn("Unable to parallelize the given query: {}", query, e);
+        return ImmutableList.of(this);
+      }
+
       ImmutableList.Builder<Source> splits = ImmutableList.builder();
-      for (Query splitQuery : getSplitQueries(Ints.checkedCast(numSplits), options)) {
+      for (Query splitQuery : datastoreSplits) {
         splits.add(new Source(host, datasetId, splitQuery, namespace));
       }
       return splits.build();
@@ -466,7 +499,7 @@ public class DatastoreIO {
     private Datastore getDatastore(PipelineOptions pipelineOptions) {
       DatastoreOptions.Builder builder =
           new DatastoreOptions.Builder().host(host).dataset(datasetId).initializer(
-              new RetryHttpRequestInitializer(null));
+              new RetryHttpRequestInitializer());
 
       Credential credential = pipelineOptions.as(GcpOptions.class).getGcpCredential();
       if (credential != null) {
@@ -606,7 +639,7 @@ public class DatastoreIO {
           new DatastoreOptions.Builder()
               .host(sink.host)
               .dataset(sink.datasetId)
-              .initializer(new RetryHttpRequestInitializer(null));
+              .initializer(new RetryHttpRequestInitializer());
       Credential credential = options.as(GcpOptions.class).getGcpCredential();
       if (credential != null) {
         builder.credential(credential);
@@ -805,7 +838,14 @@ public class DatastoreIO {
      * <p>Must be set, or it may result in an I/O error when querying
      * Cloud Datastore.
      */
-    private static final int QUERY_LIMIT = 500;
+    private static final int QUERY_BATCH_LIMIT = 500;
+
+    /**
+     * Remaining user-requested limit on the number of sources to return. If the user did not set a
+     * limit, then this variable will always have the value {@link Integer#MAX_VALUE} and will never
+     * be decremented.
+     */
+    private int userLimit;
 
     private Entity currentEntity;
 
@@ -817,6 +857,8 @@ public class DatastoreIO {
     public DatastoreReader(Source source, Datastore datastore) {
       this.source = source;
       this.datastore = datastore;
+      // If the user set a limit on the query, remember it. Otherwise pin to MAX_VALUE.
+      userLimit = source.query.hasLimit() ? source.query.getLimit() : Integer.MAX_VALUE;
     }
 
     @Override
@@ -875,10 +917,9 @@ public class DatastoreIO {
      * and updates the cursor to get the next batch as needed.
      * Query has specified limit and offset from InputSplit.
      */
-    private Iterator<EntityResult> getIteratorAndMoveCursor()
-        throws DatastoreException {
-      Query.Builder query = this.source.query.toBuilder().clone();
-      query.setLimit(QUERY_LIMIT);
+    private Iterator<EntityResult> getIteratorAndMoveCursor() throws DatastoreException {
+      Query.Builder query = source.query.toBuilder().clone();
+      query.setLimit(Math.min(userLimit, QUERY_BATCH_LIMIT));
       if (currentBatch != null && currentBatch.hasEndCursor()) {
         query.setStartCursor(currentBatch.getEndCursor());
       }
@@ -892,7 +933,17 @@ public class DatastoreIO {
       // https://groups.google.com/forum/#!topic/gcd-discuss/iNs6M1jA2Vw, so
       // use result count to determine if more results might exist.
       int numFetch = currentBatch.getEntityResultCount();
-      moreResults = (numFetch == QUERY_LIMIT) || (currentBatch.getMoreResults() == NOT_FINISHED);
+      if (source.query.hasLimit()) {
+        verify(userLimit >= numFetch,
+            "Expected userLimit %s >= numFetch %s, because query limit %s should be <= userLimit",
+            userLimit, numFetch, query.getLimit());
+        userLimit -= numFetch;
+      }
+      moreResults =
+          // User-limit does not exist (so userLimit == MAX_VALUE) and/or has not been satisfied.
+          (userLimit > 0)
+          // All indications from the API are that there are/may be more results.
+          && ((numFetch == QUERY_BATCH_LIMIT) || (currentBatch.getMoreResults() == NOT_FINISHED));
 
       // May receive a batch of 0 results if the number of records is a multiple
       // of the request limit.

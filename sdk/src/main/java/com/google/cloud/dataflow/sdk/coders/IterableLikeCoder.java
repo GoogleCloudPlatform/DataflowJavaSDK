@@ -16,6 +16,8 @@
 
 package com.google.cloud.dataflow.sdk.coders;
 
+import com.google.cloud.dataflow.sdk.util.BufferedElementCountingOutputStream;
+import com.google.cloud.dataflow.sdk.util.VarInt;
 import com.google.cloud.dataflow.sdk.util.common.ElementByteSizeObservableIterable;
 import com.google.cloud.dataflow.sdk.util.common.ElementByteSizeObserver;
 import com.google.common.base.Preconditions;
@@ -36,6 +38,21 @@ import java.util.Observer;
  * An abstract base class with functionality for assembling a
  * {@link Coder} for a class that implements {@code Iterable}.
  *
+ * <p>To complete a subclass, implement the {@link #decodeToIterable} method. This superclass
+ * will decode the elements in the input stream into a {@link List} and then pass them to that
+ * method to be converted into the appropriate iterable type. Note that this means the input
+ * iterables must fit into memory.
+ *
+ * <p>The format of this coder is as follows:
+ *
+ * <ul>
+ *   <li>If the input {@link Iterable} has a known and finite size, then the size is written to the
+ *       output stream in big endian format, followed by all of the encoded elements.</li>
+ *   <li>If the input {@link Iterable} is not known to have a finite size, then each element
+ *       of the input is preceded by {@code true} encoded as a byte (indicating "more data")
+ *       followed by the encoded element, and terminated by {@code false} encoded as a byte.</li>
+ * </ul>
+ *
  * @param <T> the type of the elements of the {@code Iterable}s being transcoded
  * @param <IterableT> the type of the Iterables being transcoded
  */
@@ -46,10 +63,8 @@ public abstract class IterableLikeCoder<T, IterableT extends Iterable<T>>
   }
 
   /**
-   * Builds an instance of the coder's associated {@code Iterable} from a list
-   * of decoded elements.  If {@code IterableT} is a supertype of {@code List<T>}, the
-   * derived class implementation is permitted to return {@code decodedElements}
-   * directly.
+   * Builds an instance of {@code IterableT}, this coder's associated {@link Iterable}-like
+   * subtype, from a list of decoded elements.
    */
   protected abstract IterableT decodeToIterable(List<T> decodedElements);
 
@@ -60,7 +75,7 @@ public abstract class IterableLikeCoder<T, IterableT extends Iterable<T>>
   private final String iterableName;
 
   /**
-   * Returns the first element in this iterable-like if it is non-empty,
+   * Returns the first element in the iterable-like {@code exampleValue} if it is non-empty,
    * otherwise returns {@code null}.
    */
   protected static <T, IterableT extends Iterable<T>>
@@ -98,15 +113,17 @@ public abstract class IterableLikeCoder<T, IterableT extends Iterable<T>>
         elementCoder.encode(elem, dataOutStream, nestedContext);
       }
     } else {
-      // We don't know the size without traversing it.  So use a
-      // "hasNext" sentinel before each element.
-      // TODO: Don't use the sentinel if context.isWholeStream.
+      // We don't know the size without traversing it so use a fixed size buffer
+      // and encode as many elements as possible into it before outputting the size followed
+      // by the elements.
       dataOutStream.writeInt(-1);
+      BufferedElementCountingOutputStream countingOutputStream =
+          new BufferedElementCountingOutputStream(dataOutStream);
       for (T elem : iterable) {
-        dataOutStream.writeBoolean(true);
-        elementCoder.encode(elem, dataOutStream, nestedContext);
+        countingOutputStream.markElementStart();
+        elementCoder.encode(elem, countingOutputStream, nestedContext);
       }
-      dataOutStream.writeBoolean(false);
+      countingOutputStream.finish();
     }
     // Make sure all our output gets pushed to the underlying outStream.
     dataOutStream.flush();
@@ -125,11 +142,15 @@ public abstract class IterableLikeCoder<T, IterableT extends Iterable<T>>
       }
       return decodeToIterable(elements);
     } else {
-      // We don't know the size a priori.  Check if we're done with
-      // each element.
       List<T> elements = new ArrayList<>();
-      while (dataInStream.readBoolean()) {
-        elements.add(elementCoder.decode(dataInStream, nestedContext));
+      long count;
+      // We don't know the size a priori.  Check if we're done with
+      // each block of elements.
+      while ((count = VarInt.decodeLong(dataInStream)) > 0) {
+        while (count > 0) {
+          elements.add(elementCoder.decode(dataInStream, nestedContext));
+          count -= 1;
+        }
       }
       return decodeToIterable(elements);
     }
@@ -141,7 +162,10 @@ public abstract class IterableLikeCoder<T, IterableT extends Iterable<T>>
   }
 
   /**
-   * Encoding is not deterministic for the general Iterable case, as it depends
+   * {@inheritDoc}
+   *
+   * @throws NonDeterministicException always.
+   * Encoding is not deterministic for the general {@link Iterable} case, as it depends
    * upon the type of iterable. This may allow two objects to compare as equal
    * while the encoding differs.
    */
@@ -152,8 +176,10 @@ public abstract class IterableLikeCoder<T, IterableT extends Iterable<T>>
   }
 
   /**
-   * Returns whether iterable can use lazy counting, since that
-   * requires minimal extra computation.
+   * {@inheritDoc}
+   *
+   * @return {@code true} if the iterable is of a known class that supports lazy counting
+   * of byte size, since that requires minimal extra computation.
    */
   @Override
   public boolean isRegisterByteSizeObserverCheap(
@@ -161,10 +187,6 @@ public abstract class IterableLikeCoder<T, IterableT extends Iterable<T>>
     return iterable instanceof ElementByteSizeObservableIterable;
   }
 
-  /**
-   * Notifies ElementByteSizeObserver about the byte size of the
-   * encoded value using this coder.
-   */
   @Override
   public void registerByteSizeObserver(
       IterableT iterable, ElementByteSizeObserver observer, Context context)
@@ -190,14 +212,24 @@ public abstract class IterableLikeCoder<T, IterableT extends Iterable<T>>
           elementCoder.registerByteSizeObserver(elem, observer, nestedContext);
         }
       } else {
-        // We don't know the size without traversing it.  So use a
-        // "hasNext" sentinel before each element.
-        // TODO: Don't use the sentinel if context.isWholeStream.
+        // TODO: Update to use an accurate count depending on size and count, currently we
+        // are under estimating the size by up to 10 bytes per block of data since we are
+        // not encoding the count prefix which occurs at most once per 64k of data and is upto
+        // 10 bytes long. Since we include the total count we can upper bound the underestimate
+        // to be 10 / 65536 ~= 0.0153% of the actual size.
         observer.update(4L);
+        long count = 0;
         for (T elem : iterable) {
-          observer.update(1L);
+          count += 1;
           elementCoder.registerByteSizeObserver(elem, observer, nestedContext);
         }
+        if (count > 0) {
+          // Update the length based upon the number of counted elements, this helps
+          // eliminate the case where all the elements are encoded in the first block and
+          // it is quite short (e.g. Long.MAX_VALUE nulls encoded with VoidCoder).
+          observer.update(VarInt.getLength(count));
+        }
+        // Update with the terminator byte.
         observer.update(1L);
       }
     }

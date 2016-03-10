@@ -45,7 +45,7 @@ public class BatchTimerInternalsTest {
   }
 
   @Test
-  public void testFiringTimers() {
+  public void testFiringTimers() throws Exception {
     BatchTimerInternals underTest = new BatchTimerInternals(new Instant(0));
     TimerData processingTime1 = TimerData.of(NS1, new Instant(19), TimeDomain.PROCESSING_TIME);
     TimerData processingTime2 = TimerData.of(NS1, new Instant(29), TimeDomain.PROCESSING_TIME);
@@ -74,7 +74,7 @@ public class BatchTimerInternalsTest {
   }
 
   @Test
-  public void testTimerOrdering() {
+  public void testTimerOrdering() throws Exception {
     BatchTimerInternals underTest = new BatchTimerInternals(new Instant(0));
     TimerData watermarkTime1 = TimerData.of(NS1, new Instant(19), TimeDomain.EVENT_TIME);
     TimerData processingTime1 = TimerData.of(NS1, new Instant(19), TimeDomain.PROCESSING_TIME);
@@ -86,7 +86,7 @@ public class BatchTimerInternalsTest {
     underTest.setTimer(processingTime2);
     underTest.setTimer(watermarkTime2);
 
-    underTest.advanceWatermark(mockRunner, new Instant(30));
+    underTest.advanceInputWatermark(mockRunner, new Instant(30));
     Mockito.verify(mockRunner).onTimer(watermarkTime1);
     Mockito.verify(mockRunner).onTimer(watermarkTime2);
     Mockito.verifyNoMoreInteractions(mockRunner);
@@ -98,7 +98,7 @@ public class BatchTimerInternalsTest {
   }
 
   @Test
-  public void testDeduplicate() {
+  public void testDeduplicate() throws Exception {
     BatchTimerInternals underTest = new BatchTimerInternals(new Instant(0));
     TimerData watermarkTime = TimerData.of(NS1, new Instant(19), TimeDomain.EVENT_TIME);
     TimerData processingTime = TimerData.of(NS1, new Instant(19), TimeDomain.PROCESSING_TIME);
@@ -107,7 +107,7 @@ public class BatchTimerInternalsTest {
     underTest.setTimer(processingTime);
     underTest.setTimer(processingTime);
     underTest.advanceProcessingTime(mockRunner, new Instant(20));
-    underTest.advanceWatermark(mockRunner, new Instant(20));
+    underTest.advanceInputWatermark(mockRunner, new Instant(20));
 
     Mockito.verify(mockRunner).onTimer(processingTime);
     Mockito.verify(mockRunner).onTimer(watermarkTime);

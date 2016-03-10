@@ -16,14 +16,16 @@
 
 package com.google.cloud.dataflow.sdk.coders;
 
+import com.google.cloud.dataflow.sdk.coders.protobuf.ProtoCoder;
+
 import java.lang.reflect.InvocationTargetException;
 
 /**
- * A {@code StringDelegateCoder<T>} wraps a {@code Coder<String>}
- * and encodes/decodes values of type {@code T} via string representations.
+ * A {@link Coder} that wraps a {@code Coder<String>}
+ * and encodes/decodes values via string representations.
  *
  * <p>To decode, the input byte stream is decoded to
- * a {@code String}, and this is passed to the single-arg
+ * a {@link String}, and this is passed to the single-argument
  * constructor for {@code T}.
  *
  * <p>To encode, the input value is converted via {@code toString()},
@@ -35,7 +37,7 @@ import java.lang.reflect.InvocationTargetException;
  *
  * <p>This method of encoding is not designed for ease of evolution of {@code Clazz};
  * it should only be used in cases where the class is stable or the encoding is not
- * important. If evolution of the class is important, see {@link Proto2Coder}, {@link AvroCoder},
+ * important. If evolution of the class is important, see {@link ProtoCoder}, {@link AvroCoder},
  * or {@link JAXBCoder}.
  *
  * @param <T> The type of objects coded.

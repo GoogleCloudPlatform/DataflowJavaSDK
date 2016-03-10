@@ -17,19 +17,21 @@
 package com.google.cloud.dataflow.sdk.transforms;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
 
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.BigEndianIntegerCoder;
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
-import com.google.cloud.dataflow.sdk.runners.RecordingPipelineVisitor;
 import com.google.cloud.dataflow.sdk.testing.DataflowAssert;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
+import com.google.cloud.dataflow.sdk.transforms.windowing.FixedWindows;
+import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
+import com.google.cloud.dataflow.sdk.transforms.windowing.Window.Bound;
 import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 
 import org.hamcrest.Matchers;
+import org.joda.time.Duration;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -38,6 +40,7 @@ import org.junit.runners.JUnit4;
 
 import java.io.Serializable;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
@@ -141,6 +144,23 @@ public class TopTest {
   }
 
   @Test
+  public void testTopEmptyWithIncompatibleWindows() {
+    Pipeline p = TestPipeline.create();
+    Bound<String> windowingFn = Window.<String>into(FixedWindows.of(Duration.standardDays(10L)));
+    PCollection<String> input =
+        p.apply(Create.timestamped(Collections.<String>emptyList(), Collections.<Long>emptyList()))
+         .apply(windowingFn);
+
+    expectedEx.expect(IllegalStateException.class);
+    expectedEx.expectMessage("Top");
+    expectedEx.expectMessage("GlobalWindows");
+    expectedEx.expectMessage("withoutDefaults");
+    expectedEx.expectMessage("asSingletonView");
+
+    input.apply(Top.of(1, new OrderByLength()));
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   public void testTopZero() {
     Pipeline p = TestPipeline.create();
@@ -200,23 +220,6 @@ public class TopTest {
     expectedEx.expectMessage(Matchers.containsString(">= 0"));
 
     input.apply(Top.of(-1, new OrderByLength()));
-  }
-
-  @SuppressWarnings("deprecation")  // deprecated for testing
-  @Test
-  public void testTransformName() {
-    Pipeline p = TestPipeline.create();
-    PCollection<String> input =
-        p.apply(Create.of(Arrays.asList(COLLECTION))
-            .withCoder(StringUtf8Coder.of()));
-
-    PTransform<PCollection<String>, PCollection<List<String>>> top = Top
-        .of(10, new OrderByLength());
-    input.apply(top);
-
-    p.traverseTopologically(new RecordingPipelineVisitor());
-    // Check that the transform is named "Top" rather than "Combine".
-    assertThat(p.getFullNameForTesting(top), Matchers.startsWith("Top"));
   }
 
   @Test

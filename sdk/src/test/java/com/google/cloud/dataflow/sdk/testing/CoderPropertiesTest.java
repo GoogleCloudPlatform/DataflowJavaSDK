@@ -19,6 +19,7 @@ package com.google.cloud.dataflow.sdk.testing;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
 
+import com.google.cloud.dataflow.sdk.coders.Coder.Context;
 import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.coders.CustomCoder;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
@@ -46,7 +47,7 @@ public class CoderPropertiesTest {
   }
 
   /** A coder that says it is not deterministic but actually is. */
-  private static class NonDeterministicCoder extends CustomCoder<String> {
+  public static class NonDeterministicCoder extends CustomCoder<String> {
     @Override
     public void encode(String value, OutputStream outStream, Context context)
         throws CoderException, IOException {
@@ -181,5 +182,33 @@ public class CoderPropertiesTest {
     expectedException.expect(RuntimeException.class);
     expectedException.expectMessage("I forgot something...");
     CoderProperties.coderDecodeEncodeEqual(new ForgetfulSerializingCoder(1), "TestData");
+  }
+
+  /** A coder which closes the underlying stream during encoding and decoding. */
+  public static class ClosingCoder extends CustomCoder<String> {
+    @Override
+    public void encode(String value, OutputStream outStream, Context context) throws IOException {
+      outStream.close();
+    }
+
+    @Override
+    public String decode(InputStream inStream, Context context) throws IOException {
+      inStream.close();
+      return null;
+    }
+  }
+
+  @Test
+  public void testClosingCoderFailsWhenDecoding() throws Exception {
+    expectedException.expect(UnsupportedOperationException.class);
+    expectedException.expectMessage("Caller does not own the underlying");
+    CoderProperties.decode(new ClosingCoder(), Context.NESTED, new byte[0]);
+  }
+
+  @Test
+  public void testClosingCoderFailsWhenEncoding() throws Exception {
+    expectedException.expect(UnsupportedOperationException.class);
+    expectedException.expectMessage("Caller does not own the underlying");
+    CoderProperties.encode(new ClosingCoder(), Context.NESTED, "test-value");
   }
 }

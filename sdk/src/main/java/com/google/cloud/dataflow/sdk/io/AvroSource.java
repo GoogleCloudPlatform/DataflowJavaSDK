@@ -19,11 +19,14 @@ package com.google.cloud.dataflow.sdk.io;
 import com.google.cloud.dataflow.sdk.annotations.Experimental;
 import com.google.cloud.dataflow.sdk.coders.AvroCoder;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
-import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
+import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
+import com.google.cloud.dataflow.sdk.util.AvroUtils;
+import com.google.cloud.dataflow.sdk.util.AvroUtils.AvroMetadata;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.common.base.Preconditions;
 
 import org.apache.avro.Schema;
+import org.apache.avro.file.CodecFactory;
 import org.apache.avro.file.DataFileConstants;
 import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.generic.GenericRecord;
@@ -43,29 +46,28 @@ import java.io.PushbackInputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 
-// JAVADOCSTYLE OFF
+// CHECKSTYLE.OFF: JavadocStyle
 /**
- * A {@code FileBasedSource} for reading Avro-format files.
+ * A {@link FileBasedSource} for reading Avro files.
  *
  * <p>To read a {@link PCollection} of objects from one or more Avro files, use
- * {@link AvroSource#from} to specify the path(s) of the files to read. The {@code AvroSource} that
- * is returned will read objects of type {@code GenericRecord} with the schema(s) that were written
- * at file creation. To further configure the {@code AvroSource} to read with a user-defined schema,
- * or to return records of a type other than {@code GenericRecord}, use
- * {@link AvroSource#withSchema(Schema)} (using a {@code Schema} object),
+ * {@link AvroSource#from} to specify the path(s) of the files to read. The {@link AvroSource} that
+ * is returned will read objects of type {@link GenericRecord} with the schema(s) that were written
+ * at file creation. To further configure the {@link AvroSource} to read with a user-defined schema,
+ * or to return records of a type other than {@link GenericRecord}, use
+ * {@link AvroSource#withSchema(Schema)} (using an Avro {@link Schema}),
  * {@link AvroSource#withSchema(String)} (using a JSON schema), or
- * {@link AvroSource#withSchema(Class)} (to return objects of the class specified).
+ * {@link AvroSource#withSchema(Class)} (to return objects of the Avro-generated class specified).
  *
- * <p>An {@code AvroSource} can be read from using the {@link Read} transform. For example:
+ * <p>An {@link AvroSource} can be read from using the {@link Read} transform. For example:
  *
  * <pre>
  * {@code
- * AvroSource<T> source = AvroSource.from(file.toPath()).withSchema(MyType.class);
+ * AvroSource<MyType> source = AvroSource.from(file.toPath()).withSchema(MyType.class);
  * PCollection<MyType> records = Read.from(mySource);
  * }
  * </pre>
@@ -90,31 +92,29 @@ import java.util.zip.InflaterInputStream;
  * records. Blocks may be encoded (e.g., with bzip2, deflate, snappy, etc.). Blocks are delineated
  * from one another by a 16-byte sync marker.
  *
- * <p>An {@code AvroSource} for a subrange of a single file contains records in the blocks such that
+ * <p>An {@link AvroSource} for a subrange of a single file contains records in the blocks such that
  * the start offset of the block is greater than or equal to the start offset of the source and less
  * than the end offset of the source.
  *
  * <p>To use XZ-encoded Avro files, please include an explicit dependency on {@code xz-1.5.jar},
  * which has been marked as optional in the Maven {@code sdk/pom.xml} for Google Cloud Dataflow:
- * <pre>
- * {@code
+ *
+ * <pre>{@code
  * <dependency>
  *   <groupId>org.tukaani</groupId>
  *   <artifactId>xz</artifactId>
  *   <version>1.5</version>
  * </dependency>
- * }
- * </pre>
+ * }</pre>
+ *
+ * <h3>Permissions</h3>
+ * <p>Permission requirements depend on the {@link PipelineRunner} that is used to execute the
+ * Dataflow job. Please refer to the documentation of corresponding {@link PipelineRunner}s for
+ * more details.
  *
  * @param <T> The type of records to be read from the source.
- *
- * <p><h3>Permissions</h3>
- * Permission requirements depend on the
- * {@link com.google.cloud.dataflow.sdk.runners.PipelineRunner PipelineRunner} that is
- * used to execute the Dataflow job. Please refer to the documentation of corresponding
- * {@code PipelineRunner}s for more details.
  */
-// JAVADOCSTYLE ON
+// CHECKSTYLE.ON: JavadocStyle
 @Experimental(Experimental.Kind.SOURCE_SINK)
 public class AvroSource<T> extends BlockBasedSource<T> {
   // Default minimum bundle size (chosen as two default-size Avro blocks to attempt to
@@ -152,7 +152,7 @@ public class AvroSource<T> extends BlockBasedSource<T> {
   private transient Schema readSchema;
 
   /**
-   * Creates a {@code Read} transform that will read from an {@code AvroSource} that is configured
+   * Creates a {@link Read} transform that will read from an {@link AvroSource} that is configured
    * to read records of the given type from a file pattern.
    */
   public static <T> Read.Bounded<T> readFromFileWithClass(String filePattern, Class<T> clazz) {
@@ -161,9 +161,9 @@ public class AvroSource<T> extends BlockBasedSource<T> {
   }
 
   /**
-   * Creates an {@code AvroSource} that reads from the given file name or pattern ("glob"). The
-   * returned source can be further configured by calling {@code withSchema} to return a type other
-   * than {@code GenericRecord}.
+   * Creates an {@link AvroSource} that reads from the given file name or pattern ("glob"). The
+   * returned source can be further configured by calling {@link #withSchema} to return a type other
+   * than {@link GenericRecord}.
    */
   public static AvroSource<GenericRecord> from(String fileNameOrPattern) {
     return new AvroSource<>(
@@ -171,8 +171,10 @@ public class AvroSource<T> extends BlockBasedSource<T> {
   }
 
   /**
-   * Returns an {@code AvroSource} that's like this one but reads files containing records that
+   * Returns an {@link AvroSource} that's like this one but reads files containing records that
    * conform to the given schema.
+   *
+   * <p>Does not modify this object.
    */
   public AvroSource<GenericRecord> withSchema(String schema) {
     return new AvroSource<>(
@@ -180,8 +182,10 @@ public class AvroSource<T> extends BlockBasedSource<T> {
   }
 
   /**
-   * Returns an {@code AvroSource} that's like this one but reads files containing records that
+   * Returns an {@link AvroSource} that's like this one but reads files containing records that
    * conform to the given schema.
+   *
+   * <p>Does not modify this object.
    */
   public AvroSource<GenericRecord> withSchema(Schema schema) {
     return new AvroSource<>(getFileOrPatternSpec(), getMinBundleSize(), schema.toString(),
@@ -189,8 +193,10 @@ public class AvroSource<T> extends BlockBasedSource<T> {
   }
 
   /**
-   * Returns an {@code AvroSource} that's like this one but reads files containing records of the
+   * Returns an {@link AvroSource} that's like this one but reads files containing records of the
    * type of the given class.
+   *
+   * <p>Does not modify this object.
    */
   public <X> AvroSource<X> withSchema(Class<X> clazz) {
     return new AvroSource<X>(getFileOrPatternSpec(), getMinBundleSize(),
@@ -198,8 +204,10 @@ public class AvroSource<T> extends BlockBasedSource<T> {
   }
 
   /**
-   * Returns an {@code AvroSource} that's like this one but uses the supplied minimum bundle size.
+   * Returns an {@link AvroSource} that's like this one but uses the supplied minimum bundle size.
    * Refer to {@link OffsetBasedSource} for a description of {@code minBundleSize} and its use.
+   *
+   * <p>Does not modify this object.
    */
   public AvroSource<T> withMinBundleSize(long minBundleSize) {
     return new AvroSource<T>(
@@ -233,83 +241,8 @@ public class AvroSource<T> extends BlockBasedSource<T> {
     super.validate();
   }
 
-  /**
-   * Avro file metadata. Visible for testing.
-   */
-  static class Metadata {
-    byte[] syncMarker;
-    String codec;
-    String schema;
-
-    public Metadata(byte[] syncMarker, String codec, String schema) {
-      this.syncMarker = syncMarker;
-      this.codec = codec;
-      this.schema = schema;
-    }
-  }
-
-  /**
-   * Reads the {@code Metadata} from the header of an Avro file. Throws an IOException if the file
-   * is an invalid format.
-   *
-   * <p>This method parses the header of an Avro
-   * <a href="https://avro.apache.org/docs/1.7.7/spec.html#Object+Container+Files">
-   * Object Container File</a>.
-   */
-  static Metadata readMetadataFromFile(String fileName) throws IOException {
-    String codec = null;
-    String schema = null;
-    byte[] syncMarker;
-    try (InputStream stream =
-        Channels.newInputStream(IOChannelUtils.getFactory(fileName).open(fileName))) {
-      BinaryDecoder decoder = DecoderFactory.get().binaryDecoder(stream, null);
-
-      // The header of an object container file begins with a four-byte magic number, followed
-      // by the file metadata (including the schema and codec), encoded as a map. Finally, the
-      // header ends with the file's 16-byte sync marker.
-      // See https://avro.apache.org/docs/1.7.7/spec.html#Object+Container+Files for details on
-      // the encoding of container files.
-
-      // Read the magic number.
-      byte[] magic = new byte[DataFileConstants.MAGIC.length];
-      decoder.readFixed(magic);
-      if (!Arrays.equals(magic, DataFileConstants.MAGIC)) {
-        throw new IOException("Missing Avro file signature: " + fileName);
-      }
-
-      // Read the metadata to find the codec and schema.
-      ByteBuffer valueBuffer = ByteBuffer.allocate(512);
-      long numRecords = decoder.readMapStart();
-      while (numRecords > 0) {
-        for (long recordIndex = 0; recordIndex < numRecords; recordIndex++) {
-          String key = decoder.readString();
-          // readBytes() clears the buffer and returns a buffer where:
-          // - position is the start of the bytes read
-          // - limit is the end of the bytes read
-          valueBuffer = decoder.readBytes(valueBuffer);
-          byte[] bytes = new byte[valueBuffer.remaining()];
-          valueBuffer.get(bytes);
-          if (key.equals(DataFileConstants.CODEC)) {
-            codec = new String(bytes, "UTF-8");
-          } else if (key.equals(DataFileConstants.SCHEMA)) {
-            schema = new String(bytes, "UTF-8");
-          }
-        }
-        numRecords = decoder.mapNext();
-      }
-      if (codec == null) {
-        codec = DataFileConstants.NULL_CODEC;
-      }
-
-      // Finally, read the sync marker.
-      syncMarker = new byte[DataFileConstants.SYNC_SIZE];
-      decoder.readFixed(syncMarker);
-    }
-    return new Metadata(syncMarker, codec, schema);
-  }
-
   @Override
-  public AvroSource<T> createForSubrangeOfFile(String fileName, long start, long end) {
+  public BlockBasedSource<T> createForSubrangeOfFile(String fileName, long start, long end) {
     byte[] syncMarker = this.syncMarker;
     String codec = this.codec;
     String readSchemaString = this.readSchemaString;
@@ -319,21 +252,21 @@ public class AvroSource<T> extends BlockBasedSource<T> {
     // for a subrange of a file, we can initialize these values. When the resulting AvroSource
     // is further split, they do not need to be read again.
     if (codec == null || syncMarker == null || fileSchemaString == null) {
-      Metadata metadata;
+      AvroMetadata metadata;
       try {
         Collection<String> files = FileBasedSource.expandFilePattern(fileName);
         Preconditions.checkArgument(files.size() <= 1, "More than 1 file matched %s");
-        metadata = readMetadataFromFile(fileName);
+        metadata = AvroUtils.readMetadataFromFile(fileName);
       } catch (IOException e) {
         throw new RuntimeException("Error reading metadata from file " + fileName, e);
       }
-      codec = metadata.codec;
-      syncMarker = metadata.syncMarker;
-      fileSchemaString = metadata.schema;
+      codec = metadata.getCodec();
+      syncMarker = metadata.getSyncMarker();
+      fileSchemaString = metadata.getSchemaString();
       // If the source was created with a null schema, use the schema that we read from the file's
       // metadata.
       if (readSchemaString == null) {
-        readSchemaString = metadata.schema;
+        readSchemaString = metadata.getSchemaString();
       }
     }
     return new AvroSource<T>(fileName, getMinBundleSize(), start, end, readSchemaString, type,
@@ -341,7 +274,7 @@ public class AvroSource<T> extends BlockBasedSource<T> {
   }
 
   @Override
-  public AvroReader<T> createSingleFileReader(PipelineOptions options) {
+  protected BlockBasedReader<T> createSingleFileReader(PipelineOptions options) {
     return new AvroReader<T>(this);
   }
 
@@ -413,6 +346,7 @@ public class AvroSource<T> extends BlockBasedSource<T> {
 
   /**
    * A {@link BlockBasedSource.Block} of Avro records.
+   *
    * @param <T> The type of records stored in the block.
    */
   @Experimental(Experimental.Kind.SOURCE_SINK)
@@ -436,10 +370,9 @@ public class AvroSource<T> extends BlockBasedSource<T> {
      * Decodes a byte array as an InputStream. The byte array may be compressed using some
      * codec. Reads from the returned stream will result in decompressed bytes.
      *
-     * <p>This supports the same codecs as Avro's {@code CodecFactory}, namely those defined in
-     * <a
-     * href="https://avro.apache.org/docs/1.7.7/api/java/org/apache/avro/file/DataFileConstants.html">
-     * {@code DataFileConstants}</a>.
+     * <p>This supports the same codecs as Avro's {@link CodecFactory}, namely those defined in
+     * {@link DataFileConstants}.
+     *
      * <ul>
      * <li>"snappy" : Google's Snappy compression
      * <li>"deflate" : deflate compression
@@ -535,12 +468,15 @@ public class AvroSource<T> extends BlockBasedSource<T> {
     // Decoder to decode binary-encoded values from the buffer.
     private BinaryDecoder decoder;
 
+    /**
+     * Reads Avro records of type {@code T} from the specified source.
+     */
     public AvroReader(AvroSource<T> source) {
       super(source);
     }
 
     @Override
-    public AvroSource<T> getCurrentSource() {
+    public synchronized AvroSource<T> getCurrentSource() {
       return (AvroSource<T>) super.getCurrentSource();
     }
 
@@ -608,7 +544,7 @@ public class AvroSource<T> extends BlockBasedSource<T> {
     }
 
     /**
-     * Creates a {@code PushbackInputStream} that has a large enough pushback buffer to be able
+     * Creates a {@link PushbackInputStream} that has a large enough pushback buffer to be able
      * to push back the syncBuffer and the readBuffer.
      */
     private PushbackInputStream createStream(ReadableByteChannel channel) {
@@ -661,7 +597,7 @@ public class AvroSource<T> extends BlockBasedSource<T> {
     }
 
     /**
-     * A {@code Seeker} looks for a given marker within a byte buffer. Uses naive string matching
+     * A {@link Seeker} looks for a given marker within a byte buffer. Uses naive string matching
      * with a sliding window, as sync markers are small and random.
      */
     static class Seeker {
@@ -675,7 +611,7 @@ public class AvroSource<T> extends BlockBasedSource<T> {
       private int available = 0;
 
       /**
-       * Create a {@code Seeker} that looks for the given marker.
+       * Create a {@link Seeker} that looks for the given marker.
        */
       public Seeker(byte[] marker) {
         this.marker = marker;

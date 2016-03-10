@@ -16,8 +16,10 @@
 
 package com.google.cloud.dataflow.sdk.options;
 
+import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.runners.DirectPipeline;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
+import com.google.cloud.dataflow.sdk.values.PCollection;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -37,4 +39,37 @@ public interface DirectPipelineOptions extends
       + " If not explicitly specified, a random seed will be generated.")
   Long getDirectPipelineRunnerRandomSeed();
   void setDirectPipelineRunnerRandomSeed(Long value);
+
+  /**
+   * Controls whether the runner should ensure that all of the elements of
+   * the pipeline, such as DoFns, can be serialized.
+   */
+  @JsonIgnore
+  @Description("Controls whether the runner should ensure that all of the elements of the "
+      + "pipeline, such as DoFns, can be serialized.")
+  @Default.Boolean(true)
+  boolean isTestSerializability();
+  void setTestSerializability(boolean testSerializability);
+
+  /**
+   * Controls whether the runner should ensure that all of the elements of
+   * every {@link PCollection} can be encoded using the appropriate
+   * {@link Coder}.
+   */
+  @JsonIgnore
+  @Description("Controls whether the runner should ensure that all of the elements of every "
+      + "PCollection can be encoded using the appropriate Coder.")
+  @Default.Boolean(true)
+  boolean isTestEncodability();
+  void setTestEncodability(boolean testEncodability);
+
+  /**
+   * Controls whether the runner should randomize the order of each
+   * {@link PCollection}.
+   */
+  @JsonIgnore
+  @Description("Controls whether the runner should randomize the order of each PCollection.")
+  @Default.Boolean(true)
+  boolean isTestUnorderedness();
+  void setTestUnorderedness(boolean testUnorderedness);
 }

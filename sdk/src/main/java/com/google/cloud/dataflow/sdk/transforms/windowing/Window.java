@@ -20,23 +20,16 @@ import com.google.cloud.dataflow.sdk.annotations.Experimental;
 import com.google.cloud.dataflow.sdk.annotations.Experimental.Kind;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.Coder.NonDeterministicException;
-import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.util.AssignWindowsDoFn;
-import com.google.cloud.dataflow.sdk.util.DirectModeExecutionContext;
-import com.google.cloud.dataflow.sdk.util.DoFnRunner;
-import com.google.cloud.dataflow.sdk.util.NullSideInputReader;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
 import com.google.cloud.dataflow.sdk.values.PCollection;
-import com.google.cloud.dataflow.sdk.values.TupleTag;
 
 import org.joda.time.Duration;
-
-import java.util.ArrayList;
 
 import javax.annotation.Nullable;
 
@@ -93,7 +86,7 @@ import javax.annotation.Nullable;
  *
  * <h2> Triggers </h2>
  *
- * <p>{@link Window.Bound#triggering(Trigger)} allows specifying a trigger to control when
+ * <p>{@link Window.Bound#triggering(TriggerBuilder)} allows specifying a trigger to control when
  * (in processing time) results for the given window can be produced. If unspecified, the default
  * behavior is to trigger first when the watermark passes the end of the window, and then trigger
  * again every time there is late arriving data.
@@ -114,14 +107,12 @@ import javax.annotation.Nullable;
  * <pre> {@code
  * PCollection<String> items = ...;
  * PCollection<String> windowed_items = items.apply(
- *   Window.<String>into(FixedWindows.of(Duration.standardMinutes(1))
- *      .triggering(AfterEach.inOrder(
- *          AfterWatermark.pastEndOfWindow(),
- *          Repeatedly
- *              .forever(AfterProcessingTime
- *                  .pastFirstElementInPane().plusDelay(Duration.standardMinutes(1)))
- *              .orFinally(AfterWatermark
- *                  .pastEndOfWindow().plusDelay(Duration.standardDays(1)))));
+ *   Window.<String>into(FixedWindows.of(Duration.standardMinutes(1)))
+ *      .triggering(
+ *          AfterWatermark.pastEndOfWindow()
+ *              .withLateFirings(AfterProcessingTime
+ *                  .pastFirstElementInPane().plusDelayOf(Duration.standardHours(1))))
+ *      .withAllowedLateness(Duration.standardDays(1)));
  * PCollection<KV<String, Long>> windowed_counts = windowed_items.apply(
  *   Count.<String>perElement());
  * } </pre>
@@ -132,15 +123,17 @@ import javax.annotation.Nullable;
  * <pre> {@code
  * PCollection<String> windowed_items = items.apply(
  *   Window.<String>into(FixedWindows.of(Duration.standardMinutes(1))
- *      .triggering(Repeatedly
- *              .forever(AfterProcessingTime
- *                  .pastFirstElementInPane().plusDelay(Duration.standardMinutes(1)))
- *              .orFinally(AfterWatermark.pastEndOfWindow())));
+ *      .triggering(
+ *      .triggering(
+ *          AfterWatermark.pastEndOfWindow()
+ *              .withEarlyFirings(AfterProcessingTime
+ *                  .pastFirstElementInPane().plusDelayOf(Duration.standardMinutes(1))))
+ *      .withAllowedLateness(Duration.ZERO));
  * } </pre>
  *
- * <p>After a {@link com.google.cloud.dataflow.sdk.transforms.GroupByKey} the trigger is reset to
- * the default trigger. If you want to produce early results from a pipeline consisting of multiple
- * {@code GroupByKey}s, you must set a trigger before <i>each</i> {@code GroupByKey}.
+ * <p>After a {@link com.google.cloud.dataflow.sdk.transforms.GroupByKey} the trigger is set to
+ * a trigger that will preserve the intent of the upstream trigger.  See
+ * {@link Trigger#getContinuationTrigger} for more information.
  *
  * <p>See {@link Trigger} for details on the available triggers.
  */
@@ -185,7 +178,7 @@ public class Window {
    *
    * <p>The resulting {@code PTransform}'s types have been bound, with both the
    * input and output being a {@code PCollection<T>}, inferred from the types of
-   * the argument {@code WindowFn<T, B>}.  It is ready to be applied, or further
+   * the argument {@code WindowFn}.  It is ready to be applied, or further
    * properties can be set on it first.
    */
   public static <T> Bound<T> into(WindowFn<? super T, ?> fn) {
@@ -360,7 +353,7 @@ public class Window {
 
   /**
    * A {@code PTransform} that windows the elements of a {@code PCollection<T>},
-   * into finite windows according to a user-specified {@code WindowFn<T, B>}.
+   * into finite windows according to a user-specified {@code WindowFn}.
    *
    * @param <T> The type of elements this {@code Window} is applied to
    */
@@ -371,21 +364,23 @@ public class Window {
     @Nullable private final AccumulationMode mode;
     @Nullable private final Duration allowedLateness;
     @Nullable private final ClosingBehavior closingBehavior;
+    @Nullable private final OutputTimeFn<?> outputTimeFn;
 
     private Bound(String name,
         @Nullable WindowFn<? super T, ?> windowFn, @Nullable Trigger<?> trigger,
         @Nullable AccumulationMode mode, @Nullable Duration allowedLateness,
-        ClosingBehavior behavior) {
+        ClosingBehavior behavior, @Nullable OutputTimeFn<?> outputTimeFn) {
       super(name);
       this.windowFn = windowFn;
       this.trigger = trigger;
       this.mode = mode;
       this.allowedLateness = allowedLateness;
       this.closingBehavior = behavior;
+      this.outputTimeFn = outputTimeFn;
     }
 
     private Bound(String name) {
-      this(name, null, null, null, null, null);
+      this(name, null, null, null, null, null, null);
     }
 
     /**
@@ -402,7 +397,8 @@ public class Window {
         throw new IllegalArgumentException("Window coders must be deterministic.", e);
       }
 
-      return new Bound<>(name, windowFn, trigger, mode, allowedLateness, closingBehavior);
+      return new Bound<>(
+          name, windowFn, trigger, mode, allowedLateness, closingBehavior, outputTimeFn);
     }
 
     /**
@@ -415,7 +411,8 @@ public class Window {
      * explanation.
      */
     public Bound<T> named(String name) {
-      return new Bound<>(name, windowFn, trigger, mode, allowedLateness, closingBehavior);
+      return new Bound<>(
+          name, windowFn, trigger, mode, allowedLateness, closingBehavior, outputTimeFn);
     }
 
     /**
@@ -432,7 +429,13 @@ public class Window {
     @Experimental(Kind.TRIGGER)
     public Bound<T> triggering(TriggerBuilder<?> trigger) {
       return new Bound<T>(
-          name, windowFn, trigger.buildTrigger(), mode, allowedLateness, closingBehavior);
+          name,
+          windowFn,
+          trigger.buildTrigger(),
+          mode,
+          allowedLateness,
+          closingBehavior,
+          outputTimeFn);
     }
 
    /**
@@ -444,9 +447,14 @@ public class Window {
     */
     @Experimental(Kind.TRIGGER)
    public Bound<T> discardingFiredPanes() {
-     return new Bound<T>(name,
-         windowFn, trigger, AccumulationMode.DISCARDING_FIRED_PANES,
-         allowedLateness, closingBehavior);
+     return new Bound<T>(
+         name,
+         windowFn,
+         trigger,
+         AccumulationMode.DISCARDING_FIRED_PANES,
+         allowedLateness,
+         closingBehavior,
+         outputTimeFn);
    }
 
    /**
@@ -458,9 +466,14 @@ public class Window {
     */
    @Experimental(Kind.TRIGGER)
    public Bound<T> accumulatingFiredPanes() {
-     return new Bound<T>(name,
-         windowFn, trigger, AccumulationMode.ACCUMULATING_FIRED_PANES,
-         allowedLateness, closingBehavior);
+     return new Bound<T>(
+         name,
+         windowFn,
+         trigger,
+         AccumulationMode.ACCUMULATING_FIRED_PANES,
+         allowedLateness,
+         closingBehavior,
+         outputTimeFn);
    }
 
     /**
@@ -478,7 +491,18 @@ public class Window {
      */
     @Experimental(Kind.TRIGGER)
     public Bound<T> withAllowedLateness(Duration allowedLateness) {
-      return new Bound<T>(name, windowFn, trigger, mode, allowedLateness, closingBehavior);
+      return new Bound<T>(
+          name, windowFn, trigger, mode, allowedLateness, closingBehavior, outputTimeFn);
+    }
+
+    /**
+     * <b><i>(Experimental)</i></b> Override the default {@link OutputTimeFn}, to control
+     * the output timestamp of values output from a {@link GroupByKey} operation.
+     */
+    @Experimental(Kind.OUTPUT_TIME)
+    public Bound<T> withOutputTimeFn(OutputTimeFn<?> outputTimeFn) {
+      return new Bound<T>(
+          name, windowFn, trigger, mode, allowedLateness, closingBehavior, outputTimeFn);
     }
 
     /**
@@ -493,10 +517,17 @@ public class Window {
      */
     @Experimental(Kind.TRIGGER)
     public Bound<T> withAllowedLateness(Duration allowedLateness, ClosingBehavior behavior) {
-      return new Bound<T>(name, windowFn, trigger, mode, allowedLateness, behavior);
+      return new Bound<T>(name, windowFn, trigger, mode, allowedLateness, behavior, outputTimeFn);
     }
 
-    private WindowingStrategy<?, ?> getOutputStrategy(WindowingStrategy<?, ?> inputStrategy) {
+    /**
+     * Get the output strategy of this {@link Window.Bound Window PTransform}. For internal use
+     * only.
+     */
+    // Rawtype cast of OutputTimeFn cannot be eliminated with intermediate variable, as it is
+    // casting between wildcards
+    public WindowingStrategy<?, ?> getOutputStrategyInternal(
+        WindowingStrategy<?, ?> inputStrategy) {
       WindowingStrategy<?, ?> result = inputStrategy;
       if (windowFn != null) {
         result = result.withWindowFn(windowFn);
@@ -513,19 +544,31 @@ public class Window {
       if (closingBehavior != null) {
         result = result.withClosingBehavior(closingBehavior);
       }
+      if (outputTimeFn != null) {
+        result = result.withOutputTimeFn(outputTimeFn);
+      }
       return result;
+    }
+
+    /**
+     * Get the {@link WindowFn} of this {@link Window.Bound Window PTransform}.
+     */
+    public WindowFn<? super T, ?> getWindowFn() {
+      return windowFn;
     }
 
     @Override
     public void validate(PCollection<T> input) {
-      WindowingStrategy<?, ?> outputStrategy = getOutputStrategy(input.getWindowingStrategy());
+      WindowingStrategy<?, ?> outputStrategy =
+          getOutputStrategyInternal(input.getWindowingStrategy());
 
       // Make sure that the windowing strategy is complete & valid.
       if (outputStrategy.isTriggerSpecified()
           && !(outputStrategy.getTrigger().getSpec() instanceof DefaultTrigger)) {
-        if (!outputStrategy.isAllowedLatenessSpecified()) {
-          throw new IllegalArgumentException(
-              "Calling .triggering() to specify a trigger requires that the allowed lateness be"
+        if (!(outputStrategy.getWindowFn() instanceof GlobalWindows)
+            && !outputStrategy.isAllowedLatenessSpecified()) {
+          throw new IllegalArgumentException("Except when using GlobalWindows,"
+              + " calling .triggering() to specify a trigger requires that the allowed lateness be"
               + " specified using .withAllowedLateness() to set the upper bound on how late data"
               + " can arrive before being dropped. See Javadoc for more details.");
         }
@@ -541,17 +584,23 @@ public class Window {
 
     @Override
     public PCollection<T> apply(PCollection<T> input) {
-      WindowingStrategy<?, ?> outputStrategy = getOutputStrategy(input.getWindowingStrategy());
+      WindowingStrategy<?, ?> outputStrategy =
+          getOutputStrategyInternal(input.getWindowingStrategy());
+      PCollection<T> output;
       if (windowFn != null) {
         // If the windowFn changed, we create a primitive, and run the AssignWindows operation here.
-        return PCollection.<T>createPrimitiveOutputInternal(
-            input.getPipeline(), outputStrategy, input.isBounded());
+        output = assignWindows(input, windowFn);
       } else {
         // If the windowFn didn't change, we just run a pass-through transform and then set the
         // new windowing strategy.
-        return input.apply(Window.<T>identity()).setWindowingStrategyInternal(outputStrategy);
+        output = input.apply(Window.<T>identity());
       }
+      return output.setWindowingStrategyInternal(outputStrategy);
+    }
 
+    private <T, W extends BoundedWindow> PCollection<T> assignWindows(
+        PCollection<T> input, WindowFn<? super T, W> windowFn) {
+      return input.apply("AssignWindows", ParDo.of(new AssignWindowsDoFn<T, W>(windowFn)));
     }
 
     @Override
@@ -569,7 +618,6 @@ public class Window {
 
   private static <T> PTransform<PCollection<? extends T>, PCollection<T>> identity() {
     return ParDo.named("Identity").of(new DoFn<T, T>() {
-
       @Override public void processElement(ProcessContext c) {
         c.output(c.element());
       }
@@ -610,66 +658,5 @@ public class Window {
         return inputStrategy;
       }
     }
-  }
-
-  /////////////////////////////////////////////////////////////////////////////
-
-  static {
-    DirectPipelineRunner.registerDefaultTransformEvaluator(
-        Bound.class,
-        new DirectPipelineRunner.TransformEvaluator<Bound>() {
-          @Override
-          public void evaluate(
-              Bound transform,
-              DirectPipelineRunner.EvaluationContext context) {
-            evaluateHelper(transform, context);
-          }
-        });
-  }
-
-  private static <T, W extends BoundedWindow> void evaluateHelper(
-      Bound<T> transform,
-      DirectPipelineRunner.EvaluationContext context) {
-
-    // If this use of Window didn't change the WindowFn, there is nothing to do.
-    if (transform.windowFn == null) {
-      throw new IllegalStateException("Shouldn't reach evaluateHelper with no windowFn");
-    }
-
-    PCollection<T> input = context.getInput(transform);
-
-    DirectModeExecutionContext executionContext = DirectModeExecutionContext.create();
-
-    TupleTag<T> outputTag = new TupleTag<>();
-    WindowFn<? super T, W> windowFn = (WindowFn<? super T, W>) transform.windowFn;
-    String name = context.getStepName(transform);
-    @SuppressWarnings("unchecked")
-    DoFn<T, T> addWindowsDoFn = new AssignWindowsDoFn<T, W>(windowFn);
-    DoFnRunner<T, T> addWindowsRunner =
-        DoFnRunner.create(
-            context.getPipelineOptions(),
-            addWindowsDoFn,
-            NullSideInputReader.empty(),
-            new DoFnRunner.ListOutputManager(),
-            outputTag,
-            new ArrayList<TupleTag<?>>(),
-            executionContext.getOrCreateStepContext(name, name, null),
-            context.getAddCounterMutator(),
-            context.getOutput(transform).getWindowingStrategy());
-
-    addWindowsRunner.startBundle();
-
-    // Process input elements.
-    for (DirectPipelineRunner.ValueWithMetadata<T> inputElem
-             : context.getPCollectionValuesWithMetadata(input)) {
-      executionContext.setKey(inputElem.getKey());
-      addWindowsRunner.processElement(inputElem.getWindowedValue());
-    }
-
-    addWindowsRunner.finishBundle();
-
-    context.setPCollectionValuesWithMetadata(
-        context.getOutput(transform),
-        executionContext.getOutput(outputTag));
   }
 }

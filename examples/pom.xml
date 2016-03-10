@@ -22,7 +22,7 @@
   <parent>
     <groupId>com.google.cloud.dataflow</groupId>
     <artifactId>google-cloud-dataflow-java-sdk-parent</artifactId>
-    <version>1.2.1-SNAPSHOT</version>
+    <version>1.5.0-SNAPSHOT</version>
   </parent>
 
   <groupId>com.google.cloud.dataflow</groupId>
@@ -106,6 +106,7 @@
                     <!-- This pattern is brittle; we would prefer to filter on the directory
                          but that seems to be unavailable to us. -->
                     <exclude>**/*Java8Test.java</exclude>
+                    <exclude>**/game/**/*.java</exclude>
                   </testExcludes>
                 </configuration>
               </execution>
@@ -124,6 +125,7 @@
                     <!-- This pattern is brittle; we would prefer to filter on the directory
                          but that seems to be unavailable to us. -->
                     <include>**/*Java8Test.java</include>
+                    <include>**/game/**/*.java</include>
                   </includes>
                 </configuration>
               </execution>
@@ -142,6 +144,7 @@
                     <!-- This pattern is brittle; we would prefer to filter on the directory
                          but that seems to be unavailable to us. -->
                     <exclude>**/*Java8*.java</exclude>
+                    <exclude>**/game/**/*.java</exclude>
                   </excludes>
                 </configuration>
               </execution>
@@ -160,6 +163,7 @@
                     <!-- This pattern is brittle; we would prefer to filter on the directory
                          but that seems to be unavailable to us. -->
                     <include>**/*Java8*.java</include>
+                    <include>**/game/**/*.java</include>
                   </includes>
                 </configuration>
               </execution>
@@ -245,29 +249,47 @@
           <bottom><![CDATA[<br>]]></bottom>
 
           <offlineLinks>
+            <!-- The Dataflow SDK docs -->
             <offlineLink>
               <url>https://cloud.google.com/dataflow/java-sdk/JavaDoc/</url>
               <location>${basedir}/../javadoc/dataflow-sdk-docs</location>
+            </offlineLink>
+            <!-- Other dependencies -->
+            <offlineLink>
+              <url>https://developers.google.com/api-client-library/java/google-api-java-client/reference/1.20.0/</url>
+              <location>${basedir}/../javadoc/apiclient-docs</location>
+            </offlineLink>
+            <offlineLink>
+              <url>http://avro.apache.org/docs/1.7.7/api/java/</url>
+              <location>${basedir}/../javadoc/avro-docs</location>
+            </offlineLink>
+            <offlineLink>
+              <url>https://developers.google.com/resources/api-libraries/documentation/bigquery/v2/java/latest/</url>
+              <location>${basedir}/../javadoc/bq-docs</location>
+            </offlineLink>
+            <offlineLink>
+              <url>https://cloud.google.com/datastore/docs/apis/javadoc/</url>
+              <location>${basedir}/../javadoc/datastore-docs</location>
             </offlineLink>
             <offlineLink>
               <url>http://docs.guava-libraries.googlecode.com/git-history/release18/javadoc/</url>
               <location>${basedir}/../javadoc/guava-docs</location>
             </offlineLink>
             <offlineLink>
+              <url>http://fasterxml.github.io/jackson-annotations/javadoc/2.7/</url>
+              <location>${basedir}/../javadoc/jackson-annotations-docs</location>
+            </offlineLink>
+            <offlineLink>
+              <url>http://fasterxml.github.io/jackson-databind/javadoc/2.7/</url>
+              <location>${basedir}/../javadoc/jackson-databind-docs</location>
+            </offlineLink>
+            <offlineLink>
               <url>http://www.joda.org/joda-time/apidocs</url>
               <location>${basedir}/../javadoc/joda-docs</location>
             </offlineLink>
             <offlineLink>
-              <url>https://developers.google.com/resources/api-libraries/documentation/bigquery/v2/java/latest/</url>
-              <location>${basedir}/../javadoc//bq-docs</location>
-            </offlineLink>
-            <offlineLink>
-              <url>http://fasterxml.github.io/jackson-databind/javadoc/2.4/</url>
-              <location>${basedir}/../javadoc/jackson-databind-docs</location>
-            </offlineLink>
-            <offlineLink>
-              <url>http://fasterxml.github.io/jackson-annotations/javadoc/2.4/</url>
-              <location>${basedir}/../javadoc/jackson-annotations-docs</location>
+              <url>https://developers.google.com/api-client-library/java/google-oauth-java-client/reference/1.20.0/</url>
+              <location>${basedir}/../javadoc/oauth-docs</location>
             </offlineLink>
           </offlineLinks>
         </configuration>
@@ -284,7 +306,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
-        <version>2.3</version>
+        <version>2.4.1</version>
         <executions>
           <execution>
             <phase>package</phase>
@@ -350,10 +372,10 @@
     <dependency>
       <groupId>com.google.api-client</groupId>
       <artifactId>google-api-client</artifactId>
-      <version>1.20.0</version>
+      <version>${google-clients.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency google-api-client 1.20.0 -->
+             in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -364,10 +386,10 @@
     <dependency>
       <groupId>com.google.apis</groupId>
       <artifactId>google-api-services-dataflow</artifactId>
-      <version>v1b3-rev8-1.20.0</version>
+      <version>${dataflow.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency google-api-client 1.20.0 -->
+             in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -378,10 +400,10 @@
     <dependency>
       <groupId>com.google.apis</groupId>
       <artifactId>google-api-services-bigquery</artifactId>
-      <version>v2-rev187-1.19.1</version>
+      <version>${bigquery.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency google-api-client 1.20.0 -->
+             in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -392,10 +414,10 @@
     <dependency>
       <groupId>com.google.http-client</groupId>
       <artifactId>google-http-client</artifactId>
-      <version>1.20.0</version>
+      <version>${google-clients.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency google-api-client 1.20.0 -->
+             in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -406,16 +428,16 @@
     <dependency>
       <groupId>org.apache.avro</groupId>
       <artifactId>avro</artifactId>
-      <version>1.7.7</version>
+      <version>${avro.version}</version>
     </dependency>
 
     <dependency>
       <groupId>com.google.apis</groupId>
       <artifactId>google-api-services-datastore-protobuf</artifactId>
-      <version>v1beta2-rev1-2.1.2</version>
+      <version>${datastore.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency google-api-client 1.20.0 -->
+             in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -426,10 +448,10 @@
     <dependency>
       <groupId>com.google.apis</groupId>
       <artifactId>google-api-services-pubsub</artifactId>
-      <version>v1-rev3-1.20.0</version>
+      <version>${pubsub.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled
-             in by a transitive dependency google-api-client 1.20.0 -->
+             in by a transitive dependency of google-api-client -->
         <exclusion>
           <groupId>com.google.guava</groupId>
           <artifactId>guava-jdk5</artifactId>
@@ -440,19 +462,38 @@
     <dependency>
       <groupId>com.google.guava</groupId>
       <artifactId>guava</artifactId>
-      <version>18.0</version>
+      <version>${guava.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.google.code.findbugs</groupId>
+      <artifactId>jsr305</artifactId>
+      <version>${jsr305.version}</version>
     </dependency>
 
     <dependency>
       <groupId>joda-time</groupId>
       <artifactId>joda-time</artifactId>
-      <version>2.4</version>
+      <version>${joda.version}</version>
     </dependency>
 
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>1.7.7</version>
+      <version>${slf4j.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-jdk14</artifactId>
+      <version>${slf4j.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>javax.servlet</groupId>
+      <artifactId>javax.servlet-api</artifactId>
+      <version>3.1.0</version>
     </dependency>
 
     <!-- Hamcrest and JUnit are required dependencies of DataflowAssert,
@@ -461,13 +502,20 @@
     <dependency>
       <groupId>org.hamcrest</groupId>
       <artifactId>hamcrest-all</artifactId>
-      <version>1.3</version>
+      <version>${hamcrest.version}</version>
     </dependency>
 
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
-      <version>4.11</version>
+      <version>${junit.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-all</artifactId>
+      <version>1.10.19</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

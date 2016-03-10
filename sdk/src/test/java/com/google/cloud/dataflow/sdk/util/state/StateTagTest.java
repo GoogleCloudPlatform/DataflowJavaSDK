@@ -25,6 +25,7 @@ import com.google.cloud.dataflow.sdk.transforms.Max;
 import com.google.cloud.dataflow.sdk.transforms.Max.MaxIntegerFn;
 import com.google.cloud.dataflow.sdk.transforms.Min;
 import com.google.cloud.dataflow.sdk.transforms.Min.MinIntegerFn;
+import com.google.cloud.dataflow.sdk.transforms.windowing.OutputTimeFns;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -35,13 +36,12 @@ import org.junit.runners.JUnit4;
  */
 @RunWith(JUnit4.class)
 public class StateTagTest {
-
   @Test
   public void testValueEquality() {
-    StateTag<?> fooVarInt1 = StateTags.value("foo", VarIntCoder.of());
-    StateTag<?> fooVarInt2 = StateTags.value("foo", VarIntCoder.of());
-    StateTag<?> fooBigEndian = StateTags.value("foo", BigEndianIntegerCoder.of());
-    StateTag<?> barVarInt = StateTags.value("bar", VarIntCoder.of());
+    StateTag<?, ?> fooVarInt1 = StateTags.value("foo", VarIntCoder.of());
+    StateTag<?, ?> fooVarInt2 = StateTags.value("foo", VarIntCoder.of());
+    StateTag<?, ?> fooBigEndian = StateTags.value("foo", BigEndianIntegerCoder.of());
+    StateTag<?, ?> barVarInt = StateTags.value("bar", VarIntCoder.of());
 
     assertEquals(fooVarInt1, fooVarInt2);
     assertNotEquals(fooVarInt1, fooBigEndian);
@@ -50,10 +50,10 @@ public class StateTagTest {
 
   @Test
   public void testBagEquality() {
-    StateTag<?> fooVarInt1 = StateTags.bag("foo", VarIntCoder.of());
-    StateTag<?> fooVarInt2 = StateTags.bag("foo", VarIntCoder.of());
-    StateTag<?> fooBigEndian = StateTags.bag("foo", BigEndianIntegerCoder.of());
-    StateTag<?> barVarInt = StateTags.bag("bar", VarIntCoder.of());
+    StateTag<?, ?> fooVarInt1 = StateTags.bag("foo", VarIntCoder.of());
+    StateTag<?, ?> fooVarInt2 = StateTags.bag("foo", VarIntCoder.of());
+    StateTag<?, ?> fooBigEndian = StateTags.bag("foo", BigEndianIntegerCoder.of());
+    StateTag<?, ?> barVarInt = StateTags.bag("bar", VarIntCoder.of());
 
     assertEquals(fooVarInt1, fooVarInt2);
     assertNotEquals(fooVarInt1, fooBigEndian);
@@ -62,12 +62,22 @@ public class StateTagTest {
 
   @Test
   public void testWatermarkBagEquality() {
-    StateTag<?> foo1 = StateTags.watermarkStateInternal("foo");
-    StateTag<?> foo2 = StateTags.watermarkStateInternal("foo");
-    StateTag<?> bar = StateTags.watermarkStateInternal("bar");
+    StateTag<?, ?> foo1 = StateTags.watermarkStateInternal(
+        "foo", OutputTimeFns.outputAtEarliestInputTimestamp());
+    StateTag<?, ?> foo2 = StateTags.watermarkStateInternal(
+        "foo", OutputTimeFns.outputAtEarliestInputTimestamp());
+    StateTag<?, ?> bar = StateTags.watermarkStateInternal(
+        "bar", OutputTimeFns.outputAtEarliestInputTimestamp());
 
+    StateTag<?, ?> bar2 = StateTags.watermarkStateInternal(
+        "bar", OutputTimeFns.outputAtLatestInputTimestamp());
+
+    // Same id, same fn.
     assertEquals(foo1, foo2);
+    // Different id, same fn.
     assertNotEquals(foo1, bar);
+    // Same id, different fn.
+    assertEquals(bar, bar2);
   }
 
   @Test
@@ -77,12 +87,12 @@ public class StateTagTest {
     Coder<Integer> input2 = BigEndianIntegerCoder.of();
     MinIntegerFn minFn = new Min.MinIntegerFn();
 
-    StateTag<?> fooCoder1Max1 = StateTags.combiningValueFromInputInternal("foo", input1, maxFn);
-    StateTag<?> fooCoder1Max2 = StateTags.combiningValueFromInputInternal("foo", input1, maxFn);
-    StateTag<?> fooCoder1Min = StateTags.combiningValueFromInputInternal("foo", input1, minFn);
+    StateTag<?, ?> fooCoder1Max1 = StateTags.combiningValueFromInputInternal("foo", input1, maxFn);
+    StateTag<?, ?> fooCoder1Max2 = StateTags.combiningValueFromInputInternal("foo", input1, maxFn);
+    StateTag<?, ?> fooCoder1Min = StateTags.combiningValueFromInputInternal("foo", input1, minFn);
 
-    StateTag<?> fooCoder2Max = StateTags.combiningValueFromInputInternal("foo", input2, maxFn);
-    StateTag<?> barCoder1Max = StateTags.combiningValueFromInputInternal("bar", input1, maxFn);
+    StateTag<?, ?> fooCoder2Max = StateTags.combiningValueFromInputInternal("foo", input2, maxFn);
+    StateTag<?, ?> barCoder1Max = StateTags.combiningValueFromInputInternal("bar", input1, maxFn);
 
     // Same name, coder and combineFn
     assertEquals(fooCoder1Max1, fooCoder1Max2);

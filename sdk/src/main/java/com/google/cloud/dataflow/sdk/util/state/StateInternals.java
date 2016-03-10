@@ -15,13 +15,17 @@
  */
 package com.google.cloud.dataflow.sdk.util.state;
 
+import com.google.cloud.dataflow.sdk.annotations.Experimental;
+import com.google.cloud.dataflow.sdk.annotations.Experimental.Kind;
+import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
+
 /**
  * {@code StateInternals} describes the functionality a runner needs to provide for the
  * State API to be supported.
  *
  * <p>The SDK will only use this after elements have been partitioned by key. For instance, after a
- * {@code GroupByKey} operation. The runner implementation must ensure that any writes using
- * {@code StaeIntetrnals} are implicitly scoped to the key being processed and the specific step
+ * {@link GroupByKey} operation. The runner implementation must ensure that any writes using
+ * {@link StateInternals} are implicitly scoped to the key being processed and the specific step
  * accessing state.
  *
  * <p>The runner implementation must also ensure that any writes to the associated state objects
@@ -31,23 +35,21 @@ package com.google.cloud.dataflow.sdk.util.state;
  * <p>This is a low-level API intended for use by the Dataflow SDK. It should not be
  * used directly, and is highly likely to change.
  */
-public interface StateInternals  {
+@Experimental(Kind.STATE)
+public interface StateInternals<K> {
+
+  /** The key for this {@link StateInternals}. */
+  K getKey();
 
   /**
    * Return the state associated with {@code address} in the specified {@code namespace}.
    */
-  <T extends State> T state(StateNamespace namespace, StateTag<T> address);
+  <T extends State> T state(StateNamespace namespace, StateTag<? super K, T> address);
 
   /**
-   * Return state that reads from all the source namespaces. Only required to ensure that
-   * resultNamespace contains all the data that is added.
-   *
-   * <p>Merging state is potentially destructive, in that it may move information from the
-   * {@code sourceNamespaces} to {@code resultNamespace}. As a result, after calling this all
-   * future calls should include as their namespaces a superset of
-   * {@code sourceNamespaces} and {@code resultNamespace}.
+   * Return the state associated with {@code address} in the specified {@code namespace}
+   * with the {@link StateContext}.
    */
-  <T extends MergeableState<?, ?>> T mergedState(
-      Iterable<StateNamespace> sourceNamespaces, StateNamespace resultNamespace,
-      StateTag<T> address);
+  <T extends State> T state(
+      StateNamespace namespace, StateTag<? super K, T> address, StateContext<?> c);
 }

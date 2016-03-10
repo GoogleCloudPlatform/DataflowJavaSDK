@@ -15,9 +15,12 @@
  */
 package com.google.cloud.dataflow.sdk.coders;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
+import com.google.cloud.dataflow.sdk.coders.protobuf.ProtoCoder;
 import com.google.cloud.dataflow.sdk.util.CloudObject;
 import com.google.cloud.dataflow.sdk.util.Structs;
-import com.google.common.base.Preconditions;
+import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -41,12 +44,12 @@ import java.util.Objects;
 import javax.annotation.Nullable;
 
 /**
- * An encoder using Google Protocol Buffers 2 binary format.
+ * A {@link Coder} using Google Protocol Buffers 2 binary format.
  *
  * <p>To learn more about Protocol Buffers, visit:
  * <a href="https://developers.google.com/protocol-buffers">https://developers.google.com/protocol-buffers</a>
  *
- * <p>To use, specify the {@code Coder} type on a PCollection:
+ * <p>To use, specify the {@link Coder} type on a PCollection containing Protocol Buffers messages.
  *
  * <pre>
  * {@code
@@ -69,7 +72,9 @@ import javax.annotation.Nullable;
  * </pre>
  *
  * @param <T> the type of elements handled by this coder, must extend {@code Message}
+ * @deprecated Use {@link ProtoCoder}.
  */
+@Deprecated
 public class Proto2Coder<T extends Message> extends AtomicCoder<T> {
 
   /** The class of Protobuf message to be encoded. */
@@ -87,11 +92,45 @@ public class Proto2Coder<T extends Message> extends AtomicCoder<T> {
     this.extensionHostClasses = extensionHostClasses;
   }
 
+  private static final CoderProvider PROVIDER =
+      new CoderProvider() {
+        @Override
+        public <T> Coder<T> getCoder(TypeDescriptor<T> type) throws CannotProvideCoderException {
+          if (type.isSubtypeOf(new TypeDescriptor<Message>() {})) {
+            @SuppressWarnings("unchecked")
+            TypeDescriptor<? extends Message> messageType =
+                (TypeDescriptor<? extends Message>) type;
+            @SuppressWarnings("unchecked")
+            Coder<T> coder = (Coder<T>) Proto2Coder.of(messageType);
+            return coder;
+          } else {
+            throw new CannotProvideCoderException(
+                String.format(
+                    "Cannot provide Proto2Coder because %s "
+                        + "is not a subclass of protocol buffer Messsage",
+                    type));
+          }
+        }
+      };
+
+  public static CoderProvider coderProvider() {
+    return PROVIDER;
+  }
+
   /**
    * Returns a {@code Proto2Coder} for the given Protobuf message class.
    */
   public static <T extends Message> Proto2Coder<T> of(Class<T> protoMessageClass) {
-    return new Proto2Coder<>(protoMessageClass, Collections.<Class<?>>emptyList());
+    return new Proto2Coder<T>(protoMessageClass, Collections.<Class<?>>emptyList());
+  }
+
+  /**
+   * Returns a {@code Proto2Coder} for the given Protobuf message class.
+   */
+  public static <T extends Message> Proto2Coder<T> of(TypeDescriptor<T> protoMessageType) {
+    @SuppressWarnings("unchecked")
+    Class<T> protoMessageClass = (Class<T>) protoMessageType.getRawType();
+    return of(protoMessageClass);
   }
 
   /**
@@ -105,10 +144,10 @@ public class Proto2Coder<T extends Message> extends AtomicCoder<T> {
     for (Class<?> extensionHost : moreExtensionHosts) {
       // Attempt to access the required method, to make sure it's present.
       try {
-        Method registerAllExtensions = extensionHost.getDeclaredMethod(
-            "registerAllExtensions", ExtensionRegistry.class);
-        Preconditions.checkArgument(
-            0 != (registerAllExtensions.getModifiers() | Modifier.STATIC),
+        Method registerAllExtensions =
+            extensionHost.getDeclaredMethod("registerAllExtensions", ExtensionRegistry.class);
+        checkArgument(
+            Modifier.isStatic(registerAllExtensions.getModifiers()),
             "Method registerAllExtensions() must be static for use with Proto2Coder");
       } catch (NoSuchMethodException | SecurityException e) {
         throw new IllegalArgumentException(e);
@@ -156,12 +195,16 @@ public class Proto2Coder<T extends Message> extends AtomicCoder<T> {
     for (Class<?> extensionHost : extensionHosts) {
       try {
         // Attempt to access the declared method, to make sure it's present.
-        extensionHost
-            .getDeclaredMethod("registerAllExtensions", ExtensionRegistry.class);
+        extensionHost.getDeclaredMethod("registerAllExtensions", ExtensionRegistry.class);
       } catch (NoSuchMethodException e) {
         throw new IllegalArgumentException(e);
       }
       extensionHostClasses.add(extensionHost);
+    }
+    // The memoized extension registry needs to be recomputed because we have mutated this object.
+    synchronized (this) {
+      memoizedExtensionRegistry = null;
+      getExtensionRegistry();
     }
     return this;
   }
@@ -245,14 +288,11 @@ public class Proto2Coder<T extends Message> extends AtomicCoder<T> {
     if (memoizedParser == null) {
       try {
         @SuppressWarnings("unchecked")
-        T protoMessageInstance = (T) protoMessageClass
-            .getMethod("getDefaultInstance").invoke(null);
+        T protoMessageInstance = (T) protoMessageClass.getMethod("getDefaultInstance").invoke(null);
         @SuppressWarnings("unchecked")
         Parser<T> tParser = (Parser<T>) protoMessageInstance.getParserForType();
         memoizedParser = tParser;
-      } catch (IllegalAccessException
-          | InvocationTargetException
-          | NoSuchMethodException e) {
+      } catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
         throw new IllegalArgumentException(e);
       }
     }
@@ -261,20 +301,19 @@ public class Proto2Coder<T extends Message> extends AtomicCoder<T> {
 
   private transient ExtensionRegistry memoizedExtensionRegistry;
 
-  private ExtensionRegistry getExtensionRegistry() {
+  private synchronized ExtensionRegistry getExtensionRegistry() {
     if (memoizedExtensionRegistry == null) {
-      memoizedExtensionRegistry = ExtensionRegistry.newInstance();
+      ExtensionRegistry registry = ExtensionRegistry.newInstance();
       for (Class<?> extensionHost : extensionHostClasses) {
         try {
           extensionHost
               .getDeclaredMethod("registerAllExtensions", ExtensionRegistry.class)
-              .invoke(null, memoizedExtensionRegistry);
-        } catch (IllegalAccessException
-            | InvocationTargetException
-            | NoSuchMethodException e) {
+              .invoke(null, registry);
+        } catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
           throw new IllegalStateException(e);
         }
       }
+      memoizedExtensionRegistry = registry.getUnmodifiable();
     }
     return memoizedExtensionRegistry;
   }

@@ -16,6 +16,8 @@
 
 package com.google.cloud.dataflow.sdk.util.common;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import java.util.AbstractSet;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -80,7 +82,7 @@ public class CounterSet extends AbstractSet<Counter<?>> {
     if (counter.isCompatibleWith(oldCounter)) {
       // Return the counter to reuse.
       @SuppressWarnings("unchecked")
-      Counter<T> compatibleCounter = (Counter) oldCounter;
+      Counter<T> compatibleCounter = (Counter<T>) oldCounter;
       return compatibleCounter;
     }
     throw new IllegalArgumentException(
@@ -129,9 +131,32 @@ public class CounterSet extends AbstractSet<Counter<?>> {
     return true;
   }
 
+  public synchronized void merge(CounterSet that) {
+    for (Counter<?> theirCounter : that) {
+      Counter<?> myCounter = counters.get(theirCounter.getName());
+      if (myCounter != null) {
+        mergeCounters(myCounter, theirCounter);
+      } else {
+        addCounter(theirCounter);
+      }
+    }
+  }
+
+  private <T> void mergeCounters(Counter<T> mine, Counter<?> theirCounter) {
+    checkArgument(
+        mine.isCompatibleWith(theirCounter),
+        "Can't merge CounterSets containing incompatible counters with the same name: "
+            + "%s (existing) and %s (merged)",
+        mine,
+        theirCounter);
+    @SuppressWarnings("unchecked")
+    Counter<T> theirs = (Counter<T>) theirCounter;
+    mine.merge(theirs);
+  }
+
   /**
    * A nested class that supports adding additional counters into the
-   * enclosing CounterSet. This is useful as a mutator; hiding other
+   * enclosing CounterSet. This is useful as a mutator, hiding other
    * public methods of the CounterSet.
    */
   public class AddCounterMutator {

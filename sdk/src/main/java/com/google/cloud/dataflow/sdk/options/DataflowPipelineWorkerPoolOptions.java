@@ -17,6 +17,7 @@
 package com.google.cloud.dataflow.sdk.options;
 
 import com.google.cloud.dataflow.sdk.annotations.Experimental;
+import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -28,16 +29,9 @@ import java.util.List;
 @Description("Options that are used to configure the Dataflow pipeline worker pool.")
 public interface DataflowPipelineWorkerPoolOptions extends PipelineOptions {
   /**
-   * Disk source image to use by VMs for jobs.
-   * @see <a href="https://developers.google.com/compute/docs/images">Compute Engine Images</a>
-   */
-  @Description("Disk source image to use by VMs for jobs. See "
-      + "https://developers.google.com/compute/docs/images for further details.")
-  String getDiskSourceImage();
-  void setDiskSourceImage(String value);
-
-  /**
-   * Number of workers to use when executing the Dataflow job.
+   * Number of workers to use when executing the Dataflow job. Note that selection of an autoscaling
+   * algorithm other then {@code NONE} will affect the size of the worker pool. If left unspecified,
+   * the Dataflow service will determine the number of workers.
    */
   @Description("Number of workers to use when executing the Dataflow job. Note that "
       + "selection of an autoscaling algorithm other then \"NONE\" will affect the "
@@ -72,19 +66,34 @@ public interface DataflowPipelineWorkerPoolOptions extends PipelineOptions {
     }
   }
 
+  /**
+   * [Experimental] The autoscaling algorithm to use for the workerpool.
+   *
+   * <ul>
+   *   <li>NONE: does not change the size of the worker pool.</li>
+   *   <li>BASIC: autoscale the worker pool size up to maxNumWorkers until the job completes.</li>
+   *   <li>THROUGHPUT_BASED: autoscale the workerpool based on throughput (up to maxNumWorkers).
+   *   </li>
+   * </ul>
+   */
   @Description("[Experimental] The autoscaling algorithm to use for the workerpool. "
       + "NONE: does not change the size of the worker pool. "
-      + "BASIC: autoscale the worker pool size up to maxNumWorkers until the job completes.")
+      + "BASIC (deprecated): autoscale the worker pool size up to maxNumWorkers until the job "
+      + "completes. "
+      + "THROUGHPUT_BASED: autoscale the workerpool based on throughput (up to maxNumWorkers).")
   @Experimental(Experimental.Kind.AUTOSCALING)
   AutoscalingAlgorithmType getAutoscalingAlgorithm();
   void setAutoscalingAlgorithm(AutoscalingAlgorithmType value);
 
   /**
-   * The maximum number of workers to use when using workerpool autoscaling.
+   * The maximum number of workers to use for the workerpool. This options limits the size of the
+   * workerpool for the lifetime of the job, including
+   * <a href="https://cloud.google.com/dataflow/pipelines/updating-a-pipeline">pipeline updates</a>.
+   * If left unspecified, the Dataflow service will compute a ceiling.
    */
-  @Description("[Experimental] The maximum number of workers to use when using workerpool "
-      + "autoscaling. If left unspecified, the Dataflow service will compute a ceiling.")
-  @Experimental(Experimental.Kind.AUTOSCALING)
+  @Description("The maximum number of workers to use for the workerpool. This options limits the "
+      + "size of the workerpool for the lifetime of the job, including pipeline updates. "
+      + "If left unspecified, the Dataflow service will compute a ceiling.")
   int getMaxNumWorkers();
   void setMaxNumWorkers(int value);
 
@@ -96,14 +105,56 @@ public interface DataflowPipelineWorkerPoolOptions extends PipelineOptions {
   void setDiskSizeGb(int value);
 
   /**
+   * Docker container image that executes Dataflow worker harness, residing in Google Container
+   * Registry.
+   */
+  @Default.InstanceFactory(WorkerHarnessContainerImageFactory.class)
+  @Description("Docker container image that executes Dataflow worker harness, residing in Google "
+      + " Container Registry.")
+  @Hidden
+  String getWorkerHarnessContainerImage();
+  void setWorkerHarnessContainerImage(String value);
+
+  /**
+   * Returns the default Docker container image that executes Dataflow worker harness, residing in
+   * Google Container Registry.
+   */
+  public static class WorkerHarnessContainerImageFactory
+      implements DefaultValueFactory<String> {
+    @Override
+    public String create(PipelineOptions options) {
+      DataflowPipelineOptions dataflowOptions = options.as(DataflowPipelineOptions.class);
+      if (dataflowOptions.isStreaming()) {
+        return DataflowPipelineRunner.STREAMING_WORKER_HARNESS_CONTAINER_IMAGE;
+      } else {
+        return DataflowPipelineRunner.BATCH_WORKER_HARNESS_CONTAINER_IMAGE;
+      }
+    }
+  }
+
+  /**
    * GCE <a href="https://cloud.google.com/compute/docs/networking">network</a> for launching
    * workers.
    *
    * <p>Default is up to the Dataflow service.
    */
-  @Description("GCE network for launching workers. Default is up to the Dataflow service.")
+  @Description("GCE network for launching workers. For more information, see the reference "
+      + "documentation https://cloud.google.com/compute/docs/networking. "
+      + "Default is up to the Dataflow service.")
   String getNetwork();
   void setNetwork(String value);
+
+  /**
+   * GCE <a href="https://cloud.google.com/compute/docs/networking">subnetwork</a> for launching
+   * workers.
+   *
+   * <p>Default is up to the Dataflow service. Expected format is zones/ZONE/subnetworks/SUBNETWORK.
+   */
+  @Description("GCE subnetwork for launching workers. For more information, see the reference "
+      + "documentation https://cloud.google.com/compute/docs/networking. "
+      + "Default is up to the Dataflow service.")
+  String getSubnetwork();
+  void setSubnetwork(String value);
 
   /**
    * GCE <a href="https://developers.google.com/compute/docs/zones"
@@ -111,7 +162,8 @@ public interface DataflowPipelineWorkerPoolOptions extends PipelineOptions {
    *
    * <p>Default is up to the Dataflow service.
    */
-  @Description("GCE availability zone for launching workers. "
+  @Description("GCE availability zone for launching workers. See "
+      + "https://developers.google.com/compute/docs/zones for a list of valid options. "
       + "Default is up to the Dataflow service.")
   String getZone();
   void setZone(String value);
@@ -134,8 +186,22 @@ public interface DataflowPipelineWorkerPoolOptions extends PipelineOptions {
    * The policy for tearing down the workers spun up by the service.
    */
   public enum TeardownPolicy {
+    /**
+     * All VMs created for a Dataflow job are deleted when the job finishes, regardless of whether
+     * it fails or succeeds.
+     */
     TEARDOWN_ALWAYS("TEARDOWN_ALWAYS"),
-    TEARDOWN_NEVER("TEARDOWN_NEVER");
+    /**
+     * All VMs created for a Dataflow job are left running when the job finishes, regardless of
+     * whether it fails or succeeds.
+     */
+    TEARDOWN_NEVER("TEARDOWN_NEVER"),
+    /**
+     * All VMs created for a Dataflow job are deleted when the job succeeds, but are left running
+     * when it fails. (This is typically used for debugging failing jobs by SSHing into the
+     * workers.)
+     */
+    TEARDOWN_ON_SUCCESS("TEARDOWN_ON_SUCCESS");
 
     private final String teardownPolicy;
 
@@ -151,10 +217,10 @@ public interface DataflowPipelineWorkerPoolOptions extends PipelineOptions {
   /**
    * The teardown policy for the VMs.
    *
-   * <p>By default this is left unset and the service sets the default policy.
+   * <p>If unset, the Dataflow service will choose a reasonable default.
    */
-  @Description("The teardown policy for the VMs. By default this is left unset "
-      + "and the service sets the default policy.")
+  @Description("The teardown policy for the VMs. If unset, the Dataflow service will "
+      + "choose a reasonable default.")
   TeardownPolicy getTeardownPolicy();
   void setTeardownPolicy(TeardownPolicy value);
 

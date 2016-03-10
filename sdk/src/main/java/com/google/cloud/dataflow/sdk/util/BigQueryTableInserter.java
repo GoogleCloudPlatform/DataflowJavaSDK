@@ -16,6 +16,10 @@
 
 package com.google.cloud.dataflow.sdk.util;
 
+import com.google.api.client.util.BackOff;
+import com.google.api.client.util.BackOffUtils;
+import com.google.api.client.util.ExponentialBackOff;
+import com.google.api.client.util.Sleeper;
 import com.google.api.services.bigquery.Bigquery;
 import com.google.api.services.bigquery.model.Table;
 import com.google.api.services.bigquery.model.TableDataInsertAllRequest;
@@ -27,7 +31,9 @@ import com.google.api.services.bigquery.model.TableSchema;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.CreateDisposition;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.WriteDisposition;
+import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.hadoop.util.ApiErrorExtractor;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -39,6 +45,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -130,7 +137,7 @@ public class BigQueryTableInserter {
    */
   @Deprecated
   public void insertAll(List<TableRow> rowList) throws IOException {
-    insertAll(defaultRef, rowList, null);
+    insertAll(defaultRef, rowList, null, null);
   }
 
   /**
@@ -141,21 +148,23 @@ public class BigQueryTableInserter {
   @Deprecated
   public void insertAll(List<TableRow> rowList,
       @Nullable List<String> insertIdList) throws IOException {
-    insertAll(defaultRef, rowList, insertIdList);
+    insertAll(defaultRef, rowList, insertIdList, null);
   }
 
   /**
    * Insert all rows from the given list.
    */
   public void insertAll(TableReference ref, List<TableRow> rowList) throws IOException {
-    insertAll(ref, rowList, null);
+    insertAll(ref, rowList, null, null);
   }
 
   /**
-   * Insert all rows from the given list using specified insertIds if not null.
+   * Insert all rows from the given list using specified insertIds if not null. Track count of
+   * bytes written with the Aggregator.
    */
   public void insertAll(TableReference ref, List<TableRow> rowList,
-      @Nullable List<String> insertIdList) throws IOException {
+      @Nullable List<String> insertIdList, Aggregator<Long, Long> byteCountAggregator)
+      throws IOException {
     Preconditions.checkNotNull(ref, "ref");
     if (insertIdList != null && rowList.size() != insertIdList.size()) {
       throw new AssertionError("If insertIdList is not null it needs to have at least "
@@ -166,21 +175,22 @@ public class BigQueryTableInserter {
         MAX_INSERT_ATTEMPTS,
         INITIAL_INSERT_BACKOFF_INTERVAL_MS);
 
-    final List<TableDataInsertAllResponse.InsertErrors> allErrors = new ArrayList<>();
+    List<TableDataInsertAllResponse.InsertErrors> allErrors = new ArrayList<>();
     // These lists contain the rows to publish. Initially the contain the entire list. If there are
     // failures, they will contain only the failed rows to be retried.
     List<TableRow> rowsToPublish = rowList;
     List<String> idsToPublish = insertIdList;
     while (true) {
-      final List<TableRow> retryRows = new ArrayList<>();
-      final List<String> retryIds = (idsToPublish != null) ? new ArrayList<String>() : null;
+      List<TableRow> retryRows = new ArrayList<>();
+      List<String> retryIds = (idsToPublish != null) ? new ArrayList<String>() : null;
 
       int strideIndex = 0;
       // Upload in batches.
       List<TableDataInsertAllRequest.Rows> rows = new LinkedList<>();
       int dataSize = 0;
 
-      List<Future<?>> futures = new ArrayList<>();
+      List<Future<List<TableDataInsertAllResponse.InsertErrors>>> futures = new ArrayList<>();
+      List<Integer> strideIndices = new ArrayList<>();
 
       for (int i = 0; i < rowsToPublish.size(); ++i) {
         TableRow row = rowsToPublish.get(i);
@@ -201,39 +211,18 @@ public class BigQueryTableInserter {
               .insertAll(ref.getProjectId(), ref.getDatasetId(), ref.getTableId(),
                   content);
 
-          final int finalStrideIndex = strideIndex;
-          final List<TableRow> finalRowsToPublish = rowsToPublish;
-          final List<String> finalIdsToPublish = idsToPublish;
-
-          futures.add(executor.submit(new Runnable() {
-              @Override
-              public void run() {
-                try {
-                  TableDataInsertAllResponse response = insert.execute();
-
-                  List<TableDataInsertAllResponse.InsertErrors> errors = response.getInsertErrors();
-                  if (errors != null) {
-                    synchronized (this) {
-                      allErrors.addAll(errors);
-                      for (TableDataInsertAllResponse.InsertErrors error : errors) {
-                        if (error.getIndex() == null) {
-                          throw new IOException("Insert failed: " + allErrors);
-                        }
-
-                        int errorIndex = error.getIndex().intValue() + finalStrideIndex;
-                        retryRows.add(finalRowsToPublish.get(errorIndex));
-                        if (retryIds != null) {
-                          retryIds.add(finalIdsToPublish.get(errorIndex));
-                        }
-                      }
-                    }
-                  }
-                } catch (IOException e) {
-                  throw new RuntimeException(e);
+          futures.add(
+              executor.submit(new Callable<List<TableDataInsertAllResponse.InsertErrors>>() {
+                @Override
+                public List<TableDataInsertAllResponse.InsertErrors> call() throws IOException {
+                  return insert.execute().getInsertErrors();
                 }
-              }
-            }));
+              }));
+          strideIndices.add(strideIndex);
 
+          if (byteCountAggregator != null) {
+            byteCountAggregator.addValue(Long.valueOf(dataSize));
+          }
           dataSize = 0;
           strideIndex = i + 1;
           rows = new LinkedList<>();
@@ -241,10 +230,25 @@ public class BigQueryTableInserter {
       }
 
       try {
-        for (Future<?> future : futures) {
-          future.get();
+        for (int i = 0; i < futures.size(); i++) {
+          List<TableDataInsertAllResponse.InsertErrors> errors = futures.get(i).get();
+          if (errors != null) {
+            for (TableDataInsertAllResponse.InsertErrors error : errors) {
+              allErrors.add(error);
+              if (error.getIndex() == null) {
+                throw new IOException("Insert failed: " + allErrors);
+              }
+
+              int errorIndex = error.getIndex().intValue() + strideIndices.get(i);
+              retryRows.add(rowsToPublish.get(errorIndex));
+              if (retryIds != null) {
+                retryIds.add(idsToPublish.get(errorIndex));
+              }
+            }
+          }
         }
       } catch (InterruptedException e) {
+        throw new IOException("Interrupted while inserting " + rowsToPublish);
       } catch (ExecutionException e) {
         Throwables.propagate(e.getCause());
       }
@@ -253,7 +257,7 @@ public class BigQueryTableInserter {
         try {
           Thread.sleep(backoff.nextBackOffMillis());
         } catch (InterruptedException e) {
-          // ignore.
+          throw new IOException("Interrupted while waiting before retrying insert of " + retryRows);
         }
         LOG.info("Retrying failed inserts to BigQuery");
         rowsToPublish = retryRows;
@@ -358,6 +362,13 @@ public class BigQueryTableInserter {
   }
 
   /**
+   * Retry table creation up to 5 minutes (with exponential backoff) when this user is near the
+   * quota for table creation. This relatively innocuous behavior can happen when BigQueryIO is
+   * configured with a table spec function to use different tables for each window.
+   */
+  private static final int RETRY_CREATE_TABLE_DURATION_MILLIS = (int) TimeUnit.MINUTES.toMillis(5);
+
+  /**
    * Tries to create the BigQuery table.
    * If a table with the same name already exists in the dataset, the table
    * creation fails, and the function returns null.  In such a case,
@@ -372,21 +383,52 @@ public class BigQueryTableInserter {
   @Nullable
   public Table tryCreateTable(TableReference ref, TableSchema schema) throws IOException {
     LOG.info("Trying to create BigQuery table: {}", BigQueryIO.toTableSpec(ref));
+    BackOff backoff =
+        new ExponentialBackOff.Builder()
+            .setMaxElapsedTimeMillis(RETRY_CREATE_TABLE_DURATION_MILLIS)
+            .build();
 
-    Table content = new Table();
-    content.setTableReference(ref);
-    content.setSchema(schema);
+    Table table = new Table().setTableReference(ref).setSchema(schema);
+    return tryCreateTable(table, ref.getProjectId(), ref.getDatasetId(), backoff, Sleeper.DEFAULT);
+  }
 
-    try {
-      return client.tables()
-          .insert(ref.getProjectId(), ref.getDatasetId(), content)
-          .execute();
-    } catch (IOException e) {
-      if (new ApiErrorExtractor().itemAlreadyExists(e)) {
-        LOG.info("The BigQuery table already exists.");
-        return null;
+  @VisibleForTesting
+  @Nullable
+  Table tryCreateTable(
+      Table table, String projectId, String datasetId, BackOff backoff, Sleeper sleeper)
+          throws IOException {
+    boolean retry = false;
+    while (true) {
+      try {
+        return client.tables().insert(projectId, datasetId, table).execute();
+      } catch (IOException e) {
+        ApiErrorExtractor extractor = new ApiErrorExtractor();
+        if (extractor.itemAlreadyExists(e)) {
+          // The table already exists, nothing to return.
+          return null;
+        } else if (extractor.rateLimited(e)) {
+          // The request failed because we hit a temporary quota. Back off and try again.
+          try {
+            if (BackOffUtils.next(sleeper, backoff)) {
+              if (!retry) {
+                LOG.info(
+                    "Quota limit reached when creating table {}:{}.{}, retrying up to {} minutes",
+                    projectId,
+                    datasetId,
+                    table.getTableReference().getTableId(),
+                    TimeUnit.MILLISECONDS.toSeconds(RETRY_CREATE_TABLE_DURATION_MILLIS) / 60.0);
+                retry = true;
+              }
+              continue;
+            }
+          } catch (InterruptedException e1) {
+            // Restore interrupted state and throw the last failure.
+            Thread.currentThread().interrupt();
+            throw e;
+          }
+        }
+        throw e;
       }
-      throw e;
     }
   }
 }

@@ -17,16 +17,13 @@
 package com.google.cloud.dataflow.sdk.transforms.windowing;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import com.google.cloud.dataflow.sdk.WindowMatchers;
-import com.google.cloud.dataflow.sdk.util.TimeDomain;
+import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger.OnceTrigger;
 import com.google.cloud.dataflow.sdk.util.TriggerTester;
-import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
-import com.google.cloud.dataflow.sdk.values.TimestampedValue;
+import com.google.cloud.dataflow.sdk.util.TriggerTester.SimpleTriggerTester;
 
-import org.hamcrest.Matchers;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.junit.Test;
@@ -38,98 +35,96 @@ import org.junit.runners.JUnit4;
  */
 @RunWith(JUnit4.class)
 public class AfterProcessingTimeTest {
+
+  /**
+   * Tests the basic property that the trigger does wait for processing time to be
+   * far enough advanced.
+   */
   @Test
-  public void testAfterProcessingTimeIgnoresTimer() throws Exception {
+  public void testAfterProcessingTimeFixedWindows() throws Exception {
     Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        FixedWindows.of(windowDuration),
+    SimpleTriggerTester<IntervalWindow> tester = TriggerTester.forTrigger(
         AfterProcessingTime
             .<IntervalWindow>pastFirstElementInPane()
             .plusDelayOf(Duration.millis(5)),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
-
-    tester.fireTimer(new IntervalWindow(new Instant(0), new Instant(10)),
-        new Instant(15), TimeDomain.PROCESSING_TIME);
-    tester.injectElements(TimestampedValue.of(1, new Instant(1)));
-    tester.fireTimer(new IntervalWindow(new Instant(0), new Instant(10)),
-        new Instant(5), TimeDomain.PROCESSING_TIME);
-  }
-
-  @Test
-  public void testAfterProcessingTimeWithFixedWindow() throws Exception {
-    Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        FixedWindows.of(windowDuration),
-        AfterProcessingTime
-            .<IntervalWindow>pastFirstElementInPane()
-            .plusDelayOf(Duration.millis(5)),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+        FixedWindows.of(windowDuration));
 
     tester.advanceProcessingTime(new Instant(10));
 
-    tester.injectElements(
-        // first in window [0, 10), timer set for 15
-        TimestampedValue.of(1, new Instant(1)));
-    tester.advanceProcessingTime(new Instant(11));
-    tester.injectElements(
-        TimestampedValue.of(2, new Instant(9)));
-
+    // Timer at 15
+    tester.injectElements(1);
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(0), new Instant(10));
     tester.advanceProcessingTime(new Instant(12));
-    assertThat(tester.extractOutput(), Matchers.emptyIterable());
+    assertFalse(tester.shouldFire(firstWindow));
 
-    tester.injectElements(
-        TimestampedValue.of(3, new Instant(8)),
-        TimestampedValue.of(4, new Instant(19)),
-        TimestampedValue.of(5, new Instant(30)));
+    // Load up elements in the next window, timer at 17 for them
+    tester.injectElements(11, 12, 13);
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(10), new Instant(20));
+    assertFalse(tester.shouldFire(secondWindow));
 
+    // Not quite time to fire
+    tester.advanceProcessingTime(new Instant(14));
+    assertFalse(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+
+    // Timer at 19 for these in the first window; it should be ignored since the 15 will fire first
+    tester.injectElements(2, 3);
+
+    // Advance past the first timer and fire, finishing the first window
     tester.advanceProcessingTime(new Instant(16));
-    assertThat(tester.extractOutput(), Matchers.contains(
-        WindowMatchers.isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2, 3), 1, 0, 10)));
+    assertTrue(tester.shouldFire(firstWindow));
+    assertFalse(tester.shouldFire(secondWindow));
+    tester.fireIfShouldFire(firstWindow);
+    assertTrue(tester.isMarkedFinished(firstWindow));
 
-    // This element belongs in the window that has already fired. It should not be re-output because
-    // that trigger (which was one-time) has already gone off.
-    tester.injectElements(TimestampedValue.of(6, new Instant(2)));
+    // The next window fires and finishes now
+    tester.advanceProcessingTime(new Instant(18));
+    assertTrue(tester.shouldFire(secondWindow));
+    tester.fireIfShouldFire(secondWindow);
+    assertTrue(tester.isMarkedFinished(secondWindow));
+  }
 
-    tester.advanceProcessingTime(new Instant(19));
-    assertThat(tester.extractOutput(), Matchers.containsInAnyOrder(
-        WindowMatchers.isSingleWindowedValue(Matchers.contains(4), 19, 10, 20),
-        WindowMatchers.isSingleWindowedValue(Matchers.contains(5), 30, 30, 40)));
-    assertTrue(tester.isMarkedFinished(new IntervalWindow(new Instant(0), new Instant(10))));
+  /**
+   * Tests that when windows merge, if the trigger is waiting for "N millis after the first
+   * element" that it is relative to the earlier of the two merged windows.
+   */
+  @Test
+  public void testClear() throws Exception {
+    SimpleTriggerTester<IntervalWindow> tester = TriggerTester.forTrigger(
+        AfterProcessingTime
+            .<IntervalWindow>pastFirstElementInPane()
+            .plusDelayOf(Duration.millis(5)),
+        FixedWindows.of(Duration.millis(10)));
 
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(
-        new IntervalWindow(new Instant(0), new Instant(10)),
-        new IntervalWindow(new Instant(10), new Instant(20)),
-        new IntervalWindow(new Instant(30), new Instant(40)));
+    tester.injectElements(1, 2, 3);
+    IntervalWindow window = new IntervalWindow(new Instant(0), new Instant(10));
+    tester.clearState(window);
+    tester.assertCleared(window);
   }
 
   @Test
   public void testAfterProcessingTimeWithMergingWindow() throws Exception {
-    Duration windowDuration = Duration.millis(10);
-    TriggerTester<Integer, Iterable<Integer>, IntervalWindow> tester = TriggerTester.nonCombining(
-        Sessions.withGapDuration(windowDuration),
+    SimpleTriggerTester<IntervalWindow> tester = TriggerTester.forTrigger(
         AfterProcessingTime
             .<IntervalWindow>pastFirstElementInPane()
             .plusDelayOf(Duration.millis(5)),
-        AccumulationMode.DISCARDING_FIRED_PANES,
-        Duration.millis(100));
+        Sessions.withGapDuration(Duration.millis(10)));
 
     tester.advanceProcessingTime(new Instant(10));
-    tester.injectElements(
-        TimestampedValue.of(1, new Instant(1))); // in [1, 11), timer for 15
-    tester.advanceProcessingTime(new Instant(11));
-    tester.injectElements(
-        TimestampedValue.of(2, new Instant(2))); // in [2, 12), timer for 16
+    tester.injectElements(1); // in [1, 11), timer for 15
+    IntervalWindow firstWindow = new IntervalWindow(new Instant(1), new Instant(11));
+    assertFalse(tester.shouldFire(firstWindow));
 
-    tester.advanceProcessingTime(new Instant(15));
-    // This fires, because the earliest element in [1, 12) arrived at time 10
-    assertThat(tester.extractOutput(), Matchers.contains(
-        WindowMatchers.isSingleWindowedValue(Matchers.containsInAnyOrder(1, 2), 1, 1, 12)));
+    tester.advanceProcessingTime(new Instant(12));
+    tester.injectElements(3); // in [3, 13), timer for 17
+    IntervalWindow secondWindow = new IntervalWindow(new Instant(3), new Instant(13));
+    assertFalse(tester.shouldFire(secondWindow));
 
-    assertTrue(tester.isMarkedFinished(new IntervalWindow(new Instant(1), new Instant(12))));
-    tester.assertHasOnlyGlobalAndFinishedSetsFor(
-        new IntervalWindow(new Instant(1), new Instant(12)));
+    tester.mergeWindows();
+    IntervalWindow mergedWindow = new IntervalWindow(new Instant(1), new Instant(13));
+
+    tester.advanceProcessingTime(new Instant(16));
+    assertTrue(tester.shouldFire(mergedWindow));
   }
 
   @Test
@@ -141,10 +136,22 @@ public class AfterProcessingTimeTest {
 
   @Test
   public void testContinuation() throws Exception {
-    TimeTrigger<?> firstElementPlus1 =
+    OnceTrigger<?> firstElementPlus1 =
         AfterProcessingTime.pastFirstElementInPane().plusDelayOf(Duration.standardHours(1));
     assertEquals(
         new AfterSynchronizedProcessingTime<>(),
         firstElementPlus1.getContinuationTrigger());
+  }
+
+  /**
+   * Basic test of compatibility check between identical triggers.
+   */
+  @Test
+  public void testCompatibilityIdentical() throws Exception {
+    Trigger<?> t1 = AfterProcessingTime.pastFirstElementInPane()
+            .plusDelayOf(Duration.standardMinutes(1L));
+    Trigger<?> t2 = AfterProcessingTime.pastFirstElementInPane()
+            .plusDelayOf(Duration.standardMinutes(1L));
+    assertTrue(t1.isCompatible(t2));
   }
 }

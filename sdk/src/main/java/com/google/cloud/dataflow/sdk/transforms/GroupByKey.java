@@ -25,12 +25,15 @@ import com.google.cloud.dataflow.sdk.coders.IterableCoder;
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner.ValueWithMetadata;
+import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.DefaultTrigger;
 import com.google.cloud.dataflow.sdk.transforms.windowing.GlobalWindows;
 import com.google.cloud.dataflow.sdk.transforms.windowing.InvalidWindows;
+import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
 import com.google.cloud.dataflow.sdk.transforms.windowing.WindowFn;
-import com.google.cloud.dataflow.sdk.util.GroupAlsoByWindowsDoFn;
+import com.google.cloud.dataflow.sdk.util.GroupAlsoByWindowsViaOutputBufferDoFn;
 import com.google.cloud.dataflow.sdk.util.ReifyTimestampAndWindowsDoFn;
+import com.google.cloud.dataflow.sdk.util.SystemReduceFn;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.WindowedValue.FullWindowedValueCoder;
 import com.google.cloud.dataflow.sdk.util.WindowedValue.WindowedValueCoder;
@@ -53,8 +56,9 @@ import java.util.Map;
  * {@code PCollection<KV<K, Iterable<V>>>} representing a map from
  * each distinct key and window of the input {@code PCollection} to an
  * {@code Iterable} over all the values associated with that key in
- * the input.  Each key in the output {@code PCollection} is unique within
- * each window.
+ * the input per window.  Absent repeatedly-firing
+ * {@link Window#triggering triggering}, each key in the output
+ * {@code PCollection} is unique within each window.
  *
  * <p>{@code GroupByKey} is analogous to converting a multi-map into
  * a uni-map, and related to {@code GROUP BY} in SQL.  It corresponds
@@ -68,7 +72,7 @@ import java.util.Map;
  * encoded bytes.  This admits efficient parallel evaluation.  Note that
  * this requires that the {@code Coder} of the keys be deterministic (see
  * {@link Coder#verifyDeterministic()}).  If the key {@code Coder} is not
- * deterministic, an exception is thrown at runtime.
+ * deterministic, an exception is thrown at pipeline construction time.
  *
  * <p>By default, the {@code Coder} of the keys of the output
  * {@code PCollection} is the same as that of the keys of the input,
@@ -109,18 +113,21 @@ import java.util.Map;
  * {@link com.google.cloud.dataflow.sdk.transforms.windowing.AfterWatermark}
  * for details on the estimation.
  *
- * <p>The timestamp for each emitted pane is the earliest event time among all elements in
- * the pane. The output {@code PCollection} will have the same {@link WindowFn}
+ * <p>The timestamp for each emitted pane is determined by the
+ * {@link Window.Bound#withOutputTimeFn windowing operation}.
+ * The output {@code PCollection} will have the same {@link WindowFn}
  * as the input.
  *
  * <p>If the input {@code PCollection} contains late data (see
  * {@link com.google.cloud.dataflow.sdk.io.PubsubIO.Read.Bound#timestampLabel}
- * for an example of how this can occur), then there may be multiple elements
+ * for an example of how this can occur) or the
+ * {@link Window#triggering requested TriggerFn} can fire before
+ * the watermark, then there may be multiple elements
  * output by a {@code GroupByKey} that correspond to the same key and window.
  *
  * <p>If the {@link WindowFn} of the input requires merging, it is not
  * valid to apply another {@code GroupByKey} without first applying a new
- * {@link WindowFn}.
+ * {@link WindowFn} or applying {@link Window#remerge()}.
  *
  * @param <K> the type of the keys of the input and output
  * {@code PCollection}s
@@ -289,7 +296,7 @@ public class GroupByKey<K, V>
   /**
    * Returns the {@code Coder} of the values of the input to this transform.
    */
-  static <K, V> Coder<V> getInputValueCoder(Coder<KV<K, V>> inputCoder) {
+  public static <K, V> Coder<V> getInputValueCoder(Coder<KV<K, V>> inputCoder) {
     return getInputKvCoder(inputCoder).getValueCoder();
   }
 
@@ -397,27 +404,34 @@ public class GroupByKey<K, V>
       @SuppressWarnings("unchecked")
       KvCoder<K, Iterable<WindowedValue<V>>> inputKvCoder =
           (KvCoder<K, Iterable<WindowedValue<V>>>) input.getCoder();
+
       Coder<K> keyCoder = inputKvCoder.getKeyCoder();
       Coder<Iterable<WindowedValue<V>>> inputValueCoder =
           inputKvCoder.getValueCoder();
+
       IterableCoder<WindowedValue<V>> inputIterableValueCoder =
           (IterableCoder<WindowedValue<V>>) inputValueCoder;
       Coder<WindowedValue<V>> inputIterableElementCoder =
           inputIterableValueCoder.getElemCoder();
       WindowedValueCoder<V> inputIterableWindowedValueCoder =
           (WindowedValueCoder<V>) inputIterableElementCoder;
+
       Coder<V> inputIterableElementValueCoder =
           inputIterableWindowedValueCoder.getValueCoder();
       Coder<Iterable<V>> outputValueCoder =
           IterableCoder.of(inputIterableElementValueCoder);
-      Coder<KV<K, Iterable<V>>> outputKvCoder =
-          KvCoder.of(keyCoder, outputValueCoder);
+      Coder<KV<K, Iterable<V>>> outputKvCoder = KvCoder.of(keyCoder, outputValueCoder);
 
-      GroupAlsoByWindowsDoFn<K, V, Iterable<V>, ?> fn =
-          GroupAlsoByWindowsDoFn.createForIterable(
-              windowingStrategy, inputIterableElementValueCoder);
+      return input
+          .apply(ParDo.of(groupAlsoByWindowsFn(windowingStrategy, inputIterableElementValueCoder)))
+          .setCoder(outputKvCoder);
+    }
 
-      return input.apply(ParDo.of(fn)).setCoder(outputKvCoder);
+    private <W extends BoundedWindow> GroupAlsoByWindowsViaOutputBufferDoFn<K, V, Iterable<V>, W>
+        groupAlsoByWindowsFn(
+            WindowingStrategy<?, W> strategy, Coder<V> inputIterableElementValueCoder) {
+      return new GroupAlsoByWindowsViaOutputBufferDoFn<K, V, Iterable<V>, W>(
+          strategy, SystemReduceFn.<K, V, W>buffering(inputIterableElementValueCoder));
     }
   }
 

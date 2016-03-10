@@ -16,12 +16,13 @@
 
 package com.google.cloud.dataflow.sdk.util;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner.ValueWithMetadata;
 import com.google.cloud.dataflow.sdk.util.common.worker.StateSampler;
 import com.google.cloud.dataflow.sdk.util.state.InMemoryStateInternals;
 import com.google.cloud.dataflow.sdk.util.state.StateInternals;
 import com.google.cloud.dataflow.sdk.values.TupleTag;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
@@ -31,7 +32,8 @@ import java.util.Map;
 /**
  * {@link ExecutionContext} for use in direct mode.
  */
-public class DirectModeExecutionContext extends BaseExecutionContext {
+public class DirectModeExecutionContext
+    extends BaseExecutionContext<DirectModeExecutionContext.StepContext> {
 
   private Object key;
   private List<ValueWithMetadata<?>> output = Lists.newArrayList();
@@ -44,7 +46,7 @@ public class DirectModeExecutionContext extends BaseExecutionContext {
   }
 
   @Override
-  protected ExecutionContext.StepContext createStepContext(
+  protected StepContext createStepContext(
       String stepName, String transformName, StateSampler stateSampler) {
     return new StepContext(this, stepName, transformName);
   }
@@ -96,10 +98,11 @@ public class DirectModeExecutionContext extends BaseExecutionContext {
   /**
    * {@link ExecutionContext.StepContext} used in direct mode.
    */
-  static class StepContext extends BaseExecutionContext.StepContext {
+  public static class StepContext extends BaseExecutionContext.StepContext {
 
-    private final Map<Object, InMemoryStateInternals> stateInternals = Maps.newHashMap();
-    private InMemoryStateInternals currentStateInternals = null;
+    /** A map from each key to the state associated with it. */
+    private final Map<Object, InMemoryStateInternals<Object>> stateInternals = Maps.newHashMap();
+    private InMemoryStateInternals<Object> currentStateInternals = null;
 
     private StepContext(ExecutionContext executionContext, String stepName, String transformName) {
       super(executionContext, stepName, transformName);
@@ -109,14 +112,14 @@ public class DirectModeExecutionContext extends BaseExecutionContext {
     public void switchKey(Object newKey) {
       currentStateInternals = stateInternals.get(newKey);
       if (currentStateInternals == null) {
-        currentStateInternals = new InMemoryStateInternals();
+        currentStateInternals = InMemoryStateInternals.forKey(newKey);
         stateInternals.put(newKey, currentStateInternals);
       }
     }
 
     @Override
-    public StateInternals stateInternals() {
-      return Preconditions.checkNotNull(currentStateInternals);
+    public StateInternals<Object> stateInternals() {
+      return checkNotNull(currentStateInternals);
     }
 
     @Override

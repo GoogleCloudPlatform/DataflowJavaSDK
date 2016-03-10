@@ -16,25 +16,18 @@
 
 package com.google.cloud.dataflow.sdk.util;
 
-import static org.junit.Assert.assertEquals;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
-import com.google.cloud.dataflow.sdk.coders.Coder;
-import com.google.cloud.dataflow.sdk.coders.CoderRegistry;
-import com.google.cloud.dataflow.sdk.coders.IterableCoder;
-import com.google.cloud.dataflow.sdk.coders.KvCoder;
-import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
-import com.google.cloud.dataflow.sdk.coders.VarIntCoder;
-import com.google.cloud.dataflow.sdk.transforms.Aggregator;
-import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
-import com.google.cloud.dataflow.sdk.transforms.Combine.KeyedCombineFn;
-import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.GlobalWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.PaneInfo;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Trigger;
+import com.google.cloud.dataflow.sdk.transforms.windowing.TriggerBuilder;
 import com.google.cloud.dataflow.sdk.transforms.windowing.WindowFn;
+import com.google.cloud.dataflow.sdk.util.ActiveWindowSet.MergeCallback;
 import com.google.cloud.dataflow.sdk.util.TimerInternals.TimerData;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
 import com.google.cloud.dataflow.sdk.util.state.InMemoryStateInternals;
@@ -42,258 +35,188 @@ import com.google.cloud.dataflow.sdk.util.state.State;
 import com.google.cloud.dataflow.sdk.util.state.StateInternals;
 import com.google.cloud.dataflow.sdk.util.state.StateNamespace;
 import com.google.cloud.dataflow.sdk.util.state.StateNamespaces;
+import com.google.cloud.dataflow.sdk.util.state.StateNamespaces.WindowAndTriggerNamespace;
+import com.google.cloud.dataflow.sdk.util.state.StateNamespaces.WindowNamespace;
 import com.google.cloud.dataflow.sdk.util.state.StateTag;
-import com.google.cloud.dataflow.sdk.util.state.WatermarkStateInternal;
-import com.google.cloud.dataflow.sdk.values.KV;
+import com.google.cloud.dataflow.sdk.util.state.WatermarkHoldState;
 import com.google.cloud.dataflow.sdk.values.TimestampedValue;
-import com.google.cloud.dataflow.sdk.values.TupleTag;
-import com.google.common.base.Function;
-import com.google.common.base.Preconditions;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Throwables;
-import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Sets;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 
-import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Set;
 
+import javax.annotation.Nullable;
+
 /**
- * Test utility that runs a {@link WindowFn}, {@link Trigger} using in-memory stub implementations
- * to provide the {@link TimerInternals} and {@link WindowingInternals} needed to run
- * {@code Trigger}s and {@code ReduceFn}s.
+ * Test utility that runs a {@link Trigger}, using in-memory stub implementation to provide
+ * the {@link StateInternals}.
  *
- * <p>To have all interactions between the trigger and underlying components logged, call
- * {@link #logInteractions(boolean)}.
- *
- * @param <InputT> The element types.
- * @param <OutputT> The final type for elements in the window (for instance,
- *     {@code Iterable<InputT>})
  * @param <W> The type of windows being used.
  */
-public class TriggerTester<InputT, OutputT, W extends BoundedWindow> {
+public class TriggerTester<InputT, W extends BoundedWindow> {
 
-  private Instant watermark = BoundedWindow.TIMESTAMP_MIN_VALUE;
-  private Instant processingTime = BoundedWindow.TIMESTAMP_MIN_VALUE;
+  /**
+   * A {@link TriggerTester} specialized to {@link Integer} values, so elements and timestamps
+   * can be conflated. Today, triggers should not observed the element type, so this is the
+   * only trigger tester that needs to be used.
+   */
+  public static class SimpleTriggerTester<W extends BoundedWindow>
+      extends TriggerTester<Integer, W> {
 
-  private final BatchTimerInternals timerInternals = new BatchTimerInternals(processingTime);
+    private SimpleTriggerTester(WindowingStrategy<Object, W> windowingStrategy) throws Exception {
+      super(windowingStrategy);
+    }
+
+    public void injectElements(int... values) throws Exception {
+      List<TimestampedValue<Integer>> timestampedValues =
+          Lists.newArrayListWithCapacity(values.length);
+      for (int value : values) {
+        timestampedValues.add(TimestampedValue.of(value, new Instant(value)));
+      }
+      injectElements(timestampedValues);
+    }
+
+    public SimpleTriggerTester<W> withAllowedLateness(Duration allowedLateness) throws Exception {
+      return new SimpleTriggerTester<>(
+          windowingStrategy.withAllowedLateness(allowedLateness));
+    }
+  }
+
+  protected final WindowingStrategy<Object, W> windowingStrategy;
+
+  private final TestInMemoryStateInternals<?> stateInternals =
+      new TestInMemoryStateInternals<Object>();
+  private final TestTimerInternals timerInternals = new TestTimerInternals();
+  private final TriggerContextFactory<W> contextFactory;
   private final WindowFn<Object, W> windowFn;
-  private final StubContexts stubContexts;
-  private final Coder<OutputT> outputCoder;
-  private final WindowingStrategy<Object, W> objectStrategy;
-  private final ReduceFn<String, InputT, OutputT, W> reduceFn;
+  private final ActiveWindowSet<W> activeWindows;
 
-  private static final String KEY = "TEST_KEY";
-  private ExecutableTrigger<W> executableTrigger;
+  /**
+   * An {@link ExecutableTrigger} built from the {@link Trigger} or {@link TriggerBuilder}
+   * under test.
+   */
+  private final ExecutableTrigger<W> executableTrigger;
 
-  private final InMemoryLongSumAggregator droppedDueToClosedWindow =
-      new InMemoryLongSumAggregator(ReduceFnRunner.DROPPED_DUE_TO_CLOSED_WINDOW_COUNTER);
-  private final InMemoryLongSumAggregator droppedDueToLateness =
-      new InMemoryLongSumAggregator(ReduceFnRunner.DROPPED_DUE_TO_LATENESS_COUNTER);
+  /**
+   * A map from a window and trigger to whether that trigger is finished for the window.
+   */
+  private final Map<W, FinishedTriggers> finishedSets;
 
-  public static <W extends BoundedWindow> TriggerTester<Integer, Iterable<Integer>, W> nonCombining(
-      WindowingStrategy<?, W> windowingStrategy) throws Exception {
-    return new TriggerTester<Integer, Iterable<Integer>, W>(
-        windowingStrategy,
-        SystemReduceFn.<String, Integer, W>buffering(VarIntCoder.of()).create(KEY),
-        IterableCoder.of(VarIntCoder.of()));
+  public static <W extends BoundedWindow> SimpleTriggerTester<W> forTrigger(
+      TriggerBuilder<W> trigger, WindowFn<Object, W> windowFn)
+          throws Exception {
+    WindowingStrategy<Object, W> windowingStrategy =
+        WindowingStrategy.of(windowFn).withTrigger(trigger.buildTrigger())
+        // Merging requires accumulation mode or early firings can break up a session.
+        // Not currently an issue with the tester (because we never GC) but we don't want
+        // mystery failures due to violating this need.
+        .withMode(windowFn.isNonMerging()
+            ? AccumulationMode.DISCARDING_FIRED_PANES
+            : AccumulationMode.ACCUMULATING_FIRED_PANES);
+
+    return new SimpleTriggerTester<>(windowingStrategy);
   }
 
-  public static <W extends BoundedWindow> TriggerTester<Integer, Iterable<Integer>, W> nonCombining(
-      WindowFn<?, W> windowFn, Trigger<W> trigger, AccumulationMode mode,
-      Duration allowedDataLateness) throws Exception {
+  public static <InputT, W extends BoundedWindow> TriggerTester<InputT, W> forAdvancedTrigger(
+      TriggerBuilder<W> trigger, WindowFn<Object, W> windowFn) throws Exception {
+    WindowingStrategy<Object, W> strategy =
+        WindowingStrategy.of(windowFn).withTrigger(trigger.buildTrigger())
+        // Merging requires accumulation mode or early firings can break up a session.
+        // Not currently an issue with the tester (because we never GC) but we don't want
+        // mystery failures due to violating this need.
+        .withMode(windowFn.isNonMerging()
+            ? AccumulationMode.DISCARDING_FIRED_PANES
+            : AccumulationMode.ACCUMULATING_FIRED_PANES);
 
-    WindowingStrategy<?, W> strategy = WindowingStrategy.of(windowFn)
-        .withTrigger(trigger)
-        .withMode(mode)
-        .withAllowedLateness(allowedDataLateness);
-    return nonCombining(strategy);
+    return new TriggerTester<>(strategy);
   }
 
-  public static <W extends BoundedWindow, AccumT, OutputT>
-      TriggerTester<Integer, OutputT, W> combining(
-          WindowFn<?, W> windowFn, Trigger<W> trigger, AccumulationMode mode,
-          KeyedCombineFn<String, Integer, AccumT, OutputT> combineFn,
-          Coder<OutputT> outputCoder,
-          Duration allowedDataLateness) throws Exception {
+  protected TriggerTester(WindowingStrategy<Object, W> windowingStrategy) throws Exception {
+    this.windowingStrategy = windowingStrategy;
+    this.windowFn = windowingStrategy.getWindowFn();
+    this.executableTrigger = windowingStrategy.getTrigger();
+    this.finishedSets = new HashMap<>();
 
-    WindowingStrategy<?, W> strategy = WindowingStrategy.of(windowFn)
-        .withTrigger(trigger)
-        .withMode(mode)
-        .withAllowedLateness(allowedDataLateness);
+    this.activeWindows =
+        windowFn.isNonMerging()
+            ? new NonMergingActiveWindowSet<W>()
+            : new MergingActiveWindowSet<W>(windowFn, stateInternals);
 
-    CoderRegistry registry = new CoderRegistry();
-    registry.registerStandardCoders();
-    AppliedCombineFn<String, Integer, AccumT, OutputT> fn =
-        AppliedCombineFn.<String, Integer, AccumT, OutputT>withInputCoder(
-            combineFn, registry, KvCoder.of(StringUtf8Coder.of(), VarIntCoder.of()));
-
-    return new TriggerTester<Integer, OutputT, W>(
-        strategy,
-        SystemReduceFn.<String, Integer, AccumT, OutputT, W>combining(
-            StringUtf8Coder.of(), fn).create(KEY),
-        outputCoder);
-  }
-
-  private TriggerTester(
-      WindowingStrategy<?, W> wildcardStrategy,
-      ReduceFn<String, InputT, OutputT, W> reduceFn,
-      Coder<OutputT> outputCoder) throws Exception {
-    @SuppressWarnings("unchecked")
-    WindowingStrategy<Object, W> objectStrategy = (WindowingStrategy<Object, W>) wildcardStrategy;
-
-    this.objectStrategy = objectStrategy;
-    this.reduceFn = reduceFn;
-    this.windowFn = objectStrategy.getWindowFn();
-    this.stubContexts = new StubContexts();
-    this.outputCoder = outputCoder;
-    executableTrigger = wildcardStrategy.getTrigger();
-  }
-
-  ReduceFnRunner<String, InputT, OutputT, W> createRunner() {
-    return new ReduceFnRunner<>(
-        KEY, objectStrategy, timerInternals, stubContexts,
-        droppedDueToClosedWindow, droppedDueToLateness, reduceFn);
-  }
-
-  public ExecutableTrigger<W> getTrigger() {
-    return executableTrigger;
-  }
-
-  public boolean isMarkedFinished(W window) {
-    return createRunner().isFinished(window);
-  }
-
-  @SafeVarargs
-  public final void assertHasOnlyGlobalAndFinishedSetsFor(W... expectedWindows) {
-    assertHasOnlyGlobalAndAllowedTags(
-        ImmutableSet.copyOf(expectedWindows),
-        ImmutableSet.<StateTag<?>>of(TriggerRunner.FINISHED_BITS_TAG));
-  }
-
-  @SafeVarargs
-  public final void assertHasOnlyGlobalAndFinishedSetsAndPaneInfoFor(W... expectedWindows) {
-    assertHasOnlyGlobalAndAllowedTags(
-        ImmutableSet.copyOf(expectedWindows),
-        ImmutableSet.<StateTag<?>>of(
-            TriggerRunner.FINISHED_BITS_TAG,
-            PaneInfoTracker.PANE_INFO_TAG,
-            WatermarkHold.DATA_HOLD_TAG));
-  }
-
-  public final void assertHasOnlyGlobalState() {
-    assertHasOnlyGlobalAndAllowedTags(
-        Collections.<W>emptySet(), Collections.<StateTag<?>>emptySet());
-  }
-
-  @SafeVarargs
-  public final void assertHasOnlyGlobalAndPaneInfoFor(W... expectedWindows) {
-    assertHasOnlyGlobalAndAllowedTags(
-        ImmutableSet.copyOf(expectedWindows),
-        ImmutableSet.<StateTag<?>>of(PaneInfoTracker.PANE_INFO_TAG, WatermarkHold.DATA_HOLD_TAG));
+    this.contextFactory =
+        new TriggerContextFactory<>(windowingStrategy, stateInternals, activeWindows);
   }
 
   /**
-   * Verifies that the the set of windows that have any state stored is exactly
-   * {@code expectedWindows} and that each of these windows has only tags from {@code allowedTags}.
+   * Instructs the trigger to clear its state for the given window.
    */
-  private void assertHasOnlyGlobalAndAllowedTags(
-      Set<W> expectedWindows, Set<StateTag<?>> allowedTags) {
-    Set<StateNamespace> expectedWindowsSet = new HashSet<>();
-    for (W expectedWindow : expectedWindows) {
-      expectedWindowsSet.add(windowNamespace(expectedWindow));
-    }
-    Set<StateNamespace> actualWindows = new HashSet<>();
+  public void clearState(W window) throws Exception {
+    executableTrigger.invokeClear(contextFactory.base(window,
+        new TestTimers(windowNamespace(window)), executableTrigger, getFinishedSet(window)));
+  }
 
-    for (StateNamespace namespace : stubContexts.state.getNamespacesInUse()) {
-      if (namespace instanceof StateNamespaces.GlobalNamespace) {
-        continue;
-      } else if (namespace instanceof StateNamespaces.WindowNamespace) {
-        Set<StateTag<?>> tagsInUse = stubContexts.state.getTagsInUse(namespace);
-        if (tagsInUse.isEmpty()) {
-          continue;
+  /**
+   * Asserts that the trigger has actually cleared all of its state for the given window. Since
+   * the trigger under test is the root, this makes the assert for all triggers regardless
+   * of their position in the trigger tree.
+   */
+  public void assertCleared(W window) {
+    for (StateNamespace untypedNamespace : stateInternals.getNamespacesInUse()) {
+      if (untypedNamespace instanceof WindowAndTriggerNamespace) {
+        @SuppressWarnings("unchecked")
+        WindowAndTriggerNamespace<W> namespace = (WindowAndTriggerNamespace<W>) untypedNamespace;
+        if (namespace.getWindow().equals(window)) {
+          Set<?> tagsInUse = stateInternals.getTagsInUse(namespace);
+          assertTrue("Trigger has not cleared tags: " + tagsInUse, tagsInUse.isEmpty());
         }
-        actualWindows.add(namespace);
-        Set<StateTag<?>> unexpected = Sets.difference(tagsInUse, allowedTags);
-        if (unexpected.isEmpty()) {
-          continue;
-        } else {
-          fail(namespace + " has unexpected states: " + tagsInUse);
-        }
-      } else if (namespace instanceof StateNamespaces.WindowAndTriggerNamespace) {
-        Set<StateTag<?>> tagsInUse = stubContexts.state.getTagsInUse(namespace);
-        assertTrue(namespace + " contains " + tagsInUse, tagsInUse.isEmpty());
-      } else {
-        fail("Unrecognized namespace " + namespace);
       }
     }
+  }
 
-    assertEquals(expectedWindowsSet, actualWindows);
+  /**
+   * Returns {@code true} if the {@link Trigger} under test is finished for the given window.
+   */
+  public boolean isMarkedFinished(W window) {
+    FinishedTriggers finishedSet = finishedSets.get(window);
+    if (finishedSet == null) {
+      return false;
+    }
+
+    return finishedSet.isFinished(executableTrigger);
   }
 
   private StateNamespace windowNamespace(W window) {
-    return StateNamespaces.window(windowFn.windowCoder(), window);
-  }
-
-  public Instant getWatermarkHold() {
-    return stubContexts.state.minimumWatermarkHold();
-  }
-
-  public long getElementsDroppedDueToClosedWindow() {
-    return droppedDueToClosedWindow.getSum();
-  }
-
-  public long getElementsDroppedDueToLateness() {
-    return droppedDueToLateness.getSum();
+    return StateNamespaces.window(windowFn.windowCoder(), checkNotNull(window));
   }
 
   /**
-   * Retrieve the values that have been output to this time, and clear out the output accumulator.
+   * Advance the input watermark to the specified time, firing any timers that should
+   * fire. Then advance the output watermark as far as possible.
    */
-  public List<WindowedValue<OutputT>> extractOutput() {
-    ImmutableList<WindowedValue<OutputT>> result = FluentIterable.from(stubContexts.outputs)
-        .transform(new Function<WindowedValue<KV<String, OutputT>>, WindowedValue<OutputT>>() {
-          @Override
-          public WindowedValue<OutputT> apply(WindowedValue<KV<String, OutputT>> input) {
-            return input.withValue(input.getValue().getValue());
-          }
-        })
-        .toList();
-    stubContexts.outputs.clear();
-    return result;
-  }
-
-  /** Advance the watermark to the specified time, firing any timers that should fire. */
-  public void advanceWatermark(Instant newWatermark) throws Exception {
-    Preconditions.checkState(!newWatermark.isBefore(watermark),
-        "Cannot move watermark time backwards from %s to %s",
-        watermark.getMillis(), newWatermark.getMillis());
-    watermark = newWatermark;
-    ReduceFnRunner<String, InputT, OutputT, W> runner = createRunner();
-    timerInternals.advanceWatermark(runner, newWatermark);
-    runner.persist();
+  public void advanceInputWatermark(Instant newInputWatermark) throws Exception {
+    timerInternals.advanceInputWatermark(newInputWatermark);
   }
 
   /** Advance the processing time to the specified time, firing any timers that should fire. */
-  public void advanceProcessingTime(
-      Instant newProcessingTime) throws Exception {
-    Preconditions.checkState(!newProcessingTime.isBefore(processingTime),
-        "Cannot move processing time backwards from %s to %s",
-        processingTime.getMillis(), newProcessingTime.getMillis());
-    processingTime = newProcessingTime;
-    ReduceFnRunner<String, InputT, OutputT, W> runner = createRunner();
-    timerInternals.advanceProcessingTime(runner, newProcessingTime);
-    runner.persist();
+  public void advanceProcessingTime(Instant newProcessingTime) throws Exception {
+    timerInternals.advanceProcessingTime(newProcessingTime);
+  }
+
+  /** Advance the processing time to the specified time, firing any timers that should fire. */
+  public void advanceSynchronizedProcessingTime(Instant newSynchronizedProcessingTime)
+      throws Exception {
+    timerInternals.advanceSynchronizedProcessingTime(newSynchronizedProcessingTime);
   }
 
   /**
@@ -302,39 +225,135 @@ public class TriggerTester<InputT, OutputT, W extends BoundedWindow> {
    */
   @SafeVarargs
   public final void injectElements(TimestampedValue<InputT>... values) throws Exception {
-    ReduceFnRunner<String, InputT, OutputT, W> runner = createRunner();
-    runner.processElements(FluentIterable.of(values)
-        .transform(new Function<TimestampedValue<InputT>, WindowedValue<InputT>>() {
-          @Override
-          public WindowedValue<InputT> apply(TimestampedValue<InputT> input) {
-            try {
-              InputT value = input.getValue();
-              Instant timestamp = input.getTimestamp();
-              Collection<W> windows = windowFn.assignWindows(new TriggerTester.StubAssignContext<W>(
-                  windowFn, value, timestamp, Arrays.asList(GlobalWindow.INSTANCE)));
-              return WindowedValue.of(value, timestamp, windows, PaneInfo.NO_FIRING);
-            } catch (Exception e) {
-              throw Throwables.propagate(e);
-            }
-          }
-        }));
-
-    // Persist after each bundle.
-    runner.persist();
+    injectElements(Arrays.asList(values));
   }
 
-  public void fireTimer(W window, Instant timestamp, TimeDomain domain) {
-    ReduceFnRunner<String, InputT, OutputT, W> runner = createRunner();
-    runner.onTimer(TimerData.of(
-        StateNamespaces.window(windowFn.windowCoder(), window), timestamp, domain));
-    runner.persist();
+  public final void injectElements(Collection<TimestampedValue<InputT>> values) throws Exception {
+    for (TimestampedValue<InputT> value : values) {
+      WindowTracing.trace("TriggerTester.injectElements: {}", value);
+    }
+
+    List<WindowedValue<InputT>> windowedValues = Lists.newArrayListWithCapacity(values.size());
+
+    for (TimestampedValue<InputT> input : values) {
+      try {
+        InputT value = input.getValue();
+        Instant timestamp = input.getTimestamp();
+        Collection<W> assignedWindows = windowFn.assignWindows(new TestAssignContext<W>(
+            windowFn, value, timestamp, Arrays.asList(GlobalWindow.INSTANCE)));
+
+        for (W window : assignedWindows) {
+          activeWindows.addActive(window);
+
+          // Today, triggers assume onTimer firing at the watermark time, whether or not they
+          // explicitly set the timer themselves. So this tester must set it.
+          timerInternals.setTimer(
+              TimerData.of(windowNamespace(window), window.maxTimestamp(), TimeDomain.EVENT_TIME));
+        }
+
+        windowedValues.add(WindowedValue.of(value, timestamp, assignedWindows, PaneInfo.NO_FIRING));
+      } catch (Exception e) {
+        throw Throwables.propagate(e);
+      }
+    }
+
+    for (WindowedValue<InputT> windowedValue : windowedValues) {
+      for (BoundedWindow untypedWindow : windowedValue.getWindows()) {
+        // SDK is responsible for type safety
+        @SuppressWarnings("unchecked")
+        W window = activeWindows.representative((W) untypedWindow);
+
+        Trigger<W>.OnElementContext context = contextFactory.createOnElementContext(window,
+            new TestTimers(windowNamespace(window)), windowedValue.getTimestamp(),
+            executableTrigger, getFinishedSet(window));
+
+        if (!context.trigger().isFinished()) {
+          executableTrigger.invokeOnElement(context);
+        }
+      }
+    }
   }
 
-  private static class TestingInMemoryStateInternals extends InMemoryStateInternals {
+  public boolean shouldFire(W window) throws Exception {
+    Trigger<W>.TriggerContext context = contextFactory.base(
+        window,
+        new TestTimers(windowNamespace(window)),
+        executableTrigger, getFinishedSet(window));
+    executableTrigger.getSpec().prefetchShouldFire(context.state());
+    return executableTrigger.invokeShouldFire(context);
+  }
 
-    protected Set<StateTag<?>> getTagsInUse(StateNamespace namespace) {
-      Set<StateTag<?>> inUse = new HashSet<>();
-      for (Map.Entry<StateTag<?>, State> entry : inMemoryState.getTagsInUse(namespace).entrySet()) {
+  public void fireIfShouldFire(W window) throws Exception {
+    Trigger<W>.TriggerContext context = contextFactory.base(
+        window,
+        new TestTimers(windowNamespace(window)),
+        executableTrigger, getFinishedSet(window));
+
+    executableTrigger.getSpec().prefetchShouldFire(context.state());
+    if (executableTrigger.invokeShouldFire(context)) {
+      executableTrigger.getSpec().prefetchOnFire(context.state());
+      executableTrigger.invokeOnFire(context);
+      if (context.trigger().isFinished()) {
+        activeWindows.remove(context.window());
+        executableTrigger.invokeClear(context);
+      }
+    }
+  }
+
+  public void setSubTriggerFinishedForWindow(int subTriggerIndex, W window, boolean value) {
+    getFinishedSet(window).setFinished(executableTrigger.subTriggers().get(subTriggerIndex), value);
+  }
+
+  /**
+   * Invokes merge from the {@link WindowFn} a single time and passes the resulting merge
+   * events on to the trigger under test. Does not persist the fact that merging happened,
+   * since it is just to test the trigger's {@code OnMerge} method.
+   */
+  public final void mergeWindows() throws Exception {
+    activeWindows.merge(new MergeCallback<W>() {
+      @Override
+      public void prefetchOnMerge(Collection<W> toBeMerged, Collection<W> activeToBeMerged,
+          W mergeResult) throws Exception {}
+
+      @Override
+      public void onMerge(Collection<W> toBeMerged, Collection<W> activeToBeMerged, W mergeResult)
+          throws Exception {
+        Map<W, FinishedTriggers> mergingFinishedSets =
+            Maps.newHashMapWithExpectedSize(activeToBeMerged.size());
+        for (W oldWindow : activeToBeMerged) {
+          mergingFinishedSets.put(oldWindow, getFinishedSet(oldWindow));
+        }
+        executableTrigger.invokeOnMerge(contextFactory.createOnMergeContext(mergeResult,
+            new TestTimers(windowNamespace(mergeResult)), executableTrigger,
+            getFinishedSet(mergeResult), mergingFinishedSets));
+        timerInternals.setTimer(TimerData.of(
+            windowNamespace(mergeResult), mergeResult.maxTimestamp(), TimeDomain.EVENT_TIME));
+      }
+    });
+  }
+
+  private FinishedTriggers getFinishedSet(W window) {
+    FinishedTriggers finishedSet = finishedSets.get(window);
+    if (finishedSet == null) {
+      finishedSet = FinishedTriggersSet.fromSet(new HashSet<ExecutableTrigger<?>>());
+      finishedSets.put(window, finishedSet);
+    }
+    return finishedSet;
+  }
+
+  /**
+   * Simulate state.
+   */
+  private static class TestInMemoryStateInternals<K> extends InMemoryStateInternals<K> {
+
+    public TestInMemoryStateInternals() {
+      super(null);
+    }
+
+    public Set<StateTag<? super K, ?>> getTagsInUse(StateNamespace namespace) {
+      Set<StateTag<? super K, ?>> inUse = new HashSet<>();
+      for (Map.Entry<StateTag<? super K, ?>, State> entry :
+          inMemoryState.getTagsInUse(namespace).entrySet()) {
         if (!isEmptyForTesting(entry.getValue())) {
           inUse.add(entry.getKey());
         }
@@ -346,11 +365,13 @@ public class TriggerTester<InputT, OutputT, W extends BoundedWindow> {
       return inMemoryState.getNamespacesInUse();
     }
 
-    public Instant minimumWatermarkHold() {
+    /** Return the earliest output watermark hold in state, or null if none. */
+    public Instant earliestWatermarkHold() {
       Instant minimum = null;
       for (State storage : inMemoryState.values()) {
-        if (storage instanceof WatermarkStateInternal) {
-          Instant hold = ((WatermarkStateInternal) storage).get().read();
+        if (storage instanceof WatermarkHoldState) {
+          @SuppressWarnings("unchecked")
+          Instant hold = ((WatermarkHoldState<BoundedWindow>) storage).read();
           if (minimum == null || (hold != null && hold.isBefore(minimum))) {
             minimum = hold;
           }
@@ -360,60 +381,14 @@ public class TriggerTester<InputT, OutputT, W extends BoundedWindow> {
     }
   }
 
-  private class StubContexts implements WindowingInternals<InputT, KV<String, OutputT>> {
-
-    private TestingInMemoryStateInternals state = new TestingInMemoryStateInternals();
-
-    private List<WindowedValue<KV<String, OutputT>>> outputs = new ArrayList<>();
-
-    @Override
-    public void outputWindowedValue(KV<String, OutputT> output, Instant timestamp,
-        Collection<? extends BoundedWindow> windows, PaneInfo pane) {
-      // Copy the output value (using coders) before capturing it.
-      KV<String, OutputT> copy = SerializableUtils.<KV<String, OutputT>>ensureSerializableByCoder(
-          KvCoder.of(StringUtf8Coder.of(), outputCoder), output, "outputForWindow");
-      WindowedValue<KV<String, OutputT>> value = WindowedValue.of(copy, timestamp, windows, pane);
-      outputs.add(value);
-    }
-
-    @Override
-    public TimerInternals timerInternals() {
-      throw new UnsupportedOperationException(
-          "getTimerInternals() should not be called on StubContexts.");
-    }
-
-    @Override
-    public Collection<? extends BoundedWindow> windows() {
-      throw new UnsupportedOperationException(
-          "Testing triggers should not use windows from WindowingInternals.");
-    }
-
-    @Override
-    public PaneInfo pane() {
-      throw new UnsupportedOperationException(
-          "Testing triggers should not use pane from WindowingInternals.");
-    }
-    @Override
-    public <T> void writePCollectionViewData(TupleTag<?> tag, Iterable<WindowedValue<T>> data,
-        Coder<T> elemCoder) throws IOException {
-      throw new UnsupportedOperationException(
-          "Testing triggers should not use writePCollectionViewData from WindowingInternals.");
-    }
-
-    @Override
-    public StateInternals stateInternals() {
-      return state;
-    }
-  }
-
-  private static class StubAssignContext<W extends BoundedWindow>
+  private static class TestAssignContext<W extends BoundedWindow>
       extends WindowFn<Object, W>.AssignContext {
     private Object element;
     private Instant timestamp;
     private Collection<? extends BoundedWindow> windows;
 
-    public StubAssignContext(WindowFn<Object, W> windowFn,
-        Object element, Instant timestamp, Collection<? extends BoundedWindow> windows) {
+    public TestAssignContext(WindowFn<Object, W> windowFn, Object element, Instant timestamp,
+        Collection<? extends BoundedWindow> windows) {
       windowFn.super();
       this.element = element;
       this.timestamp = timestamp;
@@ -436,32 +411,175 @@ public class TriggerTester<InputT, OutputT, W extends BoundedWindow> {
     }
   }
 
-  private static class InMemoryLongSumAggregator implements Aggregator<Long, Long> {
+  /**
+   * Simulate the firing of timers and progression of input and output watermarks for a
+   * single computation and key in a Windmill-like streaming environment. Similar to
+   * {@link BatchTimerInternals}, but also tracks the output watermark.
+   */
+  private class TestTimerInternals implements TimerInternals {
+    /** At most one timer per timestamp is kept. */
+    private Set<TimerData> existingTimers = new HashSet<>();
 
-    private final String name;
-    private long sum = 0;
+    /** Pending input watermark timers, in timestamp order. */
+    private PriorityQueue<TimerData> watermarkTimers = new PriorityQueue<>(11);
 
-    public InMemoryLongSumAggregator(String name) {
-      this.name = name;
+    /** Pending processing time timers, in timestamp order. */
+    private PriorityQueue<TimerData> processingTimers = new PriorityQueue<>(11);
+
+    /** Current input watermark. */
+    @Nullable
+    private Instant inputWatermarkTime = null;
+
+    /** Current output watermark. */
+    @Nullable
+    private Instant outputWatermarkTime = null;
+
+    /** Current processing time. */
+    private Instant processingTime = BoundedWindow.TIMESTAMP_MIN_VALUE;
+
+    /** Current processing time. */
+    private Instant synchronizedProcessingTime = null;
+
+    private PriorityQueue<TimerData> queue(TimeDomain domain) {
+      return TimeDomain.EVENT_TIME.equals(domain) ? watermarkTimers : processingTimers;
     }
 
     @Override
-    public void addValue(Long value) {
-      sum += value;
+    public void setTimer(TimerData timer) {
+      WindowTracing.trace("TestTimerInternals.setTimer: {}", timer);
+      if (existingTimers.add(timer)) {
+        queue(timer.getDomain()).add(timer);
+      }
     }
 
     @Override
-    public String getName() {
-      return name;
+    public void deleteTimer(TimerData timer) {
+      WindowTracing.trace("TestTimerInternals.deleteTimer: {}", timer);
+      existingTimers.remove(timer);
+      queue(timer.getDomain()).remove(timer);
     }
 
     @Override
-    public CombineFn<Long, ?, Long> getCombineFn() {
-      return new Sum.SumLongFn();
+    public Instant currentProcessingTime() {
+      return processingTime;
     }
 
-    public long getSum() {
-      return sum;
+    @Override
+    @Nullable
+    public Instant currentSynchronizedProcessingTime() {
+      return synchronizedProcessingTime;
+    }
+
+    @Override
+    @Nullable
+    public Instant currentInputWatermarkTime() {
+      return inputWatermarkTime;
+    }
+
+    @Override
+    @Nullable
+    public Instant currentOutputWatermarkTime() {
+      return outputWatermarkTime;
+    }
+
+    @Override
+    public String toString() {
+      return MoreObjects.toStringHelper(getClass())
+          .add("watermarkTimers", watermarkTimers)
+          .add("processingTimers", processingTime)
+          .add("inputWatermarkTime", inputWatermarkTime)
+          .add("outputWatermarkTime", outputWatermarkTime)
+          .add("processingTime", processingTime)
+          .toString();
+    }
+
+    public void advanceInputWatermark(Instant newInputWatermark) throws Exception {
+      checkNotNull(newInputWatermark);
+      checkState(inputWatermarkTime == null || !newInputWatermark.isBefore(inputWatermarkTime),
+          "Cannot move input watermark time backwards from %s to %s", inputWatermarkTime,
+          newInputWatermark);
+      WindowTracing.trace("TestTimerInternals.advanceInputWatermark: from {} to {}",
+          inputWatermarkTime, newInputWatermark);
+      inputWatermarkTime = newInputWatermark;
+
+      Instant hold = stateInternals.earliestWatermarkHold();
+      if (hold == null) {
+        WindowTracing.trace("TestTimerInternals.advanceInputWatermark: no holds, "
+            + "so output watermark = input watermark");
+        hold = inputWatermarkTime;
+      }
+      advanceOutputWatermark(hold);
+    }
+
+    private void advanceOutputWatermark(Instant newOutputWatermark) throws Exception {
+      checkNotNull(newOutputWatermark);
+      checkNotNull(inputWatermarkTime);
+      if (newOutputWatermark.isAfter(inputWatermarkTime)) {
+        WindowTracing.trace(
+            "TestTimerInternals.advanceOutputWatermark: clipping output watermark from {} to {}",
+            newOutputWatermark, inputWatermarkTime);
+        newOutputWatermark = inputWatermarkTime;
+      }
+      checkState(outputWatermarkTime == null || !newOutputWatermark.isBefore(outputWatermarkTime),
+          "Cannot move output watermark time backwards from %s to %s", outputWatermarkTime,
+          newOutputWatermark);
+      WindowTracing.trace("TestTimerInternals.advanceOutputWatermark: from {} to {}",
+          outputWatermarkTime, newOutputWatermark);
+      outputWatermarkTime = newOutputWatermark;
+    }
+
+    public void advanceProcessingTime(Instant newProcessingTime) throws Exception {
+      checkState(!newProcessingTime.isBefore(processingTime),
+          "Cannot move processing time backwards from %s to %s", processingTime, newProcessingTime);
+      WindowTracing.trace("TestTimerInternals.advanceProcessingTime: from {} to {}", processingTime,
+          newProcessingTime);
+      processingTime = newProcessingTime;
+    }
+
+    public void advanceSynchronizedProcessingTime(Instant newSynchronizedProcessingTime)
+        throws Exception {
+      checkState(!newSynchronizedProcessingTime.isBefore(synchronizedProcessingTime),
+          "Cannot move processing time backwards from %s to %s", synchronizedProcessingTime,
+          newSynchronizedProcessingTime);
+      WindowTracing.trace("TestTimerInternals.advanceProcessingTime: from {} to {}",
+          synchronizedProcessingTime, newSynchronizedProcessingTime);
+      synchronizedProcessingTime = newSynchronizedProcessingTime;
+    }
+  }
+
+  private class TestTimers implements Timers {
+    private final StateNamespace namespace;
+
+    public TestTimers(StateNamespace namespace) {
+      checkArgument(namespace instanceof WindowNamespace);
+      this.namespace = namespace;
+    }
+
+    @Override
+    public void setTimer(Instant timestamp, TimeDomain timeDomain) {
+      timerInternals.setTimer(TimerData.of(namespace, timestamp, timeDomain));
+    }
+
+    @Override
+    public void deleteTimer(Instant timestamp, TimeDomain timeDomain) {
+      timerInternals.deleteTimer(TimerData.of(namespace, timestamp, timeDomain));
+    }
+
+    @Override
+    public Instant currentProcessingTime() {
+      return timerInternals.currentProcessingTime();
+    }
+
+    @Override
+    @Nullable
+    public Instant currentSynchronizedProcessingTime() {
+      return timerInternals.currentSynchronizedProcessingTime();
+    }
+
+    @Override
+    @Nullable
+    public Instant currentEventTime() {
+      return timerInternals.currentInputWatermarkTime();
     }
   }
 }

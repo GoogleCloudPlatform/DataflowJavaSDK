@@ -17,6 +17,7 @@
 package com.google.cloud.dataflow.sdk.transforms;
 
 import static com.google.cloud.dataflow.sdk.TestUtils.KvMatcher.isKv;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.collection.IsIterableContainingInAnyOrder.containsInAnyOrder;
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertThat;
@@ -36,6 +37,7 @@ import com.google.cloud.dataflow.sdk.testing.RunnableOnService;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
 import com.google.cloud.dataflow.sdk.transforms.windowing.FixedWindows;
 import com.google.cloud.dataflow.sdk.transforms.windowing.InvalidWindows;
+import com.google.cloud.dataflow.sdk.transforms.windowing.OutputTimeFns;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Sessions;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
 import com.google.cloud.dataflow.sdk.util.NoopPathValidator;
@@ -43,8 +45,11 @@ import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
 import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PBegin;
 import com.google.cloud.dataflow.sdk.values.PCollection;
+import com.google.cloud.dataflow.sdk.values.TimestampedValue;
+import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
 
 import org.joda.time.Duration;
+import org.joda.time.Instant;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -323,14 +328,43 @@ public class GroupByKeyTest {
   public void testGroupByKeyDirectUnbounded() {
     Pipeline p = createTestDirectRunner();
 
-    PCollection<KV<String, Integer>> input = p
-        .apply(new PTransform<PBegin, PCollection<KV<String, Integer>>>() {
-          @Override
-          public PCollection<KV<String, Integer>> apply(PBegin input) {
-            return PCollection.createPrimitiveOutputInternal(input.getPipeline(),
-                WindowingStrategy.globalDefault(), PCollection.IsBounded.UNBOUNDED);
-          }
-        });
+    PCollection<KV<String, Integer>> input =
+        p.apply(
+            new PTransform<PBegin, PCollection<KV<String, Integer>>>() {
+              @Override
+              public PCollection<KV<String, Integer>> apply(PBegin input) {
+                return PCollection.<KV<String, Integer>>createPrimitiveOutputInternal(
+                        input.getPipeline(),
+                        WindowingStrategy.globalDefault(),
+                        PCollection.IsBounded.UNBOUNDED)
+                    .setTypeDescriptorInternal(new TypeDescriptor<KV<String, Integer>>() {});
+              }
+            });
+
+    thrown.expect(IllegalStateException.class);
+    thrown.expectMessage(
+        "GroupByKey cannot be applied to non-bounded PCollection in the GlobalWindow without "
+            + "a trigger. Use a Window.into or Window.triggering transform prior to GroupByKey.");
+
+    input.apply("GroupByKey", GroupByKey.<String, Integer>create());
+  }
+
+  @Test
+  public void testGroupByKeyServiceUnbounded() {
+    Pipeline p = createTestServiceRunner();
+
+    PCollection<KV<String, Integer>> input =
+        p.apply(
+            new PTransform<PBegin, PCollection<KV<String, Integer>>>() {
+              @Override
+              public PCollection<KV<String, Integer>> apply(PBegin input) {
+                return PCollection.<KV<String, Integer>>createPrimitiveOutputInternal(
+                        input.getPipeline(),
+                        WindowingStrategy.globalDefault(),
+                        PCollection.IsBounded.UNBOUNDED)
+                    .setTypeDescriptorInternal(new TypeDescriptor<KV<String, Integer>>() {});
+              }
+            });
 
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(
@@ -340,25 +374,61 @@ public class GroupByKeyTest {
     input.apply("GroupByKey", GroupByKey.<String, Integer>create());
   }
 
+  /**
+   * Tests that when two elements are combined via a GroupByKey their output timestamp agrees
+   * with the windowing function customized to actually be the same as the default, the earlier of
+   * the two values.
+   */
   @Test
-  public void testGroupByKeyServiceUnbounded() {
-    Pipeline p = createTestServiceRunner();
+  @Category(RunnableOnService.class)
+  public void testOutputTimeFnEarliest() {
+    Pipeline pipeline = TestPipeline.create();
 
-    PCollection<KV<String, Integer>> input = p
-        .apply(new PTransform<PBegin, PCollection<KV<String, Integer>>>() {
-          @Override
-          public PCollection<KV<String, Integer>> apply(PBegin input) {
-            return PCollection.createPrimitiveOutputInternal(input.getPipeline(),
-                WindowingStrategy.globalDefault(), PCollection.IsBounded.UNBOUNDED);
-          }
-        });
+    pipeline.apply(
+        Create.timestamped(
+            TimestampedValue.of(KV.of(0, "hello"), new Instant(0)),
+            TimestampedValue.of(KV.of(0, "goodbye"), new Instant(10))))
+        .apply(Window.<KV<Integer, String>>into(FixedWindows.of(Duration.standardMinutes(10)))
+            .withOutputTimeFn(OutputTimeFns.outputAtEarliestInputTimestamp()))
+        .apply(GroupByKey.<Integer, String>create())
+        .apply(ParDo.of(new AssertTimestamp(new Instant(0))));
 
-    thrown.expect(IllegalStateException.class);
-    thrown.expectMessage(
-        "GroupByKey cannot be applied to non-bounded PCollection in the GlobalWindow without "
-        + "a trigger. Use a Window.into or Window.triggering transform prior to GroupByKey.");
+    pipeline.run();
+  }
 
-    input.apply("GroupByKey", GroupByKey.<String, Integer>create());
+
+  /**
+   * Tests that when two elements are combined via a GroupByKey their output timestamp agrees
+   * with the windowing function customized to use the latest value.
+   */
+  @Test
+  @Category(RunnableOnService.class)
+  public void testOutputTimeFnLatest() {
+    Pipeline pipeline = TestPipeline.create();
+
+    pipeline.apply(
+        Create.timestamped(
+            TimestampedValue.of(KV.of(0, "hello"), new Instant(0)),
+            TimestampedValue.of(KV.of(0, "goodbye"), new Instant(10))))
+        .apply(Window.<KV<Integer, String>>into(FixedWindows.of(Duration.standardMinutes(10)))
+            .withOutputTimeFn(OutputTimeFns.outputAtLatestInputTimestamp()))
+        .apply(GroupByKey.<Integer, String>create())
+        .apply(ParDo.of(new AssertTimestamp(new Instant(10))));
+
+    pipeline.run();
+  }
+
+  private static class AssertTimestamp<K, V> extends DoFn<KV<K, V>, Void> {
+    private final Instant timestamp;
+
+    public AssertTimestamp(Instant timestamp) {
+      this.timestamp = timestamp;
+    }
+
+    @Override
+    public void processElement(ProcessContext c) throws Exception {
+      assertThat(c.timestamp(), equalTo(timestamp));
+    }
   }
 
   @Test

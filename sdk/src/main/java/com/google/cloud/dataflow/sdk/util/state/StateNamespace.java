@@ -15,6 +15,8 @@
  */
 package com.google.cloud.dataflow.sdk.util.state;
 
+import java.io.IOException;
+
 /**
  * A namespace used for scoping state stored with {@link StateInternals}.
  *
@@ -35,4 +37,18 @@ public interface StateNamespace {
    * the two.
    */
   String stringKey();
+
+  /**
+   * Append the string representation of this key to the {@link Appendable}.
+   */
+  void appendTo(Appendable sb) throws IOException;
+
+  /**
+   * Return an {@code Object} to use as a key in a cache.
+   *
+   * <p>Different namespaces may use the same key in order to be treated as a unit in the cache.
+   * The {@code Object}'s {@code hashCode} and {@code equals} methods will be used to determine
+   * equality.
+   */
+  Object getCacheKey();
 }

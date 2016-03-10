@@ -32,6 +32,7 @@ import com.google.common.base.Throwables;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonTypeInfo.As;
 import com.fasterxml.jackson.annotation.JsonTypeInfo.Id;
+import com.fasterxml.jackson.databind.DatabindContext;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonTypeIdResolver;
@@ -116,7 +117,7 @@ public final class CoderUtils {
   private static <T> void encodeToSafeStream(
       Coder<T> coder, T value, OutputStream stream, Coder.Context context) throws CoderException {
     try {
-      coder.encode(value, stream, context);
+      coder.encode(value, new UnownedOutputStream(stream), context);
     } catch (IOException exn) {
       Throwables.propagateIfPossible(exn, CoderException.class);
       throw new IllegalArgumentException(
@@ -153,7 +154,7 @@ public final class CoderUtils {
   private static <T> T decodeFromSafeStream(
       Coder<T> coder, InputStream stream, Coder.Context context) throws CoderException {
     try {
-      return coder.decode(stream, context);
+      return coder.decode(new UnownedInputStream(stream), context);
     } catch (IOException exn) {
       Throwables.propagateIfPossible(exn, CoderException.class);
       throw new IllegalArgumentException(
@@ -248,6 +249,11 @@ public final class CoderUtils {
       @Deprecated
       @Override
       public JavaType typeFromId(String id) {
+        return typeFromId(null, id);
+      }
+
+      @Override
+      public JavaType typeFromId(DatabindContext context, String id) {
         Class<?> clazz = getClassForId(id);
         if (clazz == KvCoder.class) {
           clazz = KvCoderBase.class;
@@ -280,7 +286,7 @@ public final class CoderUtils {
           // com.google.cloud.dataflow.sdk.coders.  We do this via creating
           // the class object so that class loaders have a chance to get
           // involved -- and since we need the class object anyway.
-          return Class.forName("com.google.cloud.dataflow.sdk.coders." + id);
+          return Class.forName(Coder.class.getPackage().getName() + "." + id);
         } catch (ClassNotFoundException e) {
           throw new RuntimeException("Unable to convert coder ID " + id + " to class", e);
         }
