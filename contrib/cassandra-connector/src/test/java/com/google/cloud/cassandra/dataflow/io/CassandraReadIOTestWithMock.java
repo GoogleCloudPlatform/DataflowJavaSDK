@@ -65,7 +65,7 @@ public class CassandraReadIOTestWithMock {
 			Mockito.when(mockSplitedSourceList.iterator()).thenReturn(mockIterator);
 			PCollection mockPCollection =  Mockito.mock(PCollection.class);
 			Mockito.when(mockPipeline.apply(Read.from((Source) mockIterator.next()))).thenReturn(mockPCollection);
-			
+			mockPipeline.run();
 			Assert.assertNotNull(mockPCollection);
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -93,7 +93,7 @@ public class CassandraReadIOTestWithMock {
 			Flatten mockflatten = Mockito.mock(Flatten.class);
 			Mockito.when(mockPCollectionList.apply(mockflatten
 					.pCollections())).thenReturn(mockMergedPColl);
-		
+			mockPipeline.run();
 			Assert.assertNotNull(mockMergedPColl);
 		} catch (Exception e) {
 			e.printStackTrace();

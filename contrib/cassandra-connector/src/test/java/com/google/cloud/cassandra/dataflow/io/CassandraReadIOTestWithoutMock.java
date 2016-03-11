@@ -106,8 +106,6 @@ public class CassandraReadIOTestWithoutMock {
 	public void testToGetMultipleSplitedSource() {
 		try {
 			desiredNoOfSplits = 4;
-			PipelineOptions options = PipelineOptionsFactory.create();
-			Pipeline p = Pipeline.create(options);
 			List<BoundedSource> splitedSourceList = (List) new CassandraReadIO.Source(
 					new CassandraReadConfiguration(hosts, keyspace, port,
 							tableName, "", rowKey, entityName))
