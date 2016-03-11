@@ -10,8 +10,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import cassandra.utils.Utils;
-
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
@@ -61,7 +59,7 @@ public class CassandraReadIOTestWithoutMock {
 		tableName = "emp_info1";
 		rowKey = "emp_id";
 		entityName = CassandraReadIOTestWithoutMock.EmployeeDetails.class;
-		query = QueryBuilder.select().all().from(Utils.KEYSPACE, tableName)
+		query = QueryBuilder.select().all().from(keyspace, tableName)
 				.toString();
 
 	}
@@ -90,7 +88,7 @@ public class CassandraReadIOTestWithoutMock {
 			
 			Iterator itr = splitedSourceList.iterator();
 			CassandraReadIO.Source cs = (Source) itr.next();
-			PCollection pCollection = p.apply(Read.from((Source) cs));
+			PCollection pCollection = (PCollection) p.apply(Read.from((Source) cs));
 			p.run();
 			Assert.assertNotNull(pCollection);
 
@@ -116,7 +114,7 @@ public class CassandraReadIOTestWithoutMock {
 			List<PCollection> pcoll = new ArrayList<PCollection>();
 			while (itr.hasNext()) {
 				CassandraReadIO.Source cs = (Source) itr.next();
-				pcoll.add(p.apply(Read.from((Source) cs)));
+				pcoll.add((PCollection)p.apply(Read.from((Source) cs)));
 			}
 			PCollectionList pCollectionList = PCollectionList.of(pcoll.get(0))
 					.and(pcoll.get(1)).and(pcoll.get(2)).and(pcoll.get(3));

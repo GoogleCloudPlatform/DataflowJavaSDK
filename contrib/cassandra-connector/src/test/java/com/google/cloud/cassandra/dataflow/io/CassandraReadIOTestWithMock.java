@@ -7,24 +7,15 @@ import java.util.List;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.mockito.Mockito;
 
-import cassandra.utils.Utils;
-
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.querybuilder.QueryBuilder;
-import com.datastax.driver.mapping.MappingManager;
 import com.datastax.driver.mapping.annotations.Table;
 import com.google.cloud.cassandra.dataflow.io.CassandraReadIO.Source;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.io.BoundedSource;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
-import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.transforms.Flatten;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollectionList;
@@ -90,9 +81,7 @@ public class CassandraReadIOTestWithMock {
 			Mockito.when(mockPipeline.apply(Read.from((Source) mockIterator.next()))).thenReturn(mockPCollectionList);
 			
 			PCollection mockMergedPColl =  Mockito.mock(PCollection.class);
-			Flatten mockflatten = Mockito.mock(Flatten.class);
-			Mockito.when(mockPCollectionList.apply(mockflatten
-					.pCollections())).thenReturn(mockMergedPColl);
+			Mockito.when(mockPCollectionList.apply(Flatten.pCollections())).thenReturn(mockMergedPColl);
 			mockPipeline.run();
 			Assert.assertNotNull(mockMergedPColl);
 		} catch (Exception e) {
