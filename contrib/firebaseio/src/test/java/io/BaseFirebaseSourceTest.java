@@ -37,22 +37,21 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 
 import java.io.IOException;
 import java.lang.Thread.UncaughtExceptionHandler;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
 
 import contrib.LogElements;
 
 import events.FirebaseEvent;
 import utils.FirebaseAuthenticator;
 import utils.FirebaseEmptyAuthenticator;
-import utils.LoggingArrayList;
-
 
 
 /**
@@ -61,6 +60,24 @@ import utils.LoggingArrayList;
  **/
 @RunWith(JUnit4.class)
 public abstract class BaseFirebaseSourceTest {
+
+  /**
+   * Logs all the added entries!
+  **/
+  private class LoggingArrayList<T> extends ArrayList<T> {
+    private Logger logger;
+
+    public LoggingArrayList(Logger logger){
+      this.logger = logger;
+    }
+
+    @Override
+    public boolean add(T e){
+      logger.info(e.toString());
+      return super.add(e);
+    }
+
+  }
 
   protected FirebaseAuthenticator auther = new FirebaseEmptyAuthenticator();
   private Throwable err;
@@ -109,16 +126,14 @@ public abstract class BaseFirebaseSourceTest {
   }
 
   protected void cleanFirebase(Firebase f) throws InterruptedException{
-    final Semaphore lock = new Semaphore(1);
-    lock.acquire();
+    final CountDownLatch lock = new CountDownLatch(1);
     f.removeValue(new CompletionListener(){
       @Override
       public void onComplete(FirebaseError arg0, Firebase arg1) {
-        lock.release();
+        lock.countDown();
       }
     });
-    lock.tryAcquire(Long.MAX_VALUE, TimeUnit.DAYS);
-
+    lock.await();
   }
 
   public abstract void prepareData(List<Map<String, Object>> testData);
@@ -150,7 +165,7 @@ public abstract class BaseFirebaseSourceTest {
     PCollection<FirebaseEvent<JsonNode>> events = p
         .apply(Read.from(source).withMaxNumRecords(expected.size()));
 
-    events.apply(new LogElements<FirebaseEvent<JsonNode>>(FirebaseChildTest.class, "INFO"));
+    events.apply(new LogElements<FirebaseEvent<JsonNode>>(FirebaseChildTest.class, Level.INFO));
 
     DataflowAssert.that(events).containsInAnyOrder(expected);
 

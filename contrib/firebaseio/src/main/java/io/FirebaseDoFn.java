@@ -28,6 +28,9 @@ import utils.FirebaseAuthenticator;
 
 /**
  * Abstract superclass for DoFns that need a {@link Firebase} ref.
+ * This class allows concurrent writes to a Firebase within a bundle and blocks once all writes in
+ * the bundle are complete, by sharing a single lock across the bundle
+ * (via the {@code FirebaseListener} class)
  */
 public abstract class FirebaseDoFn<InputT, OutputT> extends DoFn<InputT, OutputT> {
 

@@ -94,11 +94,17 @@
 
     <dependency>
       <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-simple</artifactId>
-      <version>1.7.7</version>
+      <artifactId>slf4j-api</artifactId>
+      <version>1.7.15</version>
       <scope>test</scope>
     </dependency>
 
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>1.7.15</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
 </project>

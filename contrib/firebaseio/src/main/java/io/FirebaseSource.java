@@ -41,8 +41,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
 
 import javax.annotation.Nullable;
 
@@ -77,6 +76,7 @@ public class FirebaseSource<T>
     private final MessageDigest digest;
     private final Firebase timestampRef;
     private final FirebaseCheckpoint<T> checkpoint;
+    private final Firebase ref;
     private ValueEventListener valueListener;
     private ChildEventListener childListener;
     private FirebaseError error = null;
@@ -91,9 +91,10 @@ public class FirebaseSource<T>
       } else {
         this.checkpoint = checkpoint.reset();
       }
+      this.ref = this.source.getRef();
       this.valueListener = makeValueListener();
       this.childListener = makeChildListener();
-      this.timestampRef = this.source.query.getRef().getRoot().child(
+      this.timestampRef = this.ref.getRoot().child(
           Integer.toHexString(this.hashCode()) + Long.toHexString(System.currentTimeMillis()));
     }
 
@@ -215,15 +216,15 @@ public class FirebaseSource<T>
     @Override
     public boolean start() throws IOException {
       try {
-        this.source.auther.authenticate(this.source.query.getRef());
+        this.source.auther.authenticate(this.ref);
       } catch (Exception e) {
         throw new IOException(e);
       }
       if (this.source.listenForChildEvents){
-        this.childListener = this.source.query.addChildEventListener(this.childListener);
+        this.childListener = this.ref.addChildEventListener(this.childListener);
       }
       if (this.source.listenForValueEvents){
-        this.valueListener = this.source.query.addValueEventListener(this.valueListener);
+        this.valueListener = this.ref.addValueEventListener(this.valueListener);
       }
       return this.advance();
     }
@@ -231,30 +232,26 @@ public class FirebaseSource<T>
     @Override
     public void close() throws IOException {
       if (this.source.listenForChildEvents) {
-        this.source.query.removeEventListener(this.childListener);
+        this.ref.removeEventListener(this.childListener);
       }
       if (this.source.listenForValueEvents){
-        this.source.query.removeEventListener(this.valueListener);
+        this.ref.removeEventListener(this.valueListener);
       }
-      final Semaphore lock = new Semaphore(1);
-      try {
-        lock.acquire();
-      } catch (InterruptedException e) {
-        throw new IOException(e);
-      }
+      final CountDownLatch lock = new CountDownLatch(1);
       timestampRef.removeValue(new CompletionListener(){
 
         @Override
         public void onComplete(FirebaseError err, Firebase arg1) {
-          lock.release();
+          lock.countDown();
           if (err != null){
             throw err.toException();
           }
         }
       });
       try {
-        lock.tryAcquire(Long.MAX_VALUE, TimeUnit.DAYS);
+        lock.await();
       } catch (InterruptedException e) {
+        e.printStackTrace();
         throw new IOException(e);
       }
     }
@@ -279,7 +276,7 @@ public class FirebaseSource<T>
     }
   }
 
-  private final Query query;
+  private final String queryString;
   private final FirebaseAuthenticator auther;
   private final boolean listenForChildEvents;
   private final boolean listenForValueEvents;
@@ -344,9 +341,13 @@ public class FirebaseSource<T>
     }
     this.clazz = clazz;
     this.auther = auther;
-    this.query = query;
+    this.queryString = query.getRef().toString();
     this.listenForChildEvents = listenForChildEvents;
     this.listenForValueEvents = listenForValueEvents;
+  }
+
+  protected Firebase getRef(){
+    return new Firebase(this.queryString);
   }
 
   @SuppressWarnings("unchecked")
@@ -368,7 +369,7 @@ public class FirebaseSource<T>
     AuthData result;
 
     try {
-      result = auther.authenticate(query.getRef());
+      result = auther.authenticate(this.getRef());
     } catch (FirebaseException e) {
       result = null;
       e.printStackTrace();

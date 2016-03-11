@@ -21,48 +21,56 @@ import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PDone;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
+import org.slf4j.event.LoggingEvent;
+import org.slf4j.event.SubstituteLoggingEvent;
+import org.slf4j.impl.SimpleLogger;
+import org.slf4j.impl.SimpleLoggerFactory;
 
 /**
  * Logs a {@link PCollection} to a logger for the specified {@link Class}.
  */
 public class LogElements<T> extends PTransform<PCollection<T>, PDone> {
 
-  private static class LoggingDoFn<T> extends DoFn<T, Void>{
-
-    private final String className;
-    private final String logLevel;
-    private transient Logger logger;
-
-    public LoggingDoFn(String className, String logLevel){
-      this.logLevel = logLevel;
-      this.className = className;
-    }
-
-    @Override
-    public void startBundle(Context c) throws Exception {
-      System.setProperty(org.slf4j.impl.SimpleLogger.DEFAULT_LOG_LEVEL_KEY, logLevel);
-      logger = LoggerFactory.getLogger(Class.forName(className));
-    }
-
-    @Override
-    public void processElement(DoFn<T, Void>.ProcessContext c) throws Exception {
-      logger.info(c.element().toString());
-    }
-  }
-
+  private final Level level;
   private final String className;
-  private final String logLevel;
 
-  public LogElements(Class<?> clazz, String logLevel){
-    this.logLevel = logLevel;
+  public LogElements(Class<?> clazz, Level level){
     this.className = clazz.getName();
+    this.level = level;
   }
 
   @Override
   public PDone apply(PCollection<T> input){
-    input.apply(ParDo.of(new LoggingDoFn<T>(className, logLevel)));
+    input.apply(ParDo.of(new LoggingDoFn<T>(this.className, this.level)));
     return PDone.in(input.getPipeline());
+  }
+
+  /**
+   * Given a PCollection of {@link LoggingEvent}s, log them to a simple logger (uses System.err).
+   */
+  public static class LoggingDoFn<T> extends DoFn<T, Void>{
+
+    private final String className;
+    private final Level level;
+    private transient SimpleLogger logger;
+
+    public LoggingDoFn(String className, Level level){
+      this.className = className;
+      this.level = level;
+    }
+
+    @Override
+    public void startBundle(Context c) throws Exception {
+      logger = (SimpleLogger) new SimpleLoggerFactory().getLogger(this.className);
+    }
+
+    @Override
+    public void processElement(DoFn<T, Void>.ProcessContext c) throws Exception {
+      SubstituteLoggingEvent event = new SubstituteLoggingEvent();
+      event.setMessage(c.element().toString());
+      event.setLevel(this.level);
+      logger.log(event);
+    }
   }
 }

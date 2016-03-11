@@ -47,6 +47,11 @@ public class FirebaseEvent<T>{
     this(snapshot.getKey(), snapshot.getValue(new GenericTypeIndicator<T>(){}));
   }
 
+  @Override
+  public int hashCode(){
+    return Objects.hashCode(key, data);
+  }
+
   /**
    * Does a deep equality check by delegating to {@code T.equals()}.
    */

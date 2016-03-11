@@ -15,9 +15,9 @@
  */
 package events;
 
-import com.google.api.client.repackaged.com.google.common.base.Objects;
-
 import com.firebase.client.DataSnapshot;
+
+import java.util.Objects;
 
 /**
  * TODO: Super class for events which come with a {@code previousChildName}.
@@ -38,10 +38,15 @@ public class FirebaseChildEvent<T> extends FirebaseEvent<T> {
   }
 
   @Override
+  public int hashCode(){
+    return Objects.hash(previousChildName, super.hashCode());
+  }
+
+  @Override
   public boolean equals(Object e){
     if (this.getClass().isInstance(e)){
       FirebaseChildEvent<?> other = (FirebaseChildEvent<?>) e;
-      return Objects.equal(this.previousChildName, other.previousChildName) && super.equals(e);
+      return Objects.equals(this.previousChildName, other.previousChildName) && super.equals(e);
     }
     return false;
   }

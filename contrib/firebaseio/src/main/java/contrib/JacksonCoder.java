@@ -25,6 +25,8 @@ import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectMapper.DefaultTyping;
@@ -52,8 +54,11 @@ public class JacksonCoder<T> extends StandardCoder<T> {
       .enable(DeserializationFeature.WRAP_EXCEPTIONS)
       .enable(SerializationFeature.WRAP_EXCEPTIONS)
       .disable(SerializationFeature.FAIL_ON_UNWRAPPED_TYPE_IDENTIFIERS)
-      .enable(SerializationFeature.WRITE_NULL_MAP_VALUES);
+      .enable(SerializationFeature.WRITE_NULL_MAP_VALUES)
+      .configure(JsonGenerator.Feature.AUTO_CLOSE_TARGET, false)
+      .configure(JsonParser.Feature.AUTO_CLOSE_SOURCE, false);
 
+  // Threadsafe as per http://wiki.fasterxml.com/JacksonBestPracticesPerformance
   private final ObjectWriter writer;
   private final ObjectReader reader;
 
