@@ -19,6 +19,7 @@ import com.datastax.driver.mapping.MappingManager;
 import com.datastax.driver.mapping.annotations.Table;
 import com.google.cloud.cassandra.dataflow.io.CassandraReadIO.Source;
 import com.google.cloud.dataflow.sdk.Pipeline;
+import com.google.cloud.dataflow.sdk.io.BoundedSource;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
@@ -37,13 +38,14 @@ public class CassandraReadIOTestWithoutMock {
 	private static String query;
 	private static String tableName;
 	private static String rowKey;
+	private static int desiredNoOfSplits;
 
 	private static Cluster cluster;
 	private static Session session;
 	private static MappingManager manager;
 
-	static PipelineOptions options;
-	static Pipeline p;
+	private static PipelineOptions options;
+	private static Pipeline p;
 
 	/**
 	 * Initial setup for cassandra connection hosts : cassandra server hosts
@@ -79,11 +81,13 @@ public class CassandraReadIOTestWithoutMock {
 	@Test
 	public void testToGetSingleSource() {
 		try {
-			List<Source> splitedSourceList = (List) new CassandraReadIO.Source(
+			desiredNoOfSplits = 1;
+			List<BoundedSource> splitedSourceList = (List) new CassandraReadIO.Source(
 					new CassandraReadConfiguration(hosts, keyspace, 9042,
 							tableName, query, rowKey, entityName))
-					.splitIntoBundles(1, options);
+					.splitIntoBundles(desiredNoOfSplits, options);
 			Assert.assertEquals(1, splitedSourceList.size());
+			
 			Iterator itr = splitedSourceList.iterator();
 			CassandraReadIO.Source cs = (Source) itr.next();
 			PCollection pCollection = p.apply(Read.from((Source) cs));
@@ -101,13 +105,15 @@ public class CassandraReadIOTestWithoutMock {
 	@Test
 	public void testToGetMultipleSplitedSource() {
 		try {
+			desiredNoOfSplits = 4;
 			PipelineOptions options = PipelineOptionsFactory.create();
 			Pipeline p = Pipeline.create(options);
-			List<Source> splitedSourceList = (List) new CassandraReadIO.Source(
+			List<BoundedSource> splitedSourceList = (List) new CassandraReadIO.Source(
 					new CassandraReadConfiguration(hosts, keyspace, port,
 							tableName, "", rowKey, entityName))
-					.splitIntoBundles(4, options);
+					.splitIntoBundles(desiredNoOfSplits, options);
 			Assert.assertEquals(4, splitedSourceList.size());
+			
 			Iterator itr = splitedSourceList.iterator();
 			List<PCollection> pcoll = new ArrayList<PCollection>();
 			while (itr.hasNext()) {
