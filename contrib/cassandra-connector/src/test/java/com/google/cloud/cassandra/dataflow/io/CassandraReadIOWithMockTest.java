@@ -20,7 +20,7 @@ import com.google.cloud.dataflow.sdk.transforms.Flatten;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollectionList;
 
-public class CassandraReadIOTestWithMock {
+public class CassandraReadIOWithMockTest {
 	private static CassandraReadIO.Source mockCassandraRead;
 	private static int desiredNoOfSplits;
 	private static Iterator mockIterator;

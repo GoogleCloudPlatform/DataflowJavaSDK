@@ -10,8 +10,10 @@ import java.util.Collection;
 import java.util.Random;
 
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.exceptions.AlreadyExistsException;
@@ -33,7 +35,7 @@ import com.google.cloud.dataflow.sdk.values.PDone;
  * (person_id int PRIMARY KEY, person_name text);
  *
  */
-public class CassndaraIOTestWithoutMock {
+public class CassndaraIOWithoutMockTest {
 
 	private CassandraIO.Write.Bound<String> CassndaraIOWriter;
 	private String[] hosts;
@@ -52,22 +54,26 @@ public class CassndaraIOTestWithoutMock {
 	 **/
 	
 	@Before
-	public void setup() {
+	public void setup()  {
 		this.hosts = new String[] { "localhost" };
 		this.keyspace = "dev_keyspace";
 		this.port = 9042;
+		try{
 		connect(getCassandaraHostAndPort());
 		createKeyspace();
 		useKeyspace();
 		createColumnFamily();
 		CassndaraIOWriter = new CassandraIO.Write.Bound<String>(hosts, keyspace, port);
+		}catch(Exception e){
+			e.printStackTrace();
+		}
 	}
 	
 	/** Connect to Cassandra */
-	public void connect(Collection<InetSocketAddress> inetSocketAddresses) {
+	public void connect(Collection<InetSocketAddress> inetSocketAddresses) {		
 		cluster = Cluster.builder()
 				.addContactPointsWithPorts(inetSocketAddresses).build();
-		session = cluster.connect();		
+		session = cluster.connect();			
 	}
 
 	/** Create Keyspace Keyspace,ignore exception if already exists */
@@ -108,6 +114,7 @@ public class CassndaraIOTestWithoutMock {
 	@SuppressWarnings("unchecked")
 	@Test
 	public void cassandraWriteTest() {
+		try{
 		PipelineOptions options = PipelineOptionsFactory.create();
 		Pipeline p = Pipeline.create(options);
 		@SuppressWarnings("rawtypes")
@@ -115,8 +122,13 @@ public class CassndaraIOTestWithoutMock {
 				.asList(getCloumnFamilyRows())));
 		@SuppressWarnings("unused")
 		PDone pDone = CassndaraIOWriter.apply(pcollection);
-		PipelineResult result = p.run();
+		PipelineResult result=null;
+		result= p.run();
 		assertNotNull(result);
+		}catch(Exception e){
+			e.printStackTrace();
+		}
+		
 	}
 
 	/** Get entities to persist */
@@ -124,7 +136,7 @@ public class CassndaraIOTestWithoutMock {
 		Random rn = new Random();
 		int range = 10000;
 		int pId = rn.nextInt(range);
-		CassndaraIOTestWithoutMock.Person person = new CassndaraIOTestWithoutMock.Person();
+		CassndaraIOWithoutMockTest.Person person = new CassndaraIOWithoutMockTest.Person();
 		person.setPersonId(pId);
 		person.setName("PERSON-" + pId);
 		Person[] persons = { person };
@@ -158,8 +170,12 @@ public class CassndaraIOTestWithoutMock {
 
 	@After
 	public void closeResources() {
+		try{
 		cluster.close();
 		session.close();
+		}catch(Exception e){
+			e.printStackTrace();
+		}
 	}
 
 }

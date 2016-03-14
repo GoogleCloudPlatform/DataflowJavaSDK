@@ -23,7 +23,7 @@ import com.google.cloud.dataflow.sdk.values.PDone;
  * Class to test CassndraIO.Write using mock objects
  */
 
-public class CassndaraIOTestWithMock {
+public class CassndaraIOWithMockTest {
 	private CassandraIO.Write.Bound<String> mockCassndaraIOWriter;
 	private PCollection pcollection;
 	private Pipeline pipeline;
@@ -62,7 +62,7 @@ public class CassndaraIOTestWithMock {
 		Random rn = new Random();
 		int range = 10000;
 		int pId = rn.nextInt(range);
-		CassndaraIOTestWithMock.Person person = new CassndaraIOTestWithMock.Person();
+		CassndaraIOWithMockTest.Person person = new CassndaraIOWithMockTest.Person();
 		person.setPersonId(pId);
 		person.setName("PERSON-" + pId);
 		Person[] persons = { person };

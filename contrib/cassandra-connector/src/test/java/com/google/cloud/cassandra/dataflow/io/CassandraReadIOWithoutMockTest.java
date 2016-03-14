@@ -28,7 +28,7 @@ import com.google.cloud.dataflow.sdk.values.PCollectionList;
 /**
  * Class contains JUnit test case that can be tested in cloud.
  */
-public class CassandraReadIOTestWithoutMock {
+public class CassandraReadIOWithoutMockTest {
 	private static String[] hosts;
 	private static int port;
 	private static String keyspace;
@@ -58,7 +58,7 @@ public class CassandraReadIOTestWithoutMock {
 		port = 9042;
 		tableName = "emp_info1";
 		rowKey = "emp_id";
-		entityName = CassandraReadIOTestWithoutMock.EmployeeDetails.class;
+		entityName = CassandraReadIOWithoutMockTest.EmployeeDetails.class;
 		query = QueryBuilder.select().all().from(keyspace, tableName)
 				.toString();
 
