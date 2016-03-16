@@ -855,9 +855,11 @@ public class KafkaIO {
 
     @Override
     public long getSplitBacklogBytes() {
-      // TODO: fetch latest offsets to estimate backlog. currently looks like we need to pause a
-      // partition and then seekToEnd() to find the latest offset.
-      // Hopefully Kafka consumer supports fetching this cleanly.
+      // TODO: fetch latest offsets to estimate backlog. We could keep an extra consumer open to
+      // fetch the latest offsets. Maintain an exponential moving average of messages size to
+      // estimate bytes based on offsets. This is called for every "bundle" and any latency here
+      // directly adds to processing latency. Better to fetch latest offsets asynchronously.
+
       return super.getSplitBacklogBytes();
     }
 
