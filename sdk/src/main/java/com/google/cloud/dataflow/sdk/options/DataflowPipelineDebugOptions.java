@@ -172,11 +172,14 @@ public interface DataflowPipelineDebugOptions extends PipelineOptions {
 
   /**
    * Whether to update the currently running pipeline with the same name as this one.
+   *
+   * @deprecated This property is replaced by {@link DataflowPipelineOptions#getUpdate()}
    */
-  @JsonIgnore
+  @Deprecated
   @Description("If set, replace the existing pipeline with the name specified by --jobName with "
       + "this pipeline, preserving state.")
   boolean getUpdate();
+  @Deprecated
   void setUpdate(boolean value);
 
   /**
@@ -207,6 +210,20 @@ public interface DataflowPipelineDebugOptions extends PipelineOptions {
       + "the Dataflow service will compute an appropriate number of threads to use.")
   int getNumberOfWorkerHarnessThreads();
   void setNumberOfWorkerHarnessThreads(int value);
+
+  /**
+   * If {@literal true}, save a heap dump before killing a thread or process which is GC
+   * thrashing or out of memory. The location of the heap file will either be echoed back
+   * to the user, or the user will be given the opportunity to download the heap file.
+   *
+   * <p>
+   * CAUTION: Heap dumps can of comparable size to the default boot disk. Consider increasing
+   * the boot disk size before setting this flag to true.
+   */
+  @Description("If {@literal true}, save a heap dump before killing a thread or process "
+      + "which is GC thrashing or out of memory.")
+  boolean getDumpHeapOnOOM();
+  void setDumpHeapOnOOM(boolean dumpHeapBeforeExit);
 
   /**
    * Creates a {@link PathValidator} object using the class specified in

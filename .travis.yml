@@ -4,8 +4,10 @@ sudo: false
 
 notifications:
   email:
-    recipients:
-      - dataflow-sdk-build-notifications+travis@google.com
+    # Group email notifications are disabled for now, since we cannot do it on a per-branch basis.
+    # Right now, it would trigger a notification for each fork, which generates a lot of spam.
+    # recipients:
+    #  - dataflow-sdk-build-notifications+travis@google.com
     on_success: change
     on_failure: always
 
@@ -30,6 +32,5 @@ install:
   - travis_retry mvn install clean -U -DskipTests=true
 
 script:
-  - travis_retry mvn versions:set -DnewVersion=manual_build
   - travis_retry mvn $MAVEN_OVERRIDE install -U
   - travis_retry travis/test_wordcount.sh

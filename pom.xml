@@ -35,7 +35,7 @@
   <url>http://cloud.google.com/dataflow</url>
   <inceptionYear>2013</inceptionYear>
 
-  <version>1.5.0-SNAPSHOT</version>
+  <version>1.6.0-SNAPSHOT</version>
 
   <licenses>
     <license>
@@ -70,7 +70,8 @@
     <avro.version>1.7.7</avro.version>
     <bigquery.version>v2-rev248-1.21.0</bigquery.version>
     <bigtable.version>0.2.3</bigtable.version>
-    <dataflow.version>v1b3-rev19-1.21.0</dataflow.version>
+    <clouddebugger.version>v2-rev6-1.21.0</clouddebugger.version>
+    <dataflow.version>v1b3-rev22-1.21.0</dataflow.version>
     <dataflow.proto.version>0.5.160222</dataflow.proto.version>
     <datastore.version>v1beta2-rev1-4.0.0</datastore.version>
     <google-clients.version>1.21.0</google-clients.version>
