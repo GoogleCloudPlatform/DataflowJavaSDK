@@ -55,6 +55,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
@@ -71,6 +72,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.TimeUnit;
 
 import javax.annotation.Nullable;
 
@@ -176,7 +181,8 @@ public class KafkaIO {
             // All the consumer work is done inside poll(), with smaller send buffer size, it
             // takes many polls before a 1MB chunk from the server is fully read. In my testing
             // about half of the time select() inside kafka consumer waits for 20-30ms, though
-            // the server has lots of data in tcp send buffers on its side.
+            // the server has lots of data in tcp send buffers on its side. Also see comment
+            // about consumerPollThread in UnboundedKafkaReader below.
             ConsumerConfig.RECEIVE_BUFFER_CONFIG, 512 * 1024,
 
             // default to latest offset when we are not resuming.
@@ -665,6 +671,15 @@ public class KafkaIO {
     private Instant curTimestamp;
     private Iterator<PartitionState> curBatch = Collections.emptyIterator();
 
+    // Use a separate thread to read Kafka messages. Kafka Consumer does all its work including
+    // network I/O inside poll(). Polling only inside #advance(), especially with a small timeout
+    // like 100 milliseconds does not work well. This along with large receive buffer for
+    // consumer achieved best throughput in tests (see `defaultConsumerProperties`).
+    private final ExecutorService consumerPollThread = Executors.newSingleThreadExecutor();
+    private final SynchronousQueue<ConsumerRecords<byte[], byte[]>> availableRecordsQueue =
+        new SynchronousQueue<>();
+    private volatile boolean closed = false;
+
     /** watermark before any records have been read. */
     private static Instant initialWatermark = new Instant(Long.MIN_VALUE);
 
@@ -707,16 +722,38 @@ public class KafkaIO {
       }
     }
 
-    private void readNextBatch(boolean isFirstFetch) {
-      // read one batch of records with single consumer.poll() (may not return any records)
+    private void consumerPollLoop() {
+      // Read in a loop and enqueue the batch of records, if any, to availableRecordsQueue
+      while (!closed) {
+        try {
+          ConsumerRecords<byte[], byte[]> records = consumer.poll(1000);
+          if (!records.isEmpty()) {
+            availableRecordsQueue.put(records);
+          }
+        } catch (InterruptedException e) {
+          LOG.warn(this + " consumer thread is interrupted", e); // not expected
+          break;
+        } catch (WakeupException e) {
+          break;
+        }
+      }
 
-      // Use a longer timeout for first fetch. Kafka consumer seems to do better with poll() with
-      // longer timeout initially. Looks like it does not handle initial connection setup properly
-      // with short polls (may also be affected by backoff policy in Dataflow).
-      // In my tests it took ~5 seconds before first record was read with this
-      // hack and 20-30 seconds with out.
-      long timeoutMillis = isFirstFetch ? 4000 : 100;
-      ConsumerRecords<byte[], byte[]> records = consumer.poll(timeoutMillis);
+      LOG.info("{} : Returning from consumer pool loop", this);
+    }
+
+    private void readNextBatch(boolean isFirstFetch) {
+
+      ConsumerRecords<byte[], byte[]> records;
+      try {
+        records = availableRecordsQueue.poll(10, TimeUnit.MICROSECONDS);
+      } catch (InterruptedException e) {
+        LOG.warn("Unexpected", e);
+        return;
+      }
+
+      if (records == null) {
+        return;
+      }
 
       List<PartitionState> nonEmpty = new LinkedList<>();
 
@@ -746,7 +783,14 @@ public class KafkaIO {
         }
       }
 
-      readNextBatch(true);
+      // start consumer read loop.
+      // Note that consumer is not thread safe, should not accessed out side consumerPollLoop()
+      consumerPollThread.submit(new Runnable() {
+        public void run() {
+          consumerPollLoop();
+        }
+      });
+
       return advance();
     }
 
@@ -874,7 +918,11 @@ public class KafkaIO {
 
     @Override
     public void close() throws IOException {
-      Closeables.close(consumer, true);
+      closed = true;
+      availableRecordsQueue.poll(); // drain unread batch, this unblocks consumer thread.
+      consumer.wakeup();
+      consumerPollThread.shutdown();
+      Closeables.close(consumer, true); // this should also wake up poll inside consumerPoolLoop.
     }
   }
 }
