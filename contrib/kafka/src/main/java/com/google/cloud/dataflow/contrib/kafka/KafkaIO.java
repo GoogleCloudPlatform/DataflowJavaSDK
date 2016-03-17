@@ -170,6 +170,15 @@ public class KafkaIO {
         ImmutableMap.<String, Object>of(
             ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
             ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
+
+            // Use large receive buffer. See KAFKA-3135. may may not be needed in future.
+            // with default value of of 32K, It takes multiple seconds between successful polls.
+            // All the consumer work is done inside poll(), with smaller send buffer size, it
+            // takes many polls before a 1MB chunk from the server is fully read. In my testing
+            // about half of the time select() inside kafka consumer waits for 20-30ms, though
+            // the server has lots of data in tcp send buffers on its side.
+            ConsumerConfig.RECEIVE_BUFFER_CONFIG, 512 * 1024,
+
             // default to latest offset when we are not resuming.
             ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest",
             // disable auto commit of offsets. we don't require group_id. could be enabled by user.
