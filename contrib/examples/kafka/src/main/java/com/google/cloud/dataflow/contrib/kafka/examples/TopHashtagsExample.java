@@ -155,8 +155,8 @@ public class TopHashtagsExample {
     @Override
     public void processElement(ProcessContext ctx) throws Exception {
       for (JsonNode hashtag : jsonMapper.readTree(ctx.element())
-          .with("entities")
-          .withArray("hashtags")) {
+                                        .with("entities")
+                                        .withArray("hashtags")) {
         ctx.output(hashtag.get("text").asText());
       }
     }
@@ -247,10 +247,14 @@ public class TopHashtagsExample {
     }
 
     @Override
-    public void processElement(ProcessContext ctx) throws Exception {
-      if (producer == null) {
+    public void startBundle(Context c) throws Exception {
+      if (producer == null) { // in Beam, startBundle might be called multiple times.
         producer = new KafkaProducer<String, String>(config);
       }
+    }
+
+    @Override
+    public void processElement(ProcessContext ctx) throws Exception {
       LOG.info("Top Hashtags : {}", ctx.element());
       producer.send(new ProducerRecord<String, String>(topic, ctx.element()));
     }

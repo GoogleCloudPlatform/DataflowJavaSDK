@@ -125,6 +125,7 @@ public class KafkaIOTest {
                 addRecord(r);
               }
               updateBeginningOffsets(ImmutableMap.of(tp, 0L));
+              updateEndOffsets(ImmutableMap.of(tp, (long)records.get(tp).size()));
               seek(tp, 0);
             }
           }

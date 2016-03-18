@@ -680,7 +680,7 @@ public class KafkaIO {
     private Consumer<byte[], byte[]> offsetConsumer;
     private final ScheduledExecutorService offsetFetcherThread =
         Executors.newSingleThreadScheduledExecutor();
-    static private final int OFFSET_UPDATE_INTERVAL_SECONDS = 5;
+    private static final int OFFSET_UPDATE_INTERVAL_SECONDS = 5;
 
     /** watermark before any records have been read. */
     private static Instant initialWatermark = new Instant(Long.MIN_VALUE);
