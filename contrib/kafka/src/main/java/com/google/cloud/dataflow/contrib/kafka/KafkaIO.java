@@ -680,7 +680,7 @@ public class KafkaIO {
     private Consumer<byte[], byte[]> offsetConsumer;
     private final ScheduledExecutorService offsetFetcherThread =
         Executors.newSingleThreadScheduledExecutor();
-    static private final int OFFSET_UPDATE_INTERVAL_MINUTES = 5;
+    static private final int OFFSET_UPDATE_INTERVAL_SECONDS = 5;
 
     /** watermark before any records have been read. */
     private static Instant initialWatermark = new Instant(Long.MIN_VALUE);
@@ -861,7 +861,7 @@ public class KafkaIO {
             public void run() {
               updateLatestOffsets();
             }
-          }, 0, OFFSET_UPDATE_INTERVAL_MINUTES, TimeUnit.SECONDS);
+          }, 0, OFFSET_UPDATE_INTERVAL_SECONDS, TimeUnit.SECONDS);
 
       return advance();
     }
@@ -956,7 +956,7 @@ public class KafkaIO {
             this, p.topicPartition, p.latestOffset, p.consumedOffset, p.avgRecordSize);
       }
 
-      LOG.debug("{} :  backlog {}", getSplitBacklogBytes());
+      LOG.debug("{} :  backlog {}", this, getSplitBacklogBytes());
     }
 
     @Override
