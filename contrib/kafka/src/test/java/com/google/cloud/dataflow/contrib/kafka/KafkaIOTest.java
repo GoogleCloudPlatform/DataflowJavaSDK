@@ -42,6 +42,7 @@ import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollectionList;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -105,6 +106,7 @@ public class KafkaIOTest {
         records.put(tp, new ArrayList<ConsumerRecord<byte[], byte[]>>());
       }
       records.get(tp).add(
+          // Note: this interface has changed in 0.10. may get fixed before the release.
           new ConsumerRecord<byte[], byte[]>(
               tp.topic(),
               tp.partition(),
@@ -122,6 +124,7 @@ public class KafkaIOTest {
               for (ConsumerRecord<byte[], byte[]> r : records.get(tp)) {
                 addRecord(r);
               }
+              updateBeginningOffsets(ImmutableMap.of(tp, 0L));
               seek(tp, 0);
             }
           }

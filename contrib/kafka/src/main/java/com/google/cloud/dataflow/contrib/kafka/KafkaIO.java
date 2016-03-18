@@ -74,6 +74,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -180,9 +181,9 @@ public class KafkaIO {
             // with default value of of 32K, It takes multiple seconds between successful polls.
             // All the consumer work is done inside poll(), with smaller send buffer size, it
             // takes many polls before a 1MB chunk from the server is fully read. In my testing
-            // about half of the time select() inside kafka consumer waits for 20-30ms, though
-            // the server has lots of data in tcp send buffers on its side. Also see comment
-            // about consumerPollThread in UnboundedKafkaReader below.
+            // about half of the time select() inside kafka consumer waited for 20-30ms, though
+            // the server had lots of data in tcp send buffers on its side. Compared to default,
+            // this setting increased throughput increased by many fold (3-4x).
             ConsumerConfig.RECEIVE_BUFFER_CONFIG, 512 * 1024,
 
             // default to latest offset when we are not resuming.
@@ -651,21 +652,10 @@ public class KafkaIO {
 
   private static class UnboundedKafkaReader<K, V, T> extends UnboundedReader<T> {
 
-    // maintains state of each assigned partition (buffered records and consumed offset)
-    private static class PartitionState {
-      private final TopicPartition topicPartition;
-      private long consumedOffset;
-      private Iterator<ConsumerRecord<byte[], byte[]>> recordIter = Collections.emptyIterator();
-
-      PartitionState(TopicPartition partition, long offset) {
-        this.topicPartition = partition;
-        this.consumedOffset = offset;
-      }
-    }
-
     private final UnboundedKafkaSource<K, V, T> source;
     private final String name;
     private Consumer<byte[], byte[]> consumer;
+    private Consumer<byte[], byte[]> secondaryConsumer; // for fetching latest offsets
     private final List<PartitionState> partitionStates;
     private KafkaRecord<K, V> curRecord;
     private Instant curTimestamp;
@@ -680,11 +670,63 @@ public class KafkaIO {
         new SynchronousQueue<>();
     private volatile boolean closed = false;
 
+    // thread used to run a periodic task to fetch latest offsets.
+    private final ScheduledExecutorService offsetFetcherThread =
+        Executors.newSingleThreadScheduledExecutor();
+
     /** watermark before any records have been read. */
     private static Instant initialWatermark = new Instant(Long.MIN_VALUE);
 
     public String toString() {
       return name;
+    }
+
+    // maintains state of each assigned partition (buffered records, consumed offset, etc)
+    private static class PartitionState {
+      private final TopicPartition topicPartition;
+      private long consumedOffset;
+      private long latestOffset;
+      private Iterator<ConsumerRecord<byte[], byte[]>> recordIter = Collections.emptyIterator();
+
+      // simple moving average for size of each record in bytes
+      private double avgRecordSize = 0;
+      private static final int movingAvgWindow = 1000; // very roughly avg of last 1000 elements
+
+
+      PartitionState(TopicPartition partition, long offset) {
+        this.topicPartition = partition;
+        this.consumedOffset = offset;
+        this.latestOffset = -1;
+      }
+
+      // update consumedOffset and avgRecordSize
+      void recordConsumed(long offset, int size) {
+        consumedOffset = offset;
+
+        // this is always updated from single thread. probably not worth making it an AtomicDouble
+        if (avgRecordSize <= 0) {
+          avgRecordSize = size;
+        } else {
+          // initially, first record heavily contributes to average.
+          avgRecordSize += ((size - avgRecordSize) / movingAvgWindow);
+        }
+      }
+
+      synchronized void setLatestOffset(long latestOffset) {
+        this.latestOffset = latestOffset;
+      }
+
+      synchronized long approxBacklogInBytes() {
+        // Note that is an an estimate of uncompressed backlog.
+        // Messages on Kafka might be comressed.
+        if (latestOffset < 0 || consumedOffset < 0) {
+          return UnboundedReader.BACKLOG_UNKNOWN;
+        }
+        if (latestOffset <= consumedOffset || consumedOffset < 0) {
+          return 0;
+        }
+        return (long) ((latestOffset - consumedOffset - 1) * avgRecordSize);
+      }
     }
 
     public UnboundedKafkaReader(
@@ -728,7 +770,7 @@ public class KafkaIO {
         try {
           ConsumerRecords<byte[], byte[]> records = consumer.poll(1000);
           if (!records.isEmpty()) {
-            availableRecordsQueue.put(records);
+            availableRecordsQueue.put(records); // blocks until dequeued.
           }
         } catch (InterruptedException e) {
           LOG.warn(this + " consumer thread is interrupted", e); // not expected
@@ -772,7 +814,10 @@ public class KafkaIO {
     @Override
     public boolean start() throws IOException {
       consumer = source.consumerFactoryFn.apply(source.consumerConfig);
+      secondaryConsumer = source.consumerFactoryFn.apply(source.consumerConfig);
+
       consumer.assign(source.assignedPartitions);
+      secondaryConsumer.assign(source.assignedPartitions);
 
       // seek to consumedOffset + 1 if it is set
       for (PartitionState p : partitionStates) {
@@ -786,11 +831,20 @@ public class KafkaIO {
 
       // start consumer read loop.
       // Note that consumer is not thread safe, should not accessed out side consumerPollLoop()
-      consumerPollThread.submit(new Runnable() {
-        public void run() {
-          consumerPollLoop();
-        }
-      });
+      consumerPollThread.submit(
+          new Runnable() {
+            public void run() {
+              consumerPollLoop();
+            }
+          });
+
+      // update latest offsets every 5 seconds
+      offsetFetcherThread.scheduleAtFixedRate(
+          new Runnable() {
+            public void run() {
+              updateLatestOffsets();
+            }
+          }, 0, 5, TimeUnit.SECONDS);
 
       return advance();
     }
@@ -843,7 +897,10 @@ public class KafkaIO {
               decode(rawRecord.value(), source.valueCoder));
 
           curTimestamp = source.timestampFn.apply(curRecord);
-          pState.consumedOffset = offset;
+
+          int recordSize = (rawRecord.key() == null ? 0 : rawRecord.key().length) +
+              (rawRecord.value() == null ? 0 : rawRecord.value().length);
+          pState.recordConsumed(offset, recordSize);
           return true;
 
         } else { // -- (b)
@@ -864,6 +921,23 @@ public class KafkaIO {
       // coder.
       byte[] toDecode = bytes == null ? nullBytes : bytes;
       return coder.decode(new ExposedByteArrayInputStream(toDecode), Coder.Context.OUTER);
+    }
+
+    // called from offsetFetcher thread
+    private void updateLatestOffsets() {
+      for (PartitionState p : partitionStates) {
+        try {
+          secondaryConsumer.seekToEnd(p.topicPartition);
+          long offset = secondaryConsumer.position(p.topicPartition);
+          p.setLatestOffset(offset);;
+        } catch (Exception e) {
+          LOG.warn(this + " : exception while fetching latest offsets. ignored.",  e);
+          p.setLatestOffset(-1L); // reset
+        }
+
+        LOG.debug("{} : latest offset update for {} : {} (consumed offset {}, avg record size {})",
+            this, p.topicPartition, p.latestOffset, p.consumedOffset, p.avgRecordSize);
+      }
     }
 
     @Override
@@ -908,12 +982,17 @@ public class KafkaIO {
 
     @Override
     public long getSplitBacklogBytes() {
-      // TODO: fetch latest offsets to estimate backlog. We could keep an extra consumer open to
-      // fetch the latest offsets. Maintain an exponential moving average of messages size to
-      // estimate bytes based on offsets. This is called for every "bundle" and any latency here
-      // directly adds to processing latency. Better to fetch latest offsets asynchronously.
+      long backlogBytes = 0;
+      for (PartitionState p : partitionStates) {
+        long pBacklog = p.approxBacklogInBytes();
+        if (pBacklog == UnboundedReader.BACKLOG_UNKNOWN) {
+          return UnboundedReader.BACKLOG_UNKNOWN;
+        }
+        backlogBytes += pBacklog;
+      }
 
-      return super.getSplitBacklogBytes();
+      LOG.info("{} backlog reported : {}", this, backlogBytes);
+      return backlogBytes;
     }
 
     @Override
@@ -922,7 +1001,9 @@ public class KafkaIO {
       availableRecordsQueue.poll(); // drain unread batch, this unblocks consumer thread.
       consumer.wakeup();
       consumerPollThread.shutdown();
-      Closeables.close(consumer, true); // this should also wake up poll inside consumerPoolLoop.
+      offsetFetcherThread.shutdown();
+      Closeables.close(secondaryConsumer, true);
+      Closeables.close(consumer, true);
     }
   }
 }

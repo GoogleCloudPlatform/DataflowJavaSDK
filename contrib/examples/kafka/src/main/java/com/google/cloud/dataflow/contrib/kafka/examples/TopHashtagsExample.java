@@ -140,9 +140,10 @@ public class TopHashtagsExample {
     pipeline.run();
   }
 
-  // The rest of the file implements DoFns to extract hashtags, formatting output, writing output
-  // back to Kafka. Note that writing to Kafka is not a complete Dataflow Sink. It is a best-effort
-  // logging of the results.
+  // The rest of the file implements DoFns to do the following:
+  //    - extract hashtags
+  //    - format results in json
+  //    - write the results back to Kafka (useful for fetching monitoring the end result).
 
   private static final ObjectMapper jsonMapper = new ObjectMapper();
 
@@ -250,7 +251,7 @@ public class TopHashtagsExample {
       if (producer == null) {
         producer = new KafkaProducer<String, String>(config);
       }
-      LOG.info("Top Hashtags : " + ctx.element());
+      LOG.info("Top Hashtags : {}", ctx.element());
       producer.send(new ProducerRecord<String, String>(topic, ctx.element()));
     }
   }
