@@ -17,7 +17,6 @@
 package com.google.cloud.dataflow.contrib.kafka.examples;
 
 import com.google.cloud.dataflow.contrib.kafka.KafkaIO;
-import com.google.cloud.dataflow.contrib.kafka.KafkaIO.Read;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.options.Default;
@@ -37,7 +36,6 @@ import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
 import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -54,6 +52,7 @@ import org.joda.time.format.DateTimeFormatter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -73,7 +72,6 @@ import java.util.Map;
  *          --topics="sample_tweets_json"                                           \
  *          --outputTopic="top_hashtags"
  * }</pre>
- *
  */
 public class TopHashtagsExample {
 
@@ -83,22 +81,22 @@ public class TopHashtagsExample {
    * Options for the app.
    */
   public static interface Options extends PipelineOptions {
-    @Description("Sliding window size, in minutes")
+    @Description("Sliding window length in minutes")
     @Default.Integer(10)
-    Integer getSlidingWindowSize();
-    void setSlidingWindowSize(Integer value);
+    Integer getSlidingWindowLengthMinutes();
+    void setSlidingWindowLengthMinutes(Integer value);
 
-    @Description("Trigger window period, in minutes")
+    @Description("Trigger window interval in minutes")
     @Default.Integer(1)
-    Integer getSlidingWindowPeriod();
-    void setSlidingWindowPeriod(Integer value);
+    Integer getSlidingWindowIntervalMinutes();
+    void setSlidingWindowIntervalMinutes(Integer value);
 
-    @Description("Bootstarp Server(s) for Kafka")
+    @Description("Bootstrap Server(s) for Kafka")
     @Required
     String getBootstrapServers();
     void setBootstrapServers(String servers);
 
-    @Description("One or more topics to read from")
+    @Description("One or more comma seperated topics to read from")
     @Required
     List<String> getTopics();
     void setTopics(List<String> topics);
@@ -120,10 +118,7 @@ public class TopHashtagsExample {
 
     Pipeline pipeline = Pipeline.create(options);
 
-    final int windowSize = options.getSlidingWindowSize();
-    final int windowPeriod = options.getSlidingWindowPeriod();
-
-    Read<?, String> reader = KafkaIO.read()
+    KafkaIO.Read<?, String> reader = KafkaIO.read()
         .withBootstrapServers(options.getBootstrapServers())
         .withTopics(options.getTopics())
         .withValueCoder(StringUtf8Coder.of())
@@ -134,8 +129,8 @@ public class TopHashtagsExample {
       .apply(Values.<String>create())
       .apply(ParDo.of(new ExtractHashtagsFn()))
       .apply(Window.<String>into(SlidingWindows
-          .of(Duration.standardMinutes(windowSize))
-          .every(Duration.standardMinutes(windowPeriod))))
+          .of(Duration.standardMinutes(options.getSlidingWindowLengthMinutes()))
+          .every(Duration.standardMinutes(options.getSlidingWindowIntervalMinutes()))))
       .apply(Count.<String>perElement())
       .apply(Top.of(options.getNumTopHashtags(), new KV.OrderByValue<String, Long>())
                 .withoutDefaults())
@@ -218,7 +213,7 @@ public class TopHashtagsExample {
         jsonWriter = new ObjectMapper().writerWithType(OutputJson.class);
       }
 
-      List<HashtagInfo> topHashtags = Lists.newArrayListWithCapacity(ctx.element().size());
+      List<HashtagInfo> topHashtags = new ArrayList<>(ctx.element().size());
 
       for (KV<String, Long> tag : ctx.element()) {
         topHashtags.add(new HashtagInfo(tag.getKey(), tag.getValue()));
