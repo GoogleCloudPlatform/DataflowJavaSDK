@@ -955,6 +955,8 @@ public class KafkaIO {
         LOG.debug("{} : latest offset update for {} : {} (consumed offset {}, avg record size {})",
             this, p.topicPartition, p.latestOffset, p.consumedOffset, p.avgRecordSize);
       }
+
+      LOG.debug("{} :  backlog {}", getSplitBacklogBytes());
     }
 
     @Override
@@ -1008,7 +1010,6 @@ public class KafkaIO {
         backlogBytes += pBacklog;
       }
 
-      LOG.info("{} backlog reported : {}", this, backlogBytes);
       return backlogBytes;
     }
 
