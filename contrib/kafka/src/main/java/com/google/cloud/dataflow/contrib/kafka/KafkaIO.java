@@ -72,6 +72,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -655,7 +656,6 @@ public class KafkaIO {
     private final UnboundedKafkaSource<K, V, T> source;
     private final String name;
     private Consumer<byte[], byte[]> consumer;
-    private Consumer<byte[], byte[]> secondaryConsumer; // for fetching latest offsets
     private final List<PartitionState> partitionStates;
     private KafkaRecord<K, V> curRecord;
     private Instant curTimestamp;
@@ -670,9 +670,17 @@ public class KafkaIO {
         new SynchronousQueue<>();
     private volatile boolean closed = false;
 
-    // thread used to run a periodic task to fetch latest offsets.
+    // Backlog support :
+    // Kafka consumer does not have an API to fetch latest offset for topic. We need to seekToEnd()
+    // then look at position(). Use another consumer to do this so that the primary consumer does
+    // not need to be interrupted. The latest offsets are fetched periodically on another thread.
+    // This is still a hack. There could be unintended side effects, e.g. if user enabled offset
+    // auto commit in consumer config, this could interfere with the primary consumer (we will
+    // handle this particular problem). We might have to make this optional.
+    private Consumer<byte[], byte[]> offsetConsumer;
     private final ScheduledExecutorService offsetFetcherThread =
         Executors.newSingleThreadScheduledExecutor();
+    static private final int OFFSET_UPDATE_INTERVAL_MINUTES = 5;
 
     /** watermark before any records have been read. */
     private static Instant initialWatermark = new Instant(Long.MIN_VALUE);
@@ -814,10 +822,7 @@ public class KafkaIO {
     @Override
     public boolean start() throws IOException {
       consumer = source.consumerFactoryFn.apply(source.consumerConfig);
-      secondaryConsumer = source.consumerFactoryFn.apply(source.consumerConfig);
-
       consumer.assign(source.assignedPartitions);
-      secondaryConsumer.assign(source.assignedPartitions);
 
       // seek to consumedOffset + 1 if it is set
       for (PartitionState p : partitionStates) {
@@ -838,13 +843,25 @@ public class KafkaIO {
             }
           });
 
-      // update latest offsets every 5 seconds
+      // offsetConsumer setup :
+
+      // override client_id and auto_commit so that it does not interfere with main consumer.
+      String offsetConsumerId = String.format("%s_offset_consumer_%d_%s", name,
+          (new Random()).nextInt(Integer.MAX_VALUE),
+          source.consumerConfig.getOrDefault(ConsumerConfig.CLIENT_ID_CONFIG, "none"));
+      Map<String, Object> offsetConsumerConfig = new HashMap<>(source.consumerConfig);
+      offsetConsumerConfig.put(ConsumerConfig.CLIENT_ID_CONFIG, offsetConsumerId);
+      offsetConsumerConfig.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+
+      offsetConsumer = source.consumerFactoryFn.apply(offsetConsumerConfig);
+      offsetConsumer.assign(source.assignedPartitions);
+
       offsetFetcherThread.scheduleAtFixedRate(
           new Runnable() {
             public void run() {
               updateLatestOffsets();
             }
-          }, 0, 5, TimeUnit.SECONDS);
+          }, 0, OFFSET_UPDATE_INTERVAL_MINUTES, TimeUnit.SECONDS);
 
       return advance();
     }
@@ -853,9 +870,9 @@ public class KafkaIO {
     public boolean advance() throws IOException {
       /* Read first record (if any). we need to loop here because :
        *  - (a) some records initially need to be skipped if they are before consumedOffset
-       *  - (b) if curBatch is empty, we want to readNextBatch() and then advance.
+       *  - (b) if curBatch is empty, we want to fetch next batch and then advance.
        *  - (c) curBatch is an iterator of iterators. we interleave the records from each.
-       *    curBatch.next() might return an empty iterator.
+       *        curBatch.next() might return an empty iterator.
        */
       while (true) {
         if (curBatch.hasNext()) {
@@ -927,8 +944,8 @@ public class KafkaIO {
     private void updateLatestOffsets() {
       for (PartitionState p : partitionStates) {
         try {
-          secondaryConsumer.seekToEnd(p.topicPartition);
-          long offset = secondaryConsumer.position(p.topicPartition);
+          offsetConsumer.seekToEnd(p.topicPartition);
+          long offset = offsetConsumer.position(p.topicPartition);
           p.setLatestOffset(offset);;
         } catch (Exception e) {
           LOG.warn(this + " : exception while fetching latest offsets. ignored.",  e);
@@ -1002,7 +1019,7 @@ public class KafkaIO {
       consumer.wakeup();
       consumerPollThread.shutdown();
       offsetFetcherThread.shutdown();
-      Closeables.close(secondaryConsumer, true);
+      Closeables.close(offsetConsumer, true);
       Closeables.close(consumer, true);
     }
   }
