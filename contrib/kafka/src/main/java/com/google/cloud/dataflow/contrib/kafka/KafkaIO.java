@@ -741,7 +741,8 @@ public class KafkaIO {
       LOG.info("{} : Returning from consumer pool loop", this);
     }
 
-    private void readNextBatch(boolean isFirstFetch) {
+    private void nextBatch() {
+      curBatch = Collections.emptyIterator();
 
       ConsumerRecords<byte[], byte[]> records;
       try {
@@ -797,8 +798,8 @@ public class KafkaIO {
     @Override
     public boolean advance() throws IOException {
       /* Read first record (if any). we need to loop here because :
-       *  - (a) some records initially need to be skipped if they are consumedOffset
-       *  - (b) when the current batch empty, we want to readNextBatch() and then advance.
+       *  - (a) some records initially need to be skipped if they are before consumedOffset
+       *  - (b) if curBatch is empty, we want to readNextBatch() and then advance.
        *  - (c) curBatch is an iterator of iterators. we interleave the records from each.
        *    curBatch.next() might return an empty iterator.
        */
@@ -816,11 +817,10 @@ public class KafkaIO {
           long consumed = pState.consumedOffset;
           long offset = rawRecord.offset();
 
-          // apply user coders
           if (consumed >= 0 && offset <= consumed) { // -- (a)
-            // this can happen when compression is enabled in Kafka
+            // this can happen when compression is enabled in Kafka (seems to be fixed in 0.10)
             // should we check if the offset is way off from consumedOffset (say > 1M)?
-            LOG.info("ignoring already consumed offset {} for {}", offset, pState.topicPartition);
+            LOG.warn("ignoring already consumed offset {} for {}", offset, pState.topicPartition);
             continue;
           }
 
@@ -834,7 +834,7 @@ public class KafkaIO {
             LOG.info("{} : first record offset {}", name, offset);
           }
 
-          // apply user coders. might want to allow skipping records that fail in coders.
+          // apply user coders. might want to allow skipping records that fail to decode.
           curRecord = new KafkaRecord<K, V>(
               rawRecord.topic(),
               rawRecord.partition(),
@@ -847,7 +847,7 @@ public class KafkaIO {
           return true;
 
         } else { // -- (b)
-          readNextBatch(false);
+          nextBatch();
 
           if (!curBatch.hasNext()) {
             return false;
@@ -858,9 +858,9 @@ public class KafkaIO {
 
     private static byte[] nullBytes = new byte[0];
     private static <T> T decode(byte[] bytes, Coder<T> coder) throws IOException {
-      // If 'bytes' is null use byte[0]. It is common for key in Kakfa record to be null.
+      // If 'bytes' is null, use byte[0]. It is common for key in Kakfa record to be null.
       // This makes it impossible for user to distinguish between zero length byte and null.
-      // Alternately, we could have a ByteArrayCoder that handles nulls, use that for default
+      // Alternately, we could have a ByteArrayCoder that handles nulls, and use that for default
       // coder.
       byte[] toDecode = bytes == null ? nullBytes : bytes;
       return coder.decode(new ExposedByteArrayInputStream(toDecode), Coder.Context.OUTER);
