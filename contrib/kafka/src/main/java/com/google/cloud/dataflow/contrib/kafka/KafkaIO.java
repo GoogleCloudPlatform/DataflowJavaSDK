@@ -745,7 +745,7 @@ public class KafkaIO {
 
       ConsumerRecords<byte[], byte[]> records;
       try {
-        records = availableRecordsQueue.poll(10, TimeUnit.MICROSECONDS);
+        records = availableRecordsQueue.poll(10, TimeUnit.MILLISECONDS);
       } catch (InterruptedException e) {
         LOG.warn("Unexpected", e);
         return;
