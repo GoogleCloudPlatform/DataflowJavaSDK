@@ -138,8 +138,8 @@ public class KafkaIO {
         ByteArrayCoder.of(),
         null,
         null,
-        Read.kafka9ConsumerFactory,
-        Read.defaultConsumerProperties,
+        Read.KAFKA_9_CONSUMER_FACTORY_FN,
+        Read.DEFAULT_CONSUMER_PROPERTIES,
         Long.MAX_VALUE,
         null);
   }
@@ -173,7 +173,7 @@ public class KafkaIO {
         );
 
     // set config defaults
-    private static final Map<String, Object> defaultConsumerProperties =
+    private static final Map<String, Object> DEFAULT_CONSUMER_PROPERTIES =
         ImmutableMap.<String, Object>of(
             ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
             ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName(),
@@ -192,9 +192,9 @@ public class KafkaIO {
             // disable auto commit of offsets. we don't require group_id. could be enabled by user.
             ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
 
-    // default Kafka 0.9 Consumer supplier. static variable to avoid capturing 'this'
-    private static SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>
-      kafka9ConsumerFactory =
+    // default Kafka 0.9 Consumer supplier.
+    private static final SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>
+      KAFKA_9_CONSUMER_FACTORY_FN =
         new SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>>() {
           public Consumer<byte[], byte[]> apply(Map<String, Object> config) {
             return new KafkaConsumer<>(config);
@@ -307,7 +307,8 @@ public class KafkaIO {
 
     /**
      * A factory to create Kafka {@link Consumer} from consumer configuration.
-     * Mainly used for tests. Default is {@link KafkaConsumer}.
+     * This is useful for supporting another version of Kafka consumer.
+     * Default is {@link KafkaConsumer}.
      */
     public Read<K, V> withConsumerFactoryFn(
         SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn) {
@@ -1002,6 +1003,7 @@ public class KafkaIO {
     @Override
     public long getSplitBacklogBytes() {
       long backlogBytes = 0;
+
       for (PartitionState p : partitionStates) {
         long pBacklog = p.approxBacklogInBytes();
         if (pBacklog == UnboundedReader.BACKLOG_UNKNOWN) {

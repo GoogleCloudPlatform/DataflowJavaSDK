@@ -27,7 +27,7 @@ import java.io.Serializable;
 import java.util.List;
 
 /**
- * Checkpoint for an unbounded KafkaSource reader. Consists of Kafka topic name, partition id,
+ * Checkpoint for an unbounded KafkaIO.Read. Consists of Kafka topic name, partition id,
  * and the latest offset consumed so far.
  */
 @DefaultCoder(SerializableCoder.class)
@@ -45,19 +45,15 @@ public class KafkaCheckpointMark implements UnboundedSource.CheckpointMark, Seri
 
   @Override
   public void finalizeCheckpoint() throws IOException {
-    /*
-     * nothing to do.
-     *
-     * we might want to support committing offset in Kafka, though it does not guarantee
-     * no-duplicates, it could support Dataflow restart better. Unlike an update of a dataflow job,
-     * a restart does not have checkpoint state. This secondary checkpoint might be a good start
-     * for readers. Another similar benefit is when the number of workers or number of
-     * Kafka partitions changes.
-     */
+    /* nothing to do */
+
+    // We might want to support committing offset in Kafka for better resume point when the job
+    // is restarted (checkpoint is not available for job restarts).
   }
 
   /**
-   * TopicPartition, offset tuple. Defines specific location in the partitions.
+   * A tuple to hold topic, partition, and offset that comprise the checkpoint
+   * for a single partition.
    */
   public static class PartitionMark implements Serializable {
     private final TopicPartition topicPartition;

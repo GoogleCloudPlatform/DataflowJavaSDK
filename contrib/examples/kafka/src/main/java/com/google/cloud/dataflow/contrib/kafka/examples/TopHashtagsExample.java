@@ -96,7 +96,7 @@ public class TopHashtagsExample {
     String getBootstrapServers();
     void setBootstrapServers(String servers);
 
-    @Description("One or more comma seperated topics to read from")
+    @Description("One or more comma separated topics to read from")
     @Required
     List<String> getTopics();
     void setTopics(List<String> topics);
@@ -122,10 +122,10 @@ public class TopHashtagsExample {
         .withBootstrapServers(options.getBootstrapServers())
         .withTopics(options.getTopics())
         .withValueCoder(StringUtf8Coder.of())
-        .withTimestampFn(timestampFn);
+        .withTimestampFn(TWEET_TIMESTAMP_OR_NOW);
 
     pipeline
-      .apply("sample_tweets", reader)
+      .apply(reader)
       .apply(Values.<String>create())
       .apply(ParDo.of(new ExtractHashtagsFn()))
       .apply(Window.<String>into(SlidingWindows
@@ -145,7 +145,7 @@ public class TopHashtagsExample {
   //    - format results in json
   //    - write the results back to Kafka (useful for fetching monitoring the end result).
 
-  private static final ObjectMapper jsonMapper = new ObjectMapper();
+  private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 
   /**
    * Emit hashtags in the tweet (if any).
@@ -154,21 +154,21 @@ public class TopHashtagsExample {
 
     @Override
     public void processElement(ProcessContext ctx) throws Exception {
-      for (JsonNode hashtag : jsonMapper.readTree(ctx.element())
-                                        .with("entities")
-                                        .withArray("hashtags")) {
+      for (JsonNode hashtag : JSON_MAPPER.readTree(ctx.element())
+                                         .with("entities")
+                                         .withArray("hashtags")) {
         ctx.output(hashtag.get("text").asText());
       }
     }
   }
 
   // extract timestamp from "timestamp_ms" field.
-  private static SerializableFunction<KV<byte[], String>, Instant> timestampFn =
+  private static final SerializableFunction<KV<byte[], String>, Instant> TWEET_TIMESTAMP_OR_NOW =
       new SerializableFunction<KV<byte[], String>, Instant>() {
         @Override
         public Instant apply(KV<byte[], String> kv) {
           try {
-            long tsMillis = jsonMapper.readTree(kv.getValue()).path("timestamp_ms").asLong();
+            long tsMillis = JSON_MAPPER.readTree(kv.getValue()).path("timestamp_ms").asLong();
             return tsMillis == 0 ? Instant.now() : new Instant(tsMillis);
           } catch (Exception e) {
             throw Throwables.propagate(e);
@@ -180,8 +180,11 @@ public class TopHashtagsExample {
   private static class OutputFormatter extends DoFn<List<KV<String, Long>>, String>
       implements DoFn.RequiresWindowAccess {
 
-    private transient DateTimeFormatter formatter;
-    private transient ObjectWriter jsonWriter;
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormat
+        .forPattern("yyyy-MM-dd HH:mm:ss")
+        .withZoneUTC();
+    private static final ObjectWriter JSON_WRITER = new ObjectMapper()
+        .writerWithType(OutputJson.class);
 
     static class OutputJson {
       @JsonProperty String windowStart;
@@ -209,10 +212,6 @@ public class TopHashtagsExample {
 
     @Override
     public void processElement(ProcessContext ctx) throws Exception {
-      if (formatter == null) {
-        formatter = DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss").withZoneUTC();
-        jsonWriter = new ObjectMapper().writerWithType(OutputJson.class);
-      }
 
       List<HashtagInfo> topHashtags = new ArrayList<>(ctx.element().size());
 
@@ -222,10 +221,10 @@ public class TopHashtagsExample {
 
       IntervalWindow window = (IntervalWindow) ctx.window();
 
-      String json = jsonWriter.writeValueAsString(new OutputJson(
-          formatter.print(window.start()),
-          formatter.print(window.end()),
-          formatter.print(Instant.now()),
+      String json = JSON_WRITER.writeValueAsString(new OutputJson(
+          DATE_FORMATTER.print(window.start()),
+          DATE_FORMATTER.print(window.end()),
+          DATE_FORMATTER.print(Instant.now()),
           topHashtags));
 
       ctx.output(json);
@@ -251,6 +250,11 @@ public class TopHashtagsExample {
       if (producer == null) { // in Beam, startBundle might be called multiple times.
         producer = new KafkaProducer<String, String>(config);
       }
+    }
+
+    @Override
+    public void finishBundle(Context c) throws Exception {
+      producer.close();
     }
 
     @Override
