@@ -118,14 +118,13 @@ public class TopHashtagsExample {
 
     Pipeline pipeline = Pipeline.create(options);
 
-    KafkaIO.Read<?, String> reader = KafkaIO.read()
-        .withBootstrapServers(options.getBootstrapServers())
-        .withTopics(options.getTopics())
-        .withValueCoder(StringUtf8Coder.of())
-        .withTimestampFn(TWEET_TIMESTAMP_OR_NOW);
-
     pipeline
-      .apply(reader)
+      .apply(KafkaIO.read()
+          .withBootstrapServers(options.getBootstrapServers())
+          .withTopics(options.getTopics())
+          .withValueCoder(StringUtf8Coder.of())
+          .withTimestampFn(TWEET_TIMESTAMP_OR_NOW)
+          .withoutMetadata())
       .apply(Values.<String>create())
       .apply(ParDo.of(new ExtractHashtagsFn()))
       .apply(Window.<String>into(SlidingWindows

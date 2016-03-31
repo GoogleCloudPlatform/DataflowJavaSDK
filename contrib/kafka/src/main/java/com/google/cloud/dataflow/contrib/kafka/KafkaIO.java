@@ -24,17 +24,19 @@ import com.google.api.client.repackaged.com.google.common.annotations.VisibleFor
 import com.google.cloud.dataflow.contrib.kafka.KafkaCheckpointMark.PartitionMark;
 import com.google.cloud.dataflow.sdk.coders.ByteArrayCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
-import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.io.Read.Unbounded;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource.CheckpointMark;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource.UnboundedReader;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
+import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.util.ExposedByteArrayInputStream;
 import com.google.cloud.dataflow.sdk.values.KV;
+import com.google.cloud.dataflow.sdk.values.PBegin;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.common.base.Function;
@@ -116,12 +118,6 @@ public class KafkaIO {
     }
   }
 
-  private static class IdentityFn<T> implements SerializableFunction<T, T> {
-    @Override
-    public T apply(T input) {
-      return input;
-    }
-  }
 
   /**
    * Creates and uninitialized {@link Read} {@link PTransform}. Before use, basic Kafka
@@ -136,8 +132,6 @@ public class KafkaIO {
         new ArrayList<TopicPartition>(),
         ByteArrayCoder.of(),
         ByteArrayCoder.of(),
-        null,
-        null,
         Read.KAFKA_9_CONSUMER_FACTORY_FN,
         Read.DEFAULT_CONSUMER_PROPERTIES,
         Long.MAX_VALUE,
@@ -145,22 +139,124 @@ public class KafkaIO {
   }
 
   /**
-   * A {@link PTransform} to read from Kafka topics. See {@link KafkaIO#read()} for more
-   * information on configuration.
+   * A {@link PTransform} to read from Kafka topics. See {@link KafkaIO} for more
+   * information on usage and configuration.
    */
-  public static class Read<K, V> extends PTransform<PInput, PCollection<KV<K, V>>> {
+  public static class Read<K, V> extends TypedRead<K, V> {
 
-    private final List<String> topics;
-    private final List<TopicPartition> topicPartitions; // mutually exclusive with topics
-    private final Coder<K> keyCoder;
-    private final Coder<V> valueCoder;
-    @Nullable private final SerializableFunction<KV<K, V>, Instant> timestampFn;
-    @Nullable private final SerializableFunction<KV<K, V>, Instant> watermarkFn;
-    private final
-      SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn;
-    private final Map<String, Object> consumerConfig;
-    private final long maxNumRecords; // bounded read, mainly for testing
-    private final Duration maxReadTime; // bounded read, mainly for testing
+    /**
+     * Returns a new {@link Read} with Kafka consumer pointing to {@code bootstrapServers}.
+     */
+    public Read<K, V> withBootstrapServers(String bootstrapServers) {
+      return updateConsumerProperties(
+          ImmutableMap.<String, Object>of(
+              ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers));
+    }
+
+    /**
+     * Returns a new {@link Read} that reads from the topics. All the partitions are from each
+     * of the topics is read.
+     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions)} for description
+     * of how the partitions are distributed among the splits.
+     */
+    public Read<K, V> withTopics(List<String> topics) {
+      checkState(topicPartitions.isEmpty(), "Only topics or topicPartitions can be set, not both");
+
+      return new Read<K, V>(ImmutableList.copyOf(topics), topicPartitions, keyCoder, valueCoder,
+          consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
+    }
+
+    /**
+     * Returns a new {@link Read} that reads from the partitions. This allows reading only a subset
+     * of partitions for one or more topics when (if ever) needed.
+     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions)} for description
+     * of how the partitions are distributed among the splits.
+     */
+    public Read<K, V> withTopicPartitions(List<TopicPartition> topicPartitions) {
+      checkState(topics.isEmpty(), "Only topics or topicPartitions can be set, not both");
+
+      return new Read<K, V>(topics, ImmutableList.copyOf(topicPartitions), keyCoder, valueCoder,
+          consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
+    }
+
+    /**
+     * Returns a new {@link Read} with {@link Coder} for key bytes.
+     */
+    public <KeyT> Read<KeyT, V> withKeyCoder(Coder<KeyT> keyCoder) {
+      return new Read<KeyT, V>(topics, topicPartitions, keyCoder, valueCoder,
+          consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
+    }
+
+    /**
+     * Returns a new {@link Read} with {@link Coder} for value bytes.
+     */
+    public <ValueT> Read<K, ValueT> withValueCoder(Coder<ValueT> valueCoder) {
+      return new Read<K, ValueT>(topics, topicPartitions, keyCoder, valueCoder,
+          consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
+    }
+
+    /**
+     * A factory to create Kafka {@link Consumer} from consumer configuration.
+     * This is useful for supporting another version of Kafka consumer.
+     * Default is {@link KafkaConsumer}.
+     */
+    public Read<K, V> withConsumerFactoryFn(
+        SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn) {
+      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder,
+          consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
+    }
+
+    /**
+     * Update consumer configuration with new properties.
+     */
+    public Read<K, V> updateConsumerProperties(Map<String, Object> configUpdates) {
+      for (String key : configUpdates.keySet()) {
+        checkArgument(!ignoredConsumerProperties.containsKey(key),
+            "No need to configure '%s'. %s", key, ignoredConsumerProperties.get(key));
+      }
+
+      Map<String, Object> config = new HashMap<>(consumerConfig);
+      config.putAll(configUpdates);
+
+      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder,
+          consumerFactoryFn, config, maxNumRecords, maxReadTime);
+    }
+
+    /**
+     * Similar to {@link com.google.cloud.dataflow.sdk.io.Read.Unbounded#withMaxNumRecords(long)}.
+     * Mainly used for tests and demo applications.
+     */
+    public Read<K, V> withMaxNumRecords(long maxNumRecords) {
+      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder,
+          consumerFactoryFn, consumerConfig, maxNumRecords, null);
+    }
+
+    /**
+     * Similar to
+     * {@link com.google.cloud.dataflow.sdk.io.Read.Unbounded#withMaxReadTime(Duration)}.
+     * Mainly used for tests and demo
+     * applications.
+     */
+    public Read<K, V> withMaxReadTime(Duration maxReadTime) {
+      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder,
+          consumerFactoryFn, consumerConfig, Long.MAX_VALUE, maxReadTime);
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    private Read(
+        List<String> topics,
+        List<TopicPartition> topicPartitions,
+        Coder<K> keyCoder,
+        Coder<V> valueCoder,
+        SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn,
+        Map<String, Object> consumerConfig,
+        long maxNumRecords,
+        @Nullable Duration maxReadTime) {
+
+      super(topics, topicPartitions, keyCoder, valueCoder, null, null,
+          consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
+    }
 
     /**
      * A set of properties that are not required or don't make sense for our consumer.
@@ -200,18 +296,104 @@ public class KafkaIO {
             return new KafkaConsumer<>(config);
           }
         };
+  }
 
-    private Read(
-        List<String> topics,
+  /**
+   * A {@link PTransform} to read from Kafka topics. See {@link KafkaIO} for more
+   * information on usage and configuration.
+   */
+  public static class TypedRead<K, V>
+                      extends PTransform<PBegin, PCollection<KafkaRecord<K, V>>> {
+
+    /**
+     * A function to assign a timestamp to a record. Default is processing timestamp.
+     */
+    public TypedRead<K, V> withTimestampFn2(
+        SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn) {
+      checkNotNull(timestampFn);
+      return new TypedRead<K, V>(topics, topicPartitions, keyCoder, valueCoder,
+          timestampFn, watermarkFn, consumerFactoryFn, consumerConfig,
+          maxNumRecords, maxReadTime);
+    }
+
+    /**
+     * A function to calculate watermark after a record. Default is last record timestamp
+     * @see #withTimestampFn(SerializableFunction)
+     */
+    public TypedRead<K, V> withWatermarkFn2(
+        SerializableFunction<KafkaRecord<K, V>, Instant> watermarkFn) {
+      checkNotNull(watermarkFn);
+      return new TypedRead<K, V>(topics, topicPartitions, keyCoder, valueCoder,
+          timestampFn, watermarkFn, consumerFactoryFn, consumerConfig,
+          maxNumRecords, maxReadTime);
+    }
+
+    /**
+     * A function to assign a timestamp to a record. Default is processing timestamp.
+     */
+    public TypedRead<K, V> withTimestampFn(SerializableFunction<KV<K, V>, Instant> timestampFn) {
+      checkNotNull(timestampFn);
+      return withTimestampFn2(unwrapKafkaAndThen(timestampFn));
+    }
+
+    /**
+     * A function to calculate watermark after a record. Default is last record timestamp
+     * @see #withTimestampFn(SerializableFunction)
+     */
+    public TypedRead<K, V> withWatermarkFn(SerializableFunction<KV<K, V>, Instant> watermarkFn) {
+      checkNotNull(watermarkFn);
+      return withWatermarkFn2(unwrapKafkaAndThen(watermarkFn));
+    }
+
+    /**
+     * Returns a {@link PTransform} for PCollection of {@link KV}, dropping Kafka metatdata.
+     */
+    public PTransform<PBegin, PCollection<KV<K, V>>> withoutMetadata() {
+      return new TypedWithoutMetadata<K, V>(this);
+    }
+
+    @Override
+    public PCollection<KafkaRecord<K, V>> apply(PBegin input) {
+     // Handles unbounded source to bounded conversion if maxNumRecords or maxReadTime is set.
+      Unbounded<KafkaRecord<K, V>> unbounded =
+          com.google.cloud.dataflow.sdk.io.Read.from(makeSource());
+
+      PTransform<PInput, PCollection<KafkaRecord<K, V>>> transform = unbounded;
+
+      if (maxNumRecords < Long.MAX_VALUE) {
+        transform = unbounded.withMaxNumRecords(maxNumRecords);
+      } else if (maxReadTime != null) {
+        transform = unbounded.withMaxReadTime(maxReadTime);
+      }
+
+      return input.getPipeline().apply(transform);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+
+    protected final List<String> topics;
+    protected final List<TopicPartition> topicPartitions; // mutually exclusive with topics
+    protected final Coder<K> keyCoder;
+    protected final Coder<V> valueCoder;
+    @Nullable protected final SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn;
+    @Nullable protected final SerializableFunction<KafkaRecord<K, V>, Instant> watermarkFn;
+    protected final
+      SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn;
+    protected final Map<String, Object> consumerConfig;
+    protected final long maxNumRecords; // bounded read, mainly for testing
+    protected final Duration maxReadTime; // bounded read, mainly for testing
+
+    private TypedRead(List<String> topics,
         List<TopicPartition> topicPartitions,
         Coder<K> keyCoder,
         Coder<V> valueCoder,
-        @Nullable SerializableFunction<KV<K, V>, Instant> timestampFn,
-        @Nullable SerializableFunction<KV<K, V>, Instant> watermarkFn,
+        @Nullable SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn,
+        @Nullable SerializableFunction<KafkaRecord<K, V>, Instant> watermarkFn,
         SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn,
         Map<String, Object> consumerConfig,
         long maxNumRecords,
         @Nullable Duration maxReadTime) {
+      super("KafkaIO.Read");
 
       this.topics = topics;
       this.topicPartitions = topicPartitions;
@@ -226,140 +408,22 @@ public class KafkaIO {
     }
 
     /**
-     * Returns a new {@link Read} with Kafka consumer pointing to {@code bootstrapServers}.
+     * Creates an {@link UnboundedSource<KafkaRecord<K, V>, ?>} with the configuration in
+     * {@link TypedRead}. Primary use case is unit tests, should not be used in an
+     * application.
      */
-    public Read<K, V> withBootstrapServers(String bootstrapServers) {
-      return updateConsumerProperties(
-          ImmutableMap.<String, Object>of(
-              ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers));
-    }
-
-    /**
-     * Returns a new {@link Read} that reads from the topics. All the partitions are from each
-     * of the topics is read.
-     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions)} for description
-     * of how the partitions are distributed among the splits.
-     */
-    public Read<K, V> withTopics(List<String> topics) {
-      checkState(topicPartitions.isEmpty(), "Only topics or topicPartitions can be set, not both");
-
-      return new Read<K, V>(ImmutableList.copyOf(topics), topicPartitions, keyCoder, valueCoder,
-          timestampFn, watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
-    }
-
-    /**
-     * Returns a new {@link Read} that reads from the partitions. This allows reading only a subset
-     * of partitions for one or more topics when (if ever) needed.
-     * See {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions)} for description
-     * of how the partitions are distributed among the splits.
-     */
-    public Read<K, V> withTopicPartitions(List<TopicPartition> topicPartitions) {
-      checkState(topics.isEmpty(), "Only topics or topicPartitions can be set, not both");
-
-      return new Read<K, V>(topics, ImmutableList.copyOf(topicPartitions), keyCoder, valueCoder,
-          timestampFn, watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
-    }
-
-    /**
-     * Returns a new {@link Read} with {@link Coder} for key bytes.
-     * <p> Since this changes the type for key, settings that depend on the type
-     * ({@link #withTimestampFn(SerializableFunction)} and
-     *  {@link #withWatermarkFn(SerializableFunction)}) make sense only after the coders are set.
-     */
-    public <KeyT> Read<KeyT, V> withKeyCoder(Coder<KeyT> keyCoder) {
-      checkState(timestampFn == null, "Set timestampFn after setting key and value coders");
-      checkState(watermarkFn == null, "Set watermarkFn after setting key and value coders");
-      return new Read<KeyT, V>(topics, topicPartitions, keyCoder, valueCoder, null, null,
-          consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
-    }
-
-    /**
-     * Returns a new {@link Read} with {@link Coder} for value bytes.
-     * <p> Since this changes the type for key, settings that depend on the type
-     * ({@link #withTimestampFn(SerializableFunction)} and
-     *  {@link #withWatermarkFn(SerializableFunction)}) make sense only after the coders are set.
-     */
-    public <ValueT> Read<K, ValueT> withValueCoder(Coder<ValueT> valueCoder) {
-      checkState(timestampFn == null, "Set timestampFn after setting key and value coders");
-      checkState(watermarkFn == null, "Set watermarkFn after setting key and value coders");
-      return new Read<K, ValueT>(topics, topicPartitions, keyCoder, valueCoder, null, null,
-          consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
-    }
-
-    /**
-     * A function to assign a timestamp to a record. Default is processing timestamp.
-     */
-    public Read<K, V> withTimestampFn(SerializableFunction<KV<K, V>, Instant> timestampFn) {
-      checkNotNull(timestampFn);
-      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder,
-          timestampFn, watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
-    }
-
-    /**
-     * A function to calculate watermark after a record. Default is last record timestamp
-     * @see #withTimestampFn(SerializableFunction)
-     */
-    public Read<K, V> withWatermarkFn(SerializableFunction<KV<K, V>, Instant> watermarkFn) {
-      checkNotNull(watermarkFn);
-      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder,
-          timestampFn, watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
-    }
-
-    /**
-     * A factory to create Kafka {@link Consumer} from consumer configuration.
-     * This is useful for supporting another version of Kafka consumer.
-     * Default is {@link KafkaConsumer}.
-     */
-    public Read<K, V> withConsumerFactoryFn(
-        SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn) {
-      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder,
-          timestampFn, watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, maxReadTime);
-    }
-
-    /**
-     * Update consumer configuration with new properties.
-     */
-    public Read<K, V> updateConsumerProperties(Map<String, Object> configUpdates) {
-      for (String key : configUpdates.keySet()) {
-        checkArgument(!ignoredConsumerProperties.containsKey(key),
-            "No need to configure '%s'. %s", key, ignoredConsumerProperties.get(key));
-      }
-
-      Map<String, Object> config = new HashMap<>(consumerConfig);
-      config.putAll(configUpdates);
-
-      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder, timestampFn,
-          watermarkFn, consumerFactoryFn, config, maxNumRecords, maxReadTime);
-    }
-
-    /**
-     * Similar to {@link com.google.cloud.dataflow.sdk.io.Read.Unbounded#withMaxNumRecords(long)}.
-     * Mainly used for tests and demo applications.
-     */
-    public Read<K, V> withMaxNumRecords(long maxNumRecords) {
-      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder, timestampFn,
-          watermarkFn, consumerFactoryFn, consumerConfig, maxNumRecords, null);
-    }
-
-    /**
-     * Similar to
-     * {@link com.google.cloud.dataflow.sdk.io.Read.Unbounded#withMaxReadTime(Duration)}.
-     * Mainly used for tests and demo
-     * applications.
-     */
-    public Read<K, V> withMaxReadTime(Duration maxReadTime) {
-      return new Read<K, V>(topics, topicPartitions, keyCoder, valueCoder, timestampFn,
-          watermarkFn, consumerFactoryFn, consumerConfig, Long.MAX_VALUE, maxReadTime);
-    }
-
-    /**
-     * A read transform that includes Kafka metadata along with key and value.
-     * @see KafkaRecord
-     */
-    public ReadWithMetadata<K, V> withMetadata() {
-      return new ReadWithMetadata<K, V>(this,
-          timestampFn != null ? unwrapKafkaAndThen(timestampFn) : null,
-          watermarkFn != null ? unwrapKafkaAndThen(watermarkFn) : null);
+    @VisibleForTesting
+    UnboundedSource<KafkaRecord<K, V>, KafkaCheckpointMark> makeSource() {
+      return new UnboundedKafkaSource<K, V>(
+          -1,
+          topics,
+          topicPartitions,
+          keyCoder,
+          valueCoder,
+          timestampFn,
+          Optional.fromNullable(watermarkFn),
+          consumerFactoryFn,
+          consumerConfig);
     }
 
     // utility method to convert KafkRecord<K, V> to user KV<K, V> before applying user functions
@@ -371,135 +435,47 @@ public class KafkaIO {
           }
         };
       }
-
-    /**
-     * Creates an {@link UnboundedSource<KafkaRecord<K, V>, ?>} with the configuration in
-     * {@link ReadWithMetadata}. Primary use case is unit tests, should not be used in an
-     * application.
-     */
-    @VisibleForTesting
-    UnboundedKafkaSource<K, V, KV<K, V>> makeSource() {
-      return new UnboundedKafkaSource<K, V, KV<K, V>>(
-          -1,
-          topics,
-          topicPartitions,
-          keyCoder,
-          valueCoder,
-          KvCoder.of(keyCoder, valueCoder),
-          unwrapKafkaAndThen(new IdentityFn<KV<K, V>>()),
-          timestampFn == null ? null : unwrapKafkaAndThen(timestampFn),
-          Optional.fromNullable(watermarkFn == null ? null : unwrapKafkaAndThen(watermarkFn)),
-          consumerFactoryFn,
-          consumerConfig);
-    }
-
-    @Override
-    public PCollection<KV<K, V>> apply(PInput input) {
-      return applyHelper(input, makeSource());
-    }
-
-    /**
-     * Handles unbounded source to bounded conversion if maxNumRecords or maxReadTime is set.
-     */
-    <T> PCollection<T> applyHelper(PInput input, UnboundedSource<T, ?> source) {
-      Unbounded<T> unbounded = com.google.cloud.dataflow.sdk.io.Read.from(source);
-      PTransform<PInput, PCollection<T>> transform = unbounded;
-
-      if (maxNumRecords < Long.MAX_VALUE) {
-        transform = unbounded.withMaxNumRecords(maxNumRecords);
-      } else if (maxReadTime != null) {
-        transform = unbounded.withMaxReadTime(maxReadTime);
-      }
-
-      return input.getPipeline().apply(transform);
-    }
   }
 
   /**
-   * Similar to {@link Read}, except that the transform returns a PCollection of
-   * {@link KafkaRecord} which includes Kafka metadata : topic name, partition, offset.
+   * A {@link PTransform} to read from Kafka topics. Similar to {@link KafkaIO.Typed}, but removes
+   * Kafka metatdata and returns a {@link PCollection} of {@link KV}.
+   * See {@link KafkaIO} for more information on usage and configuration of reader.
    */
-  public static class ReadWithMetadata<K, V>
-                      extends PTransform<PInput, PCollection<KafkaRecord<K, V>>> {
+  public static class TypedWithoutMetadata<K, V> extends PTransform<PBegin, PCollection<KV<K, V>>> {
 
-    private final Read<K, V> kvRead;
-    @Nullable private final SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn;
-    @Nullable private final SerializableFunction<KafkaRecord<K, V>, Instant> watermarkFn;
+    private final TypedRead<K, V> typedRead;
 
-    ReadWithMetadata(
-        Read<K, V> kvRead,
-        @Nullable SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn,
-        @Nullable SerializableFunction<KafkaRecord<K, V>, Instant> watermarkFn) {
-
-      this.kvRead = kvRead;
-      this.timestampFn = timestampFn;
-      this.watermarkFn = watermarkFn;
-    }
-
-    // Interface Note:
-    // Instead of repeating many of the builder methods ('withTopics()' etc) in Reader, we expect
-    // the user to set all those before Reader.withMetaData(). we still need to let users
-    // override timestamp functions (in cases where these functions need metadata).
-
-    /**
-     * A function to assign a timestamp to a record. Default is processing timestamp.
-     */
-    public ReadWithMetadata<K, V> withTimestampFn(
-        SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn) {
-      checkNotNull(timestampFn);
-      return new ReadWithMetadata<K, V>(kvRead, timestampFn, watermarkFn);
-    }
-
-    /**
-     * A function to calculate watermark after a record. Default is last record timestamp
-     * @see #withTimestampFn(SerializableFunction)
-     */
-    public ReadWithMetadata<K, V> withWatermarkFn(
-        SerializableFunction<KafkaRecord<K, V>, Instant> watermarkFn) {
-      checkNotNull(watermarkFn);
-      return new ReadWithMetadata<K, V>(kvRead, timestampFn, watermarkFn);
-    }
-
-    /**
-     * Creates an {@link UnboundedSource<KafkaRecord<K, V>, ?>} with the configuration in
-     * {@link ReadWithMetadata}. Primary use case is unit tests, should not be used in an
-     * application.
-     */
-    @VisibleForTesting
-    UnboundedKafkaSource<K, V, KafkaRecord<K, V>> makeSource() {
-      return new UnboundedKafkaSource<>(
-          -1,
-          kvRead.topics,
-          kvRead.topicPartitions,
-          kvRead.keyCoder,
-          kvRead.valueCoder,
-          KafkaRecordCoder.of(kvRead.keyCoder, kvRead.valueCoder),
-          new IdentityFn<KafkaRecord<K, V>>(),
-          timestampFn,
-          Optional.fromNullable(watermarkFn),
-          kvRead.consumerFactoryFn,
-          kvRead.consumerConfig);
+    TypedWithoutMetadata(TypedRead<K, V> read) {
+      super("KafkaIO.Read");
+      this.typedRead = read;
     }
 
     @Override
-    public PCollection<KafkaRecord<K, V>> apply(PInput input) {
-      return kvRead.applyHelper(input, makeSource());
+    public PCollection<KV<K, V>> apply(PBegin begin) {
+      return typedRead
+          .apply(begin)
+          .apply("Remove Kafka Metadata",
+              ParDo.of(new DoFn<KafkaRecord<K, V>, KV<K, V>>() {
+                @Override
+                public void processElement(ProcessContext ctx) {
+                  ctx.output(ctx.element().getKV());
+                }
+              }));
     }
   }
 
   /** Static class, prevent instantiation. */
   private KafkaIO() {}
 
-  private static class UnboundedKafkaSource<K, V, T>
-      extends UnboundedSource<T, KafkaCheckpointMark> {
+  private static class UnboundedKafkaSource<K, V>
+      extends UnboundedSource<KafkaRecord<K, V>, KafkaCheckpointMark> {
 
     private final int id; // split id, mainly for debugging
     private final List<String> topics;
     private final List<TopicPartition> assignedPartitions;
     private final Coder<K> keyCoder;
     private final Coder<V> valueCoder;
-    private final Coder<T> defaultOutputCoder;
-    private final SerializableFunction<KafkaRecord<K, V>, T> converterFn; // covert to userTuype.
     private final SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn;
     // would it be a good idea to pass currentTimestamp to watermarkFn?
     private final Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn;
@@ -513,8 +489,6 @@ public class KafkaIO {
         List<TopicPartition> assignedPartitions,
         Coder<K> keyCoder,
         Coder<V> valueCoder,
-        Coder<T> defaultOutputCoder,
-        SerializableFunction<KafkaRecord<K, V>, T> converterFn,
         @Nullable SerializableFunction<KafkaRecord<K, V>, Instant> timestampFn,
         Optional<SerializableFunction<KafkaRecord<K, V>, Instant>> watermarkFn,
         SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn,
@@ -525,8 +499,6 @@ public class KafkaIO {
       this.topics = topics;
       this.keyCoder = keyCoder;
       this.valueCoder = valueCoder;
-      this.defaultOutputCoder = defaultOutputCoder;
-      this.converterFn = converterFn;
       this.timestampFn =
           (timestampFn == null ? new NowTimestampFn<KafkaRecord<K, V>>() : timestampFn);
       this.watermarkFn = watermarkFn;
@@ -544,7 +516,7 @@ public class KafkaIO {
      * {@code <topic, partition>} and then assigned to splits in round-robin order.
      */
     @Override
-    public List<UnboundedKafkaSource<K, V, T>> generateInitialSplits(
+    public List<UnboundedKafkaSource<K, V>> generateInitialSplits(
         int desiredNumSplits, PipelineOptions options) throws Exception {
 
       List<TopicPartition> partitions = new ArrayList<>(assignedPartitions);
@@ -587,7 +559,7 @@ public class KafkaIO {
         assignments.get(i % numSplits).add(partitions.get(i));
       }
 
-      List<UnboundedKafkaSource<K, V, T>> result = new ArrayList<>(numSplits);
+      List<UnboundedKafkaSource<K, V>> result = new ArrayList<>(numSplits);
 
       for (int i = 0; i < numSplits; i++) {
         List<TopicPartition> assignedToSplit = assignments.get(i);
@@ -595,14 +567,12 @@ public class KafkaIO {
         LOG.info("Partitions assigned to split {} (total {}): {}",
             i, assignedToSplit.size(), Joiner.on(",").join(assignedToSplit));
 
-        result.add(new UnboundedKafkaSource<K, V, T>(
+        result.add(new UnboundedKafkaSource<K, V>(
             i,
             this.topics,
             assignedToSplit,
             this.keyCoder,
             this.valueCoder,
-            this.defaultOutputCoder,
-            this.converterFn,
             this.timestampFn,
             this.watermarkFn,
             this.consumerFactoryFn,
@@ -613,19 +583,19 @@ public class KafkaIO {
     }
 
     @Override
-    public UnboundedKafkaReader<K, V, T> createReader(PipelineOptions options,
+    public UnboundedKafkaReader<K, V> createReader(PipelineOptions options,
                                                    KafkaCheckpointMark checkpointMark) {
       if (assignedPartitions.isEmpty()) {
         LOG.warn("hack: working around DirectRunner issue. It does not generateSplits()");
         // generate single split and return reader from it.
         try {
-          return new UnboundedKafkaReader<K, V, T>(
+          return new UnboundedKafkaReader<K, V>(
               generateInitialSplits(1, options).get(0), checkpointMark);
         } catch (Exception e) {
           Throwables.propagate(e);
         }
       }
-      return new UnboundedKafkaReader<K, V, T>(this, checkpointMark);
+      return new UnboundedKafkaReader<K, V>(this, checkpointMark);
     }
 
     @Override
@@ -647,14 +617,14 @@ public class KafkaIO {
     }
 
     @Override
-    public Coder<T> getDefaultOutputCoder() {
-      return defaultOutputCoder;
+    public Coder<KafkaRecord<K, V>> getDefaultOutputCoder() {
+      return KafkaRecordCoder.of(keyCoder, valueCoder);
     }
   }
 
-  private static class UnboundedKafkaReader<K, V, T> extends UnboundedReader<T> {
+  private static class UnboundedKafkaReader<K, V> extends UnboundedReader<KafkaRecord<K, V>> {
 
-    private final UnboundedKafkaSource<K, V, T> source;
+    private final UnboundedKafkaSource<K, V> source;
     private final String name;
     private Consumer<byte[], byte[]> consumer;
     private final List<PartitionState> partitionStates;
@@ -739,7 +709,7 @@ public class KafkaIO {
     }
 
     public UnboundedKafkaReader(
-        UnboundedKafkaSource<K, V, T> source,
+        UnboundedKafkaSource<K, V> source,
         @Nullable KafkaCheckpointMark checkpointMark) {
 
       this.source = source;
@@ -906,15 +876,19 @@ public class KafkaIO {
             LOG.info("{} : first record offset {}", name, offset);
           }
 
+          curRecord = null; // user coders below might throw.
+
           // apply user coders. might want to allow skipping records that fail to decode.
-          curRecord = new KafkaRecord<K, V>(
+          // TODO: wrap exceptions from coders to make explicit to users
+          KafkaRecord<K, V> record = new KafkaRecord<K, V>(
               rawRecord.topic(),
               rawRecord.partition(),
               rawRecord.offset(),
               decode(rawRecord.key(), source.keyCoder),
               decode(rawRecord.value(), source.valueCoder));
 
-          curTimestamp = source.timestampFn.apply(curRecord);
+          curTimestamp = source.timestampFn.apply(record);
+          curRecord = record;
 
           int recordSize = (rawRecord.key() == null ? 0 : rawRecord.key().length) +
               (rawRecord.value() == null ? 0 : rawRecord.value().length);
@@ -941,6 +915,7 @@ public class KafkaIO {
       return coder.decode(new ExposedByteArrayInputStream(toDecode), Coder.Context.OUTER);
     }
 
+    // update latest offset for each partition.
     // called from offsetFetcher thread
     private void updateLatestOffsets() {
       for (PartitionState p : partitionStates) {
@@ -984,14 +959,14 @@ public class KafkaIO {
     }
 
     @Override
-    public UnboundedSource<T, ?> getCurrentSource() {
+    public UnboundedSource<KafkaRecord<K, V>, ?> getCurrentSource() {
       return source;
     }
 
     @Override
-    public T getCurrent() throws NoSuchElementException {
+    public KafkaRecord<K, V> getCurrent() throws NoSuchElementException {
       // should we delay updating consumed offset till this point? Mostly not required.
-      return source.converterFn.apply(curRecord);
+      return curRecord;
     }
 
     @Override
