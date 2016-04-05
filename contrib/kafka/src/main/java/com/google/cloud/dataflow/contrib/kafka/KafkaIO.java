@@ -253,8 +253,8 @@ public class KafkaIO {
      */
     public Read<K, V> updateConsumerProperties(Map<String, Object> configUpdates) {
       for (String key : configUpdates.keySet()) {
-        checkArgument(!ignoredConsumerProperties.containsKey(key),
-            "No need to configure '%s'. %s", key, ignoredConsumerProperties.get(key));
+        checkArgument(!IGNORED_CONSUMER_PROPERTIES.containsKey(key),
+            "No need to configure '%s'. %s", key, IGNORED_CONSUMER_PROPERTIES.get(key));
       }
 
       Map<String, Object> config = new HashMap<>(consumerConfig);
@@ -303,7 +303,7 @@ public class KafkaIO {
     /**
      * A set of properties that are not required or don't make sense for our consumer.
      */
-    private static final Map<String, String> ignoredConsumerProperties = ImmutableMap.of(
+    private static final Map<String, String> IGNORED_CONSUMER_PROPERTIES = ImmutableMap.of(
         ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, "Set keyDecoderFn instead",
         ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "Set valueDecoderFn instead"
         // "group.id", "enable.auto.commit", "auto.commit.interval.ms" :
