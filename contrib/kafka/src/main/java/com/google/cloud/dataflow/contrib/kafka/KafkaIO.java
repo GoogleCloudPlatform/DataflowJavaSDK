@@ -84,28 +84,70 @@ import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
 
 /**
- * Dataflow support for consuming Kafka topics as {@link Unbounded} sources.
+ * An unbounded source for <a href="http://kafka.apache.org/">Kafka</a> topics. Kafka version 0.9
+ * and above are supported.
  *
- * <p>
- * The Kafka partitions
- * are evenly distributed among splits (workers). Dataflow checkpointing is fully supported and
+ * <h3>Reading from Kafka topics</h3>
+ *
+ * <p>KafkaIO source returns unbounded collection of Kafka records as
+ * {@code PCollection<KafkaRecord<K, V>>}. A {@link KafkaRecord} includes basic
+ * metadata like topic-partition and offset, along with key and value associated with a Kafka
+ * record.
+ *
+ * <p>Although most applications consumer single topic, the source can be configured to consume
+ * multiple topics or even a specific set of {@link TopicPartition}s.
+ *
+ * <p> To configure a Kafka source, you must specify at the minimum Kafka <tt>bootstrapServers</tt>
+ * and one or more topics to consume. The following example illustrates various options for
+ * configuring the source :
+ *
+ * <pre>{@code
+ *
+ *  pipeline
+ *    .apply(KafkaIO.read()
+ *       .withBootstrapServers("broker_1:9092,broker_2:9092")
+ *       .withTopics(ImmutableList.of("topic_a", "topic_b"))
+ *       // above two are required configuration. returns PCollection<KafkaRecord<byte[], byte[]>
+ *
+ *       // rest of the settings are optional :
+ *
+ *       // set a Coder for Key and Value (note the change to return type)
+ *       .withKeyCoder(BigEndianLongCoder.of()) // PCollection<KafkaRecord<Long, byte[]>
+ *       .withValueCoder(StringUtf8Coder.of())  // PCollection<KafkaRecord<Long, String>
+ *
+ *       // you can further customize KafkaConsumer used to read the records by adding more
+ *       // settings for ConsumerConfig. e.g :
+ *       .updateConsumerProperties(ImmutableMap.of("receive.buffer.bytes", 1024 * 1024))
+ *
+ *       // custom function for calculating record timestamp (default is processing time)
+ *       .withTimestampFn(new MyTypestampFunction())
+ *
+ *       // custom function for watermark (default is record timestamp)
+ *       .withWatermarkFn(new MyWatermarkFunction())
+ *
+ *       // finally, if you don't need Kafka metadata, you can drop it
+ *       .withoutMetadata() // PCollection<KV<Long, String>>
+ *    )
+ *    .apply(Values.<String>create()) // PCollection<String>
+ *     ...
+ * }</pre>
+ *
+ * <h3>Partition Assignment and Checkpointing</h3>
+ * The Kafka partitions are evenly distributed among splits (workers).
+ * Dataflow checkpointing is fully supported and
  * each split can resume from previous checkpoint. See
  * {@link UnboundedKafkaSource#generateInitialSplits(int, PipelineOptions)} for more details on
  * splits and checkpoint support.
  *
- * <pre>{@code
- * Usage:
- *   pipeline
- *     .apply("read_topic_a_and_b",
- *        KafkaIO.read()
- *         .withBootstrapServers("broker_1:9092,broker_2:9092")
- *         .withTopics(ImmutableList.of("topic_a", "topic_b")) // or withTopicPartitions(List<>)
- *         .withValueCoder(StringUtf8Coder.of())
- *         .withTimestampFn(timestampFn) // optional
- *         .withWatermarkFn(watermarkFn)) // optional
- *     .apply(Values.<String>create()) // discard keys
- *     ...
- *}</pre>
+ * <p>When the pipeline starts for the first time without any checkpoint, the source starts
+ * consuming from the <em>latest</em> offsets. You can override this behavior to consume from the
+ * beginning by setting appropriate appropriate properties in {@link ConsumerConfig}, through
+ * {@link Read#updateConsumerProperties(Map)}.
+ *
+ * <h3>Advanced Kafka Configuration</h3>
+ * KafakIO allows setting most of the properties in {@link ConsumerConfig}. E.g. if you would like
+ * to enable offset <em>auto commit</em> (for external monitoring or other purposes), you can set
+ * <tt>"group.id"</tt>, <tt>"enable.auto.commit"</tt>, etc.
  */
 public class KafkaIO {
 
