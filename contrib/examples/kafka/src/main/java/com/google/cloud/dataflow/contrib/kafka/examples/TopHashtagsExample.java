@@ -234,7 +234,7 @@ public class TopHashtagsExample {
 
     private final String topic;
     private final Map<String, Object> config;
-    private transient KafkaProducer<String, String> producer = null;
+    private static transient KafkaProducer<String, String> producer = null;
 
     public KafkaWriter(Options options) {
       this.topic = options.getOutputTopic();
@@ -253,12 +253,12 @@ public class TopHashtagsExample {
 
     @Override
     public void finishBundle(Context c) throws Exception {
-      producer.close();
+      producer.flush();
     }
 
     @Override
     public void processElement(ProcessContext ctx) throws Exception {
-      LOG.info("Top Hashtags : {}", ctx.element());
+      LOG.trace("Top Hashtags : {}", ctx.element());
       producer.send(new ProducerRecord<String, String>(topic, ctx.element()));
     }
   }

@@ -20,7 +20,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.api.client.repackaged.com.google.common.annotations.VisibleForTesting;
 import com.google.cloud.dataflow.contrib.kafka.KafkaCheckpointMark.PartitionMark;
 import com.google.cloud.dataflow.sdk.coders.ByteArrayCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
@@ -39,6 +38,7 @@ import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PBegin;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PInput;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
@@ -628,8 +628,7 @@ public class KafkaIO {
     public UnboundedKafkaReader<K, V> createReader(PipelineOptions options,
                                                    KafkaCheckpointMark checkpointMark) {
       if (assignedPartitions.isEmpty()) {
-        LOG.warn("hack: working around DirectRunner issue. It does not generateSplits()");
-        // generate single split and return reader from it.
+        LOG.warn("Looks like generateSplits() is not called. Generate single split.");
         try {
           return new UnboundedKafkaReader<K, V>(
               generateInitialSplits(1, options).get(0), checkpointMark);
@@ -647,6 +646,8 @@ public class KafkaIO {
 
     @Override
     public boolean requiresDeduping() {
+      // Kafka records are ordered with in partitions. In addition checkpoint guarantees
+      // records are not consumed twice.
       return false;
     }
 
@@ -673,6 +674,10 @@ public class KafkaIO {
     private KafkaRecord<K, V> curRecord;
     private Instant curTimestamp;
     private Iterator<PartitionState> curBatch = Collections.emptyIterator();
+
+    private static final Duration KAFKA_POLL_TIMEOUT = Duration.millis(1000);
+    // how long to wait for new records from kafka consumer inside advance()
+    private static final Duration NEW_RECORDS_POLL_TIMEOUT = Duration.millis(10);
 
     // Use a separate thread to read Kafka messages. Kafka Consumer does all its work including
     // network I/O inside poll(). Polling only inside #advance(), especially with a small timeout
@@ -777,8 +782,8 @@ public class KafkaIO {
           TopicPartition assigned = source.assignedPartitions.get(i);
 
           checkState(ckptMark.getTopicPartition().equals(assigned),
-              "checkpointed partition %s and assinged partition %s don't match at position %d",
-              ckptMark.getTopicPartition(), assigned, i);
+              "checkpointed partition %s and assigned partition %s don't match",
+              ckptMark.getTopicPartition(), assigned);
 
           partitionStates.get(i).consumedOffset = ckptMark.getOffset();
         }
@@ -789,19 +794,19 @@ public class KafkaIO {
       // Read in a loop and enqueue the batch of records, if any, to availableRecordsQueue
       while (!closed) {
         try {
-          ConsumerRecords<byte[], byte[]> records = consumer.poll(1000);
+          ConsumerRecords<byte[], byte[]> records = consumer.poll(KAFKA_POLL_TIMEOUT.getMillis());
           if (!records.isEmpty()) {
             availableRecordsQueue.put(records); // blocks until dequeued.
           }
         } catch (InterruptedException e) {
-          LOG.warn(this + " consumer thread is interrupted", e); // not expected
+          LOG.warn("{}: consumer thread is interrupted", this, e); // not expected
           break;
         } catch (WakeupException e) {
           break;
         }
       }
 
-      LOG.info("{} : Returning from consumer pool loop", this);
+      LOG.info("{}: Returning from consumer pool loop", this);
     }
 
     private void nextBatch() {
@@ -809,9 +814,10 @@ public class KafkaIO {
 
       ConsumerRecords<byte[], byte[]> records;
       try {
-        records = availableRecordsQueue.poll(10, TimeUnit.MILLISECONDS);
+        records = availableRecordsQueue.poll(NEW_RECORDS_POLL_TIMEOUT.getMillis(),
+                                             TimeUnit.MILLISECONDS);
       } catch (InterruptedException e) {
-        LOG.warn("Unexpected", e);
+        LOG.warn("{}: Unexpected", this, e);
         return;
       }
 
@@ -843,7 +849,7 @@ public class KafkaIO {
           LOG.info("{}: resuming {} at {}", name, p.topicPartition, p.consumedOffset + 1);
           consumer.seek(p.topicPartition, p.consumedOffset + 1);
         } else {
-          LOG.info("{} : resuming {} at default offset", name, p.topicPartition);
+          LOG.info("{}: resuming {} at default offset", name, p.topicPartition);
         }
       }
 
@@ -904,18 +910,19 @@ public class KafkaIO {
           if (consumed >= 0 && offset <= consumed) { // -- (a)
             // this can happen when compression is enabled in Kafka (seems to be fixed in 0.10)
             // should we check if the offset is way off from consumedOffset (say > 1M)?
-            LOG.warn("ignoring already consumed offset {} for {}", offset, pState.topicPartition);
+            LOG.warn("{}: ignoring already consumed offset {} for {}",
+                this, offset, pState.topicPartition);
             continue;
           }
 
           // sanity check
           if (consumed >= 0 && (offset - consumed) != 1) {
-            LOG.warn("gap in offsets for {} after {}. {} records missing.",
-                pState.topicPartition, consumed, offset - consumed - 1);
+            LOG.warn("{}: gap in offsets for {} after {}. {} records missing.",
+                this, pState.topicPartition, consumed, offset - consumed - 1);
           }
 
           if (curRecord == null) {
-            LOG.info("{} : first record offset {}", name, offset);
+            LOG.info("{}: first record offset {}", name, offset);
           }
 
           curRecord = null; // user coders below might throw.
@@ -966,21 +973,21 @@ public class KafkaIO {
           long offset = offsetConsumer.position(p.topicPartition);
           p.setLatestOffset(offset);;
         } catch (Exception e) {
-          LOG.warn(this + " : exception while fetching latest offsets. ignored.",  e);
+          LOG.warn("{}: exception while fetching latest offsets. ignored.",  this, e);
           p.setLatestOffset(-1L); // reset
         }
 
-        LOG.debug("{} : latest offset update for {} : {} (consumed offset {}, avg record size {})",
+        LOG.debug("{}: latest offset update for {} : {} (consumed offset {}, avg record size {})",
             this, p.topicPartition, p.latestOffset, p.consumedOffset, p.avgRecordSize);
       }
 
-      LOG.debug("{} :  backlog {}", this, getSplitBacklogBytes());
+      LOG.debug("{}:  backlog {}", this, getSplitBacklogBytes());
     }
 
     @Override
     public Instant getWatermark() {
       if (curRecord == null) {
-        LOG.warn("{} : getWatermark() : no records have been read yet.", name);
+        LOG.warn("{}: getWatermark() : no records have been read yet.", name);
         return initialWatermark;
       }
 
