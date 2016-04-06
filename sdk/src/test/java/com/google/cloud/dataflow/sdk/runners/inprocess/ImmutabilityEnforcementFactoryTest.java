@@ -92,7 +92,7 @@ public class ImmutabilityEnforcementFactoryTest implements Serializable {
     ModelEnforcement<byte[]> enforcement = factory.forBundle(elements, consumer);
     enforcement.beforeElement(element);
     element.getValue()[0] = 'f';
-    thrown.equals(UserCodeException.class);
+    thrown.expect(UserCodeException.class);
     thrown.expectCause(isA(IllegalMutationException.class));
     thrown.expectMessage(consumer.getFullName());
     thrown.expectMessage("illegaly mutated");
@@ -116,7 +116,7 @@ public class ImmutabilityEnforcementFactoryTest implements Serializable {
     enforcement.afterElement(element);
 
     element.getValue()[0] = 'f';
-    thrown.equals(UserCodeException.class);
+    thrown.expect(UserCodeException.class);
     thrown.expectCause(isA(IllegalMutationException.class));
     thrown.expectMessage(consumer.getFullName());
     thrown.expectMessage("illegaly mutated");
