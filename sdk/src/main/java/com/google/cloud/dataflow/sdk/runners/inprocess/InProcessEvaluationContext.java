@@ -75,7 +75,6 @@ class InProcessEvaluationContext {
   /** The options that were used to create this {@link Pipeline}. */
   private final InProcessPipelineOptions options;
 
-  private final BundleFactory bundleFactory;
   /** The current processing time and event time watermarks and timers. */
   private final InMemoryWatermarkManager watermarkManager;
 
@@ -92,24 +91,21 @@ class InProcessEvaluationContext {
 
   public static InProcessEvaluationContext create(
       InProcessPipelineOptions options,
-      BundleFactory bundleFactory,
       Collection<AppliedPTransform<?, ?, ?>> rootTransforms,
       Map<PValue, Collection<AppliedPTransform<?, ?, ?>>> valueToConsumers,
       Map<AppliedPTransform<?, ?, ?>, String> stepNames,
       Collection<PCollectionView<?>> views) {
     return new InProcessEvaluationContext(
-        options, bundleFactory, rootTransforms, valueToConsumers, stepNames, views);
+        options, rootTransforms, valueToConsumers, stepNames, views);
   }
 
   private InProcessEvaluationContext(
       InProcessPipelineOptions options,
-      BundleFactory bundleFactory,
       Collection<AppliedPTransform<?, ?, ?>> rootTransforms,
       Map<PValue, Collection<AppliedPTransform<?, ?, ?>>> valueToConsumers,
       Map<AppliedPTransform<?, ?, ?>, String> stepNames,
       Collection<PCollectionView<?>> views) {
     this.options = checkNotNull(options);
-    this.bundleFactory = checkNotNull(bundleFactory);
     checkNotNull(rootTransforms);
     checkNotNull(valueToConsumers);
     checkNotNull(stepNames);
@@ -209,7 +205,7 @@ class InProcessEvaluationContext {
    * Create a {@link UncommittedBundle} for use by a source.
    */
   public <T> UncommittedBundle<T> createRootBundle(PCollection<T> output) {
-    return bundleFactory.createRootBundle(output);
+    return InProcessBundle.unkeyed(output);
   }
 
   /**
@@ -217,7 +213,9 @@ class InProcessEvaluationContext {
    * PCollection}.
    */
   public <T> UncommittedBundle<T> createBundle(CommittedBundle<?> input, PCollection<T> output) {
-    return bundleFactory.createBundle(input, output);
+    return input.isKeyed()
+        ? InProcessBundle.keyed(output, input.getKey())
+        : InProcessBundle.unkeyed(output);
   }
 
   /**
@@ -226,7 +224,7 @@ class InProcessEvaluationContext {
    */
   public <T> UncommittedBundle<T> createKeyedBundle(
       CommittedBundle<?> input, Object key, PCollection<T> output) {
-    return bundleFactory.createKeyedBundle(input, key, output);
+    return InProcessBundle.keyed(output, key);
   }
 
   /**
@@ -355,9 +353,7 @@ class InProcessEvaluationContext {
    * for each time they are set.
    */
   public Map<AppliedPTransform<?, ?, ?>, Map<Object, FiredTimers>> extractFiredTimers() {
-    Map<AppliedPTransform<?, ?, ?>, Map<Object, FiredTimers>> fired =
-        watermarkManager.extractFiredTimers();
-    return fired;
+    return watermarkManager.extractFiredTimers();
   }
 
   /**

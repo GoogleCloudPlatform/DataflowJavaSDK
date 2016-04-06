@@ -45,7 +45,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -61,7 +60,6 @@ public class BoundedReadEvaluatorFactoryTest {
   private PCollection<Long> longs;
   private TransformEvaluatorFactory factory;
   @Mock private InProcessEvaluationContext context;
-  private BundleFactory bundleFactory;
 
   @Before
   public void setup() {
@@ -170,7 +168,7 @@ public class BoundedReadEvaluatorFactoryTest {
     PCollection<Long> pcollection = p.apply(Read.from(source));
     AppliedPTransform<?, ?, ?> sourceTransform = pcollection.getProducingTransformInternal();
 
-    UncommittedBundle<Long> output = bundleFactory.createRootBundle(pcollection);
+    UncommittedBundle<Long> output = InProcessBundle.unkeyed(longs);
     when(context.createRootBundle(pcollection)).thenReturn(output);
 
     TransformEvaluator<?> evaluator = factory.forApplication(sourceTransform, null, context);
@@ -188,7 +186,7 @@ public class BoundedReadEvaluatorFactoryTest {
     PCollection<Long> pcollection = p.apply(Read.from(source));
     AppliedPTransform<?, ?, ?> sourceTransform = pcollection.getProducingTransformInternal();
 
-    UncommittedBundle<Long> output = bundleFactory.createRootBundle(pcollection);
+    UncommittedBundle<Long> output = InProcessBundle.unkeyed(longs);
     when(context.createRootBundle(pcollection)).thenReturn(output);
 
     TransformEvaluator<?> evaluator = factory.forApplication(sourceTransform, null, context);
