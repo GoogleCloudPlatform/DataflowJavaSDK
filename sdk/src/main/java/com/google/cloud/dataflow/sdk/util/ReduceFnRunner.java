@@ -444,23 +444,6 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
 
       ReduceFn<K, InputT, OutputT, W>.Context directContext =
           contextFactory.base(window, StateStyle.DIRECT);
-      W active = activeWindows.mergeResultWindow(window);
-      Preconditions.checkState(active != null, "Window %s has no mergeResultWindow", window);
-      windows.add(active);
-    }
-
-    // Prefetch in each of the windows if we're going to need to process triggers
-    for (W window : windows) {
-      ReduceFn<K, InputT, OutputT, W>.ProcessValueContext directContext = contextFactory.forValue(
-          window, value.getValue(), value.getTimestamp(), StateStyle.DIRECT);
-      triggerRunner.prefetchForValue(window, directContext.state());
-    }
-
-    // Process the element for each (mergeResultWindow, not closed) window it belongs to.
-    List<W> triggerableWindows = new ArrayList<>(windows.size());
-    for (W window : windows) {
-      ReduceFn<K, InputT, OutputT, W>.ProcessValueContext directContext = contextFactory.forValue(
-          window, value.getValue(), value.getTimestamp(), StateStyle.DIRECT);
       if (triggerRunner.isClosed(directContext.state())) {
         // This window has already been closed.
         droppedDueToClosedWindow.addValue(1L);
@@ -472,8 +455,22 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
         continue;
       }
 
-      triggerableWindows.add(window);
-      activeWindows.ensureWindowIsActive(window);
+      W active = activeWindows.representative(window);
+      Preconditions.checkState(active != null, "Window %s has no representative", window);
+      windows.add(active);
+    }
+
+    // Prefetch in each of the windows if we're going to need to process triggers
+    for (W window : windows) {
+      ReduceFn<K, InputT, OutputT, W>.ProcessValueContext directContext = contextFactory.forValue(
+          window, value.getValue(), value.getTimestamp(), StateStyle.DIRECT);
+      triggerRunner.prefetchForValue(window, directContext.state());
+    }
+
+    // Process the element for each (representative, not closed) window it belongs to.
+    for (W window : windows) {
+      ReduceFn<K, InputT, OutputT, W>.ProcessValueContext directContext = contextFactory.forValue(
+          window, value.getValue(), value.getTimestamp(), StateStyle.DIRECT);
       ReduceFn<K, InputT, OutputT, W>.ProcessValueContext renamedContext = contextFactory.forValue(
           window, value.getValue(), value.getTimestamp(), StateStyle.RENAMED);
 

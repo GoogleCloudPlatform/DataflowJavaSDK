@@ -230,7 +230,6 @@ public class InProcessPipelineRunner
     InProcessEvaluationContext context =
         InProcessEvaluationContext.create(
             getPipelineOptions(),
-            createBundleFactory(getPipelineOptions()),
             consumerTrackingVisitor.getRootTransforms(),
             consumerTrackingVisitor.getValueToConsumers(),
             consumerTrackingVisitor.getStepNames(),
@@ -268,10 +267,6 @@ public class InProcessPipelineRunner
   private Map<Class<? extends PTransform>, Collection<ModelEnforcementFactory>>
       defaultModelEnforcements(InProcessPipelineOptions options) {
     return Collections.emptyMap();
-  }
-
-  private BundleFactory createBundleFactory(InProcessPipelineOptions pipelineOptions) {
-    return InProcessBundleFactory.create();
   }
 
   /**
