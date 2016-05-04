@@ -432,6 +432,16 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
     }
 
     @Override
+    public final long getParallelismRemaining() {
+      if (isDone()) {
+        return 0;
+      }
+      // This source does not currently support dynamic work rebalancing, so remaining
+      // parallelism is always 1.
+      return 1;
+    }
+
+    @Override
     public BoundedSource<KV<K, V>> splitAtFraction(double fraction) {
       // Not yet supported. To implement this, the sizes of the splits should be used to
       // calculate the remaining splits that constitute the given fraction, then a
