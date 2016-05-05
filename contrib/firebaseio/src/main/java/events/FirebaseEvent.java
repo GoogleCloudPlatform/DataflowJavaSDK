@@ -15,8 +15,6 @@
  */
 package events;
 
-import com.google.api.client.repackaged.com.google.common.base.Objects;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectMapper.DefaultTyping;
@@ -24,6 +22,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 
 import com.firebase.client.DataSnapshot;
 import com.firebase.client.GenericTypeIndicator;
+
+import java.util.Objects;
 
 /**
  * Supertype for all {@link FirebaseEvent}s.
@@ -49,7 +49,7 @@ public class FirebaseEvent<T>{
 
   @Override
   public int hashCode(){
-    return Objects.hashCode(key, data);
+    return Objects.hash(key, data);
   }
 
   /**
@@ -59,7 +59,7 @@ public class FirebaseEvent<T>{
   public boolean equals(Object e){
     if (this.getClass().isInstance(e)){
       FirebaseEvent<?> other = (FirebaseEvent<?>) e;
-      return Objects.equal(this.key, other.key) && Objects.equal(this.data, other.data);
+      return Objects.equals(this.key, other.key) && Objects.equals(this.data, other.data);
     }
     return false;
   }

@@ -14,11 +14,11 @@
  * the License.
  */
 package io;
-import com.google.api.client.repackaged.com.google.common.base.Preconditions;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
+import com.google.common.base.Preconditions;
 
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.firebase.client.AuthData;
