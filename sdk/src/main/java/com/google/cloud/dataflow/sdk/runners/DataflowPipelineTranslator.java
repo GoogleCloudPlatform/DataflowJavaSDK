@@ -42,7 +42,8 @@ import com.google.cloud.dataflow.sdk.Pipeline.PipelineVisitor;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.coders.IterableCoder;
-import com.google.cloud.dataflow.sdk.io.PubsubIO;
+import com.google.cloud.dataflow.sdk.io.PubsubUnboundedSink;
+import com.google.cloud.dataflow.sdk.io.PubsubUnboundedSource;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.options.StreamingOptions;
@@ -1051,11 +1052,9 @@ public class DataflowPipelineTranslator {
     // IO Translation.
 
     registerTransformTranslator(
-        PubsubIO.Read.Bound.class, new PubsubIOTranslator.ReadTranslator());
+        PubsubUnboundedSource.class, new PubsubIOTranslator.ReadTranslator());
     registerTransformTranslator(
-        DataflowPipelineRunner.StreamingPubsubIOWrite.class,
-        new PubsubIOTranslator.WriteTranslator());
-
+        PubsubUnboundedSink.class, new PubsubIOTranslator.WriteTranslator());
     registerTransformTranslator(Read.Bounded.class, new ReadTranslator());
   }
 

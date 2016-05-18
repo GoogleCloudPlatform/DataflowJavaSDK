@@ -75,7 +75,6 @@ import com.google.cloud.dataflow.sdk.runners.DataflowPipelineTranslator.Transfor
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineTranslator.TranslationContext;
 import com.google.cloud.dataflow.sdk.runners.dataflow.AssignWindows;
 import com.google.cloud.dataflow.sdk.runners.dataflow.DataflowAggregatorTransforms;
-import com.google.cloud.dataflow.sdk.runners.dataflow.PubsubIOTranslator;
 import com.google.cloud.dataflow.sdk.runners.dataflow.ReadTranslator;
 import com.google.cloud.dataflow.sdk.runners.worker.IsmFormat;
 import com.google.cloud.dataflow.sdk.runners.worker.IsmFormat.IsmRecord;
@@ -348,7 +347,6 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
           .put(View.AsList.class, StreamingViewAsList.class)
           .put(View.AsIterable.class, StreamingViewAsIterable.class)
           .put(Write.Bound.class, StreamingWrite.class)
-          .put(PubsubIO.Write.Bound.class, StreamingPubsubIOWrite.class)
           .put(Read.Unbounded.class, StreamingUnboundedRead.class)
           .put(Read.Bounded.class, UnsupportedIO.class)
           .put(AvroIO.Read.Bound.class, UnsupportedIO.class)
@@ -2532,41 +2530,6 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     @Override
     protected String getKindString() {
       return "StreamingWrite";
-    }
-  }
-
-  /**
-   * Specialized implementation for
-   * {@link com.google.cloud.dataflow.sdk.io.PubsubIO.Write PubsubIO.Write} for the
-   * Dataflow runner in streaming mode.
-   *
-   * <p>For internal use only. Subject to change at any time.
-   *
-   * <p>Public so the {@link PubsubIOTranslator} can access.
-   */
-  public static class StreamingPubsubIOWrite<T> extends PTransform<PCollection<T>, PDone> {
-    private final PubsubIO.Write.Bound<T> transform;
-
-    /**
-     * Builds an instance of this class from the overridden transform.
-     */
-    public StreamingPubsubIOWrite(
-        DataflowPipelineRunner runner, PubsubIO.Write.Bound<T> transform) {
-      this.transform = transform;
-    }
-
-    public PubsubIO.Write.Bound<T> getOverriddenTransform() {
-      return transform;
-    }
-
-    @Override
-    public PDone apply(PCollection<T> input) {
-      return PDone.in(input.getPipeline());
-    }
-
-    @Override
-    protected String getKindString() {
-      return "StreamingPubsubIOWrite";
     }
   }
 
