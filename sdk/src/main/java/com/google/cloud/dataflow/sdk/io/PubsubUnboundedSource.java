@@ -1242,6 +1242,10 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
     this(null, pubsubFactory, project, topic, subscription, elementCoder, timestampLabel, idLabel);
   }
 
+  public Coder<T> getElementCoder() {
+    return elementCoder;
+  }
+
   @Nullable
   public ProjectPath getProject() {
     return project;
