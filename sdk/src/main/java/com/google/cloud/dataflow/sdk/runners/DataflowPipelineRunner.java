@@ -364,12 +364,12 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
       // defer to Windmill's built-in implementation.
       builder.put(PubsubIO.Read.Bound.PubsubBoundedReader.class, UnsupportedIO.class);
       builder.put(PubsubIO.Write.Bound.PubsubBoundedWriter.class, UnsupportedIO.class);
-      if (options.getExperiments() == null ||
-          !options.getExperiments().contains("enable_custom_pubsub_source")) {
+      if (options.getExperiments() == null
+          || !options.getExperiments().contains("enable_custom_pubsub_source")) {
         builder.put(PubsubUnboundedSource.class, StreamingPubsubIORead.class);
       }
-      if (options.getExperiments() == null ||
-          !options.getExperiments().contains("enable_custom_pubsub_sink")) {
+      if (options.getExperiments() == null
+          || !options.getExperiments().contains("enable_custom_pubsub_sink")) {
         builder.put(PubsubUnboundedSink.class, StreamingPubsubIOWrite.class);
       }
     } else {
