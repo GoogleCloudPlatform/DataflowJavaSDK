@@ -2629,7 +2629,7 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
       if (overriddenTransform.getIdLabel() != null) {
         context.addInput(PropertyNames.PUBSUB_ID_LABEL, overriddenTransform.getIdLabel());
       }
-      context.addValueOnlyOutput(PropertyNames.OUTPUT, context.getOutput(overriddenTransform));
+      context.addValueOnlyOutput(PropertyNames.OUTPUT, context.getOutput(transform));
     }
   }
 
@@ -2698,9 +2698,9 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
       if (overriddenTransform.getIdLabel() != null) {
         context.addInput(PropertyNames.PUBSUB_ID_LABEL, overriddenTransform.getIdLabel());
       }
-      context.addEncodingInput(WindowedValue.getValueOnlyCoder(overriddenTransform.getElementCoder
-          ()));
-      context.addInput(PropertyNames.PARALLEL_INPUT, context.getInput(overriddenTransform));
+      context.addEncodingInput(
+          WindowedValue.getValueOnlyCoder(overriddenTransform.getElementCoder()));
+      context.addInput(PropertyNames.PARALLEL_INPUT, context.getInput(transform));
     }
   }
 
