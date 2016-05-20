@@ -569,7 +569,7 @@ public class AvroSource<T> extends BlockBasedSource<T> {
     }
 
     @Override
-    public long getParallelismRemaining() {
+    public long getSplitPointsRemaining() {
       if (isDone()) {
         return 0;
       }
@@ -579,7 +579,7 @@ public class AvroSource<T> extends BlockBasedSource<T> {
           return 1;
         }
       }
-      return super.getParallelismRemaining();
+      return super.getSplitPointsRemaining();
     }
 
     /**
