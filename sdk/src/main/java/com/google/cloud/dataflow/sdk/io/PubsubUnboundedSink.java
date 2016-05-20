@@ -247,9 +247,8 @@ public class PubsubUnboundedSink<T> extends PTransform<PCollection<T>, PDone> {
      */
     private void publishBatch(List<OutgoingMessage> messages, int bytes)
         throws IOException {
-      long nowMsSinceEpoch = System.currentTimeMillis();
       int n = pubsubClient.publish(topic, messages);
-      checkState(n == messages.size(), "Attempted to publish %d messages but %d were successful",
+      checkState(n == messages.size(), "Attempted to publish %s messages but %s were successful",
                  messages.size(), n);
       batchCounter.addValue(1L);
       elementCounter.addValue((long) messages.size());

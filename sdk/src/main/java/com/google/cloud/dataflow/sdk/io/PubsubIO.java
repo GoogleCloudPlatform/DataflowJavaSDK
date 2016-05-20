@@ -31,14 +31,15 @@ import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.AfterWatermark;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
-import com.google.cloud.dataflow.sdk.util.PubsubApiaryClient;
 import com.google.cloud.dataflow.sdk.util.PubsubClient;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.IncomingMessage;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.OutgoingMessage;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.ProjectPath;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.SubscriptionPath;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.TopicPath;
+import com.google.cloud.dataflow.sdk.util.PubsubJsonClient;
 import com.google.cloud.dataflow.sdk.values.PCollection;
+import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
 import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.common.base.Strings;
@@ -70,7 +71,7 @@ public class PubsubIO {
   private static final Logger LOG = LoggerFactory.getLogger(PubsubIO.class);
 
   /** Factory for creating pubsub client to manage transport. */
-  private static final PubsubClient.PubsubClientFactory FACTORY = PubsubApiaryClient.FACTORY;
+  private static final PubsubClient.PubsubClientFactory FACTORY = PubsubJsonClient.FACTORY;
 
   /** The default {@link Coder} used to translate to/from Cloud Pub/Sub messages. */
   public static final Coder<String> DEFAULT_PUBSUB_CODER = StringUtf8Coder.of();
@@ -645,7 +646,9 @@ public class PubsubIO {
         if (boundedOutput) {
           return input.getPipeline().begin()
                       .apply(Create.of((Void) null)).setCoder(VoidCoder.of())
-                      .apply(ParDo.of(new PubsubBoundedReader())).setCoder(coder);
+                      .apply(ParDo.of(new PubsubReader()))
+                      .setCoder(coder)
+                      .setIsBoundedInternal(IsBounded.BOUNDED);
         } else {
           @Nullable ProjectPath projectPath =
               topic == null ? null : PubsubClient.projectPathFromId(topic.project);
@@ -724,7 +727,7 @@ public class PubsubIO {
        *
        * <p>Public so can be suppressed by runners.
        */
-      public class PubsubBoundedReader extends DoFn<Void, T> {
+      public class PubsubReader extends DoFn<Void, T> {
         private static final int DEFAULT_PULL_SIZE = 100;
         private static final int ACK_TIMEOUT_SEC = 60;
 
@@ -981,7 +984,7 @@ public class PubsubIO {
         }
         switch (input.isBounded()) {
           case BOUNDED:
-            input.apply(ParDo.of(new PubsubBoundedWriter()));
+            input.apply(ParDo.of(new PubsubWriter()));
             return PDone.in(input.getPipeline());
           case UNBOUNDED:
             return input.apply(new PubsubUnboundedSink<T>(
@@ -1030,7 +1033,7 @@ public class PubsubIO {
        *
        * <p>Public so can be suppressed by runners.
        */
-      public class PubsubBoundedWriter extends DoFn<T, Void> {
+      public class PubsubWriter extends DoFn<T, Void> {
         private static final int MAX_PUBLISH_BATCH_SIZE = 100;
         private transient List<OutgoingMessage> output;
         private transient PubsubClient pubsubClient;
