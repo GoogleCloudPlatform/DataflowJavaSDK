@@ -54,7 +54,7 @@ public abstract class PubsubClient implements Closeable {
         DataflowPipelineOptions options) throws IOException;
 
     /**
-     * Return the display name for this factory. Eg "Apiary", "gRPC".
+     * Return the display name for this factory. Eg "json", "gRPC".
      */
     String getKind();
   }
