@@ -44,7 +44,7 @@ import javax.annotation.Nullable;
  * to dynamically adapt based on runtime conditions.
  *     <ul>
  *       <li>Progress estimation ({@link BoundedReader#getFractionConsumed})
- *       <li>Tracking of parallelism, to determine with the current source can be split
+ *       <li>Tracking of parallelism, to determine whether the current source can be split
  *        ({@link BoundedReader#getSplitPointsConsumed()} and
  *        {@link BoundedReader#getSplitPointsRemaining()}).
  *       <li>Dynamic splitting of the current source ({@link BoundedReader#splitAtFraction}).
