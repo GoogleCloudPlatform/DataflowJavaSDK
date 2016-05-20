@@ -25,10 +25,13 @@ import static org.junit.Assert.assertThat;
 import com.google.api.client.testing.http.FixedClock;
 import com.google.api.client.util.Clock;
 import com.google.api.services.pubsub.model.PubsubMessage;
+import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
+import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.transforms.display.DataflowDisplayDataEvaluator;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayDataEvaluator;
 
+import org.hamcrest.Matchers;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.junit.Rule;
@@ -297,5 +300,27 @@ public class PubsubIOTest {
     Set<DisplayData> displayData = evaluator.displayDataForPrimitiveTransforms(read);
     assertThat("PubsubIO.Read should include the topic in its primitive display data",
         displayData, hasItem(hasDisplayItem("topic")));
+  }
+
+  @Test
+  public void testCreateSubscriptionNameFromProject() {
+    DataflowPipelineOptions options = PipelineOptionsFactory.as(DataflowPipelineOptions.class);
+    options.setProject("subscriptionProject");
+    String subscriptionName =
+        PubsubIO.createSubscriptionName("projects/topicProject/topics/foo", options);
+    // the subscription should be in 'subscriptionProject' because that is specified in the options
+    assertThat(subscriptionName,
+               Matchers.startsWith("projects/subscriptionProject/subscriptions/foo_dataflow_"));
+  }
+
+  @Test
+  public void testCreateSubscriptionNameFromTopic() {
+    DataflowPipelineOptions options = PipelineOptionsFactory.as(DataflowPipelineOptions.class);
+    options.setProject(null);
+    String subscriptionName =
+        PubsubIO.createSubscriptionName("projects/topicProject/topics/foo", options);
+    // the subscription should be in 'topicProject' because no project was specified
+    assertThat(subscriptionName,
+               Matchers.startsWith("projects/topicProject/subscriptions/foo_dataflow_"));
   }
 }

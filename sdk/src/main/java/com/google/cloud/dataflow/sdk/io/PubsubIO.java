@@ -50,6 +50,7 @@ import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
 import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
 
 import org.joda.time.Duration;
@@ -198,6 +199,23 @@ public class PubsubIO {
       builder.add(DisplayData.item("topic", topic.asPath())
           .withLabel("Pubsub Topic"));
     }
+  }
+
+  /**
+   * Creates the name of a new subscription based on the specified topic and dataflow options.
+   * If a project is specified in the options, the subscription will be created in that project.
+   * Otherwise, it will be created in the same project as the topic.
+   * @param topic the topic to base the subscription name on
+   * @param options the options to base the subscription name on
+   * @return the name of the subscription
+   */
+  @VisibleForTesting
+  protected static String createSubscriptionName(String topic, DataflowPipelineOptions options) {
+    String[] split = topic.split("/");
+    String project =
+        Strings.isNullOrEmpty(options.getProject()) ? split[1] : options.getProject();
+    return String.format("projects/%s/subscriptions/%s_dataflow_%d",
+                         project, split[3], new Random().nextLong());
   }
 
   /**
@@ -760,17 +778,15 @@ public class PubsubIO {
 
         @Override
         public void processElement(ProcessContext c) throws IOException {
-          Pubsub pubsubClient =
-              Transport.newPubsubClient(c.getPipelineOptions().as(DataflowPipelineOptions.class))
-                  .build();
+          DataflowPipelineOptions options =
+              c.getPipelineOptions().as(DataflowPipelineOptions.class);
+
+          Pubsub pubsubClient = Transport.newPubsubClient(options).build();
 
           String subscription;
           if (getSubscription() == null) {
             String topic = getTopic().asPath();
-            String[] split = topic.split("/");
-            subscription =
-                "projects/" + split[1] + "/subscriptions/" + split[3] + "_dataflow_"
-                + new Random().nextLong();
+            subscription = createSubscriptionName(topic, options);
             Subscription subInfo = new Subscription().setAckDeadlineSeconds(60).setTopic(topic);
             try {
               pubsubClient.projects().subscriptions().create(subscription, subInfo).execute();
