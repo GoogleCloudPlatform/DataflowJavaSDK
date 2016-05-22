@@ -31,13 +31,13 @@ import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.AfterWatermark;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
-import com.google.cloud.dataflow.sdk.util.PubsubApiaryClient;
 import com.google.cloud.dataflow.sdk.util.PubsubClient;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.IncomingMessage;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.OutgoingMessage;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.ProjectPath;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.SubscriptionPath;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.TopicPath;
+import com.google.cloud.dataflow.sdk.util.PubsubJsonClient;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.PInput;
@@ -70,7 +70,7 @@ public class PubsubIO {
   private static final Logger LOG = LoggerFactory.getLogger(PubsubIO.class);
 
   /** Factory for creating pubsub client to manage transport. */
-  private static final PubsubClient.PubsubClientFactory FACTORY = PubsubApiaryClient.FACTORY;
+  private static final PubsubClient.PubsubClientFactory FACTORY = PubsubJsonClient.FACTORY;
 
   /** The default {@link Coder} used to translate to/from Cloud Pub/Sub messages. */
   public static final Coder<String> DEFAULT_PUBSUB_CODER = StringUtf8Coder.of();
