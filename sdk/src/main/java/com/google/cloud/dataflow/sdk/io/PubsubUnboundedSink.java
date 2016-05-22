@@ -87,8 +87,6 @@ import javax.annotation.Nullable;
  * <p>NOTE: This is not the implementation used when running on the Google Cloud Dataflow service.
  */
 public class PubsubUnboundedSink<T> extends PTransform<PCollection<T>, PDone> {
-  private static final Logger LOG = LoggerFactory.getLogger(PubsubUnboundedSink.class);
-
   /**
    * Default maximum number of messages per publish.
    */
