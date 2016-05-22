@@ -423,6 +423,7 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
           pc.isBounded());
       return outputT;
     } else if (PubsubIO.Read.Bound.class.equals(transform.getClass())
+               && options.isStreaming()
                && (options.getExperiments() == null
                    || !options.getExperiments().contains("enable_custom_pubsub_source"))) {
       // casting to wildcard
