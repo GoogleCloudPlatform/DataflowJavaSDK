@@ -19,14 +19,14 @@ import com.google.cloud.dataflow.sdk.io.UnboundedSource.CheckpointMark;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import io.FirebaseSource.FirebaseReader;
+
 import org.joda.time.Instant;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.PriorityBlockingQueue;
-
-import io.FirebaseSource.FirebaseReader;
 
 /**
  * Maintains a {@link PriorityBlockingQueue} to store the {@link Record}s created by
