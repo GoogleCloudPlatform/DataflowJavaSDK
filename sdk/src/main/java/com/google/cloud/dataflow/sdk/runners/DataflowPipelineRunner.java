@@ -471,7 +471,9 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     // types are matched at compile time
     @SuppressWarnings("unchecked")
     PubsubIO.Read.Bound<T> transform = (PubsubIO.Read.Bound<T>) initialTransform;
-    return super.apply(new StreamingPubsubIORead<T>(this, transform), input);
+    return PCollection.<T>createPrimitiveOutputInternal(
+        input.getPipeline(), WindowingStrategy.globalDefault(), IsBounded.UNBOUNDED)
+        .setCoder(transform.getCoder());
   }
 
   private <T> PCollection<T> applyWindow(
@@ -2569,45 +2571,13 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
   // PubsubIO translations
   // ================================================================================
 
-  /**
-   * Suppress application of {@link PubsubUnboundedSource#apply} in streaming mode so that we
-   * can instead defer to Windmill's implementation.
-   */
-  private static class StreamingPubsubIORead<T> extends PTransform<PInput, PCollection<T>> {
-    private final PubsubIO.Read.Bound<T> transform;
-
-    /**
-     * Builds an instance of this class from the overridden transform.
-     */
-    public StreamingPubsubIORead(
-        DataflowPipelineRunner runner, PubsubIO.Read.Bound<T> transform) {
-      this.transform = transform;
-    }
-
-    PubsubIO.Read.Bound<T> getOverriddenTransform() {
-      return transform;
-    }
-
-    @Override
-    public PCollection<T> apply(PInput input) {
-      return PCollection.<T>createPrimitiveOutputInternal(
-          input.getPipeline(), WindowingStrategy.globalDefault(), IsBounded.UNBOUNDED)
-          .setCoder(transform.getCoder());
-    }
-
-    @Override
-    protected String getKindString() {
-      return "StreamingPubsubIORead";
-    }
-
-    static {
-      DataflowPipelineTranslator.registerTransformTranslator(
-          PubsubIO.Read.Bound.class, new StreamingPubsubIOReadTranslator());
-    }
+  static {
+    DataflowPipelineTranslator.registerTransformTranslator(
+        PubsubIO.Read.Bound.class, new StreamingPubsubIOReadTranslator());
   }
 
   /**
-   * Rewrite {@link StreamingPubsubIORead} to the appropriate internal node.
+   * Rewrite {@link PubsubIO.Read.Bound} to the appropriate internal node.
    */
   private static class StreamingPubsubIOReadTranslator implements
       TransformTranslator<PubsubIO.Read.Bound> {
