@@ -25,10 +25,12 @@ import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.RemoveDuplicates;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.IntervalBoundedExponentialBackOff;
 import com.google.cloud.dataflow.sdk.util.ValueWithRecordId;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PInput;
+import com.google.common.util.concurrent.Uninterruptibles;
 
 import org.joda.time.Duration;
 import org.joda.time.Instant;
@@ -37,7 +39,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
-
+import java.util.concurrent.TimeUnit;
 
 /**
  * {@link PTransform} that reads a bounded amount of data from an {@link UnboundedSource},
@@ -102,6 +104,19 @@ class BoundedReadFromUnboundedSource<T> extends PTransform<PInput, PCollection<T
   @Override
   public String getKindString() {
     return "Read(" + approximateSimpleName(source.getClass()) + ")";
+  }
+
+  @Override
+  public void populateDisplayData(DisplayData.Builder builder) {
+    // We explicitly do not register base-class data, instead we use the delegate inner source.
+    builder
+        .add(DisplayData.item("source", source.getClass())
+          .withLabel("Read Source"))
+        .addIfNotDefault(DisplayData.item("maxRecords", maxNumRecords)
+          .withLabel("Maximum Read Records"), Long.MAX_VALUE)
+        .addIfNotNull(DisplayData.item("maxReadTime", maxReadTime)
+          .withLabel("Maximum Read Time"))
+        .include(source);
   }
 
   private static class UnboundedToBoundedSourceAdapter<T>
@@ -234,9 +249,7 @@ class BoundedReadFromUnboundedSource<T> extends PTransform<PInput, PCollection<T
           if (reader.advance()) {
             return true;
           }
-          try {
-            Thread.sleep(nextSleep);
-          } catch (InterruptedException e) {}
+          Uninterruptibles.sleepUninterruptibly(nextSleep, TimeUnit.MILLISECONDS);
           nextSleep = backoff.nextBackOffMillis();
         }
         finalizeCheckpoint();

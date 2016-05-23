@@ -19,6 +19,7 @@ package com.google.cloud.dataflow.sdk.runners;
 import static com.google.cloud.dataflow.sdk.util.WindowedValue.valueInGlobalWindow;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.startsWith;
 import static org.hamcrest.collection.IsIterableContainingInOrder.contains;
@@ -57,6 +58,7 @@ import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner.BatchViewAsList;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner.BatchViewAsMap;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner.BatchViewAsMultimap;
+import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner.BatchViewAsSingleton;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner.TransformedMap;
 import com.google.cloud.dataflow.sdk.runners.dataflow.TestCountingSource;
 import com.google.cloud.dataflow.sdk.runners.worker.IsmFormat;
@@ -120,6 +122,7 @@ import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Tests for DataflowPipelineRunner.
@@ -138,6 +141,7 @@ public class DataflowPipelineRunnerTest {
   private static void assertValidJob(Job job) {
     assertNull(job.getId());
     assertNull(job.getCurrentState());
+    assertTrue(Pattern.matches("[a-z]([-a-z0-9]*[a-z0-9])?", job.getName()));
   }
 
   private DataflowPipeline buildDataflowPipeline(DataflowPipelineOptions options) {
@@ -166,11 +170,14 @@ public class DataflowPipelineRunnerTest {
     when(mockJobs.list(eq(PROJECT_ID))).thenReturn(mockList);
     when(mockList.setPageToken(anyString())).thenReturn(mockList);
     when(mockList.execute())
-        .thenReturn(new ListJobsResponse().setJobs(
-            Arrays.asList(new Job()
-                              .setName("oldJobName")
-                              .setId("oldJobId")
-                              .setCurrentState("JOB_STATE_RUNNING"))));
+        .thenReturn(
+            new ListJobsResponse()
+                .setJobs(
+                    Arrays.asList(
+                        new Job()
+                            .setName("oldjobname")
+                            .setId("oldJobId")
+                            .setCurrentState("JOB_STATE_RUNNING"))));
 
     Job resultJob = new Job();
     resultJob.setId("newid");
@@ -217,6 +224,17 @@ public class DataflowPipelineRunnerTest {
     options.setGcsUtil(buildMockGcsUtil(true /* bucket exists */));
     options.setGcpCredential(new TestCredential());
     return options;
+  }
+
+  @Test
+  public void testFromOptionsWithUppercaseConvertsToLowercase() throws Exception {
+    String mixedCase = "ThisJobNameHasMixedCase";
+    ArgumentCaptor<Job> jobCaptor = ArgumentCaptor.forClass(Job.class);
+    DataflowPipelineOptions options = buildPipelineOptions(jobCaptor);
+    options.setJobName(mixedCase);
+
+    DataflowPipelineRunner runner = DataflowPipelineRunner.fromOptions(options);
+    assertThat(options.getJobName(), equalTo(mixedCase.toLowerCase()));
   }
 
   @Test
@@ -271,7 +289,7 @@ public class DataflowPipelineRunnerTest {
   @Test
   public void testUpdateNonExistentPipeline() throws IOException {
     thrown.expect(IllegalArgumentException.class);
-    thrown.expectMessage("Could not find running job named badJobName");
+    thrown.expectMessage("Could not find running job named badjobname");
 
     DataflowPipelineOptions options = buildPipelineOptions();
     options.setUpdate(true);
@@ -649,11 +667,8 @@ public class DataflowPipelineRunnerTest {
     options.setProject("foo-project");
 
     thrown.expect(IllegalArgumentException.class);
-    thrown.expectMessage("Missing required value for group");
-    thrown.expectMessage(DataflowPipelineOptions.DATAFLOW_STORAGE_LOCATION);
-    thrown.expectMessage("getStagingLocation");
-    thrown.expectMessage("getTempLocation");
-
+    thrown.expectMessage(
+        "Missing required value: at least one of tempLocation or stagingLocation must be set.");
     DataflowPipelineRunner.fromOptions(options);
   }
 
@@ -849,7 +864,8 @@ public class DataflowPipelineRunnerTest {
     options.setTempLocation("gs://test/temp/location");
     options.setGcpCredential(new TestCredential());
     options.setPathValidatorClass(NoopPathValidator.class);
-    assertEquals("DataflowPipelineRunner#TestJobName",
+    assertEquals(
+        "DataflowPipelineRunner#testjobname",
         DataflowPipelineRunner.fromOptions(options).toString());
   }
 
@@ -930,6 +946,44 @@ public class DataflowPipelineRunnerTest {
   @Test
   public void testTextIOSinkUnsupportedInStreaming() throws Exception {
     testUnsupportedSink(TextIO.Write.to("foo"), "TextIO.Write", true);
+  }
+
+  @Test
+  public void testBatchViewAsSingletonToIsmRecord() throws Exception {
+    DoFnTester<KV<Integer, Iterable<KV<GlobalWindow, WindowedValue<String>>>>,
+               IsmRecord<WindowedValue<String>>> doFnTester =
+               DoFnTester.of(
+                   new BatchViewAsSingleton.IsmRecordForSingularValuePerWindowDoFn
+                   <String, GlobalWindow>(GlobalWindow.Coder.INSTANCE));
+
+    assertThat(
+        doFnTester.processBatch(
+            ImmutableList.of(KV.<Integer, Iterable<KV<GlobalWindow, WindowedValue<String>>>>of(
+                0, ImmutableList.of(KV.of(GlobalWindow.INSTANCE, valueInGlobalWindow("a")))))),
+        contains(IsmRecord.of(ImmutableList.of(GlobalWindow.INSTANCE), valueInGlobalWindow("a"))));
+  }
+
+  @Test
+  public void testBatchViewAsSingletonToIsmRecordWithMultipleValuesThrowsException()
+      throws Exception {
+    DoFnTester<KV<Integer, Iterable<KV<GlobalWindow, WindowedValue<String>>>>,
+    IsmRecord<WindowedValue<String>>> doFnTester =
+    DoFnTester.of(
+        new BatchViewAsSingleton.IsmRecordForSingularValuePerWindowDoFn
+        <String, GlobalWindow>(GlobalWindow.Coder.INSTANCE));
+
+    try {
+      doFnTester.processBatch(
+          ImmutableList.of(KV.<Integer, Iterable<KV<GlobalWindow, WindowedValue<String>>>>of(
+              0, ImmutableList.of(
+                  KV.of(GlobalWindow.INSTANCE, valueInGlobalWindow("a")),
+                  KV.of(GlobalWindow.INSTANCE, valueInGlobalWindow("b"))))));
+      fail("Expected UserCodeException");
+    } catch (UserCodeException e) {
+      assertTrue(e.getCause() instanceof IllegalStateException);
+      IllegalStateException rootCause = (IllegalStateException) e.getCause();
+      assertThat(rootCause.getMessage(), containsString("found for singleton within window"));
+    }
   }
 
   @Test

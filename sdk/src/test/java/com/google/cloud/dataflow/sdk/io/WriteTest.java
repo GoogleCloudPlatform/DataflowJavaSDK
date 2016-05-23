@@ -14,6 +14,9 @@
 
 package com.google.cloud.dataflow.sdk.io;
 
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.includesDisplayDataFrom;
+
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
@@ -32,8 +35,17 @@ import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactoryTest.TestPipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.Create;
+import com.google.cloud.dataflow.sdk.transforms.DoFn;
+import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
+import com.google.cloud.dataflow.sdk.transforms.MapElements;
+import com.google.cloud.dataflow.sdk.transforms.PTransform;
+import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.cloud.dataflow.sdk.transforms.SimpleFunction;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.FixedWindows;
+import com.google.cloud.dataflow.sdk.transforms.windowing.Sessions;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
+import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.common.base.MoreObjects;
 
@@ -50,6 +62,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Tests for the Write PTransform.
@@ -57,7 +70,47 @@ import java.util.UUID;
 @RunWith(JUnit4.class)
 public class WriteTest {
   // Static store that can be accessed within the writer
-  static List<String> sinkContents = new ArrayList<>();
+  private static List<String> sinkContents = new ArrayList<>();
+
+  private static final MapElements<String, String> IDENTITY_MAP =
+      MapElements.via(new SimpleFunction<String, String>() {
+        @Override
+        public String apply(String input) {
+          return input;
+        }
+      });
+
+  private static class WindowAndReshuffle<T> extends PTransform<PCollection<T>, PCollection<T>> {
+    private final Window.Bound<T> window;
+    public WindowAndReshuffle(Window.Bound<T> window) {
+      this.window = window;
+    }
+
+    private static class AddArbitraryKey<T> extends DoFn<T, KV<Integer, T>> {
+      @Override
+      public void processElement(ProcessContext c) throws Exception {
+        c.output(KV.of(ThreadLocalRandom.current().nextInt(), c.element()));
+      }
+    }
+
+    private static class RemoveArbitraryKey<T> extends DoFn<KV<Integer, Iterable<T>>, T> {
+      @Override
+      public void processElement(ProcessContext c) throws Exception {
+        for (T s : c.element().getValue()) {
+          c.output(s);
+        }
+      }
+    }
+
+    @Override
+    public PCollection<T> apply(PCollection<T> input) {
+      return input
+          .apply(window)
+          .apply(ParDo.of(new AddArbitraryKey<T>()))
+          .apply(GroupByKey.<Integer, T>create())
+          .apply(ParDo.of(new RemoveArbitraryKey<T>()));
+    }
+  }
 
   /**
    * Test a Write transform with a PCollection of elements.
@@ -66,7 +119,7 @@ public class WriteTest {
   public void testWrite() {
     List<String> inputs = Arrays.asList("Critical canary", "Apprehensive eagle",
         "Intimidating pigeon", "Pedantic gull", "Frisky finch");
-    runWrite(inputs, /* not windowed */ false);
+    runWrite(inputs, IDENTITY_MAP);
   }
 
   /**
@@ -75,7 +128,7 @@ public class WriteTest {
   @Test
   public void testWriteWithEmptyPCollection() {
     List<String> inputs = new ArrayList<>();
-    runWrite(inputs, /* not windowed */ false);
+    runWrite(inputs, IDENTITY_MAP);
   }
 
   /**
@@ -85,15 +138,47 @@ public class WriteTest {
   public void testWriteWindowed() {
     List<String> inputs = Arrays.asList("Critical canary", "Apprehensive eagle",
         "Intimidating pigeon", "Pedantic gull", "Frisky finch");
-    runWrite(inputs, /* windowed */ true);
+    runWrite(
+        inputs, new WindowAndReshuffle(Window.<String>into(FixedWindows.of(Duration.millis(2)))));
   }
+
+  /**
+   * Test a Write with sessions.
+   */
+  @Test
+  public void testWriteWithSessions() {
+    List<String> inputs = Arrays.asList("Critical canary", "Apprehensive eagle",
+        "Intimidating pigeon", "Pedantic gull", "Frisky finch");
+
+    runWrite(
+        inputs,
+        new WindowAndReshuffle(Window.<String>into(Sessions.withGapDuration(Duration.millis(1)))));
+  }
+
+  @Test
+  public void testDisplayData() {
+    TestSink sink = new TestSink() {
+      @Override
+      public void populateDisplayData(DisplayData.Builder builder) {
+        builder.add(DisplayData.item("foo", "bar"));
+      }
+    };
+    Write.Bound<String> write = Write.to(sink);
+    DisplayData displayData = DisplayData.from(write);
+
+    assertThat(displayData, hasDisplayItem("sink", sink.getClass()));
+    assertThat(displayData, includesDisplayDataFrom(sink));
+  }
+
+
 
   /**
    * Performs a Write transform and verifies the Write transform calls the appropriate methods on
    * a test sink in the correct order, as well as verifies that the elements of a PCollection are
    * written to the sink.
    */
-  public void runWrite(List<String> inputs, boolean windowed) {
+  private static void runWrite(
+      List<String> inputs, PTransform<PCollection<String>, PCollection<String>> transform) {
     // Flag to validate that the pipeline options are passed to the Sink
     String[] args = {"--testFlag=test_value"};
     PipelineOptions options = PipelineOptionsFactory.fromArgs(args).as(WriteOptions.class);
@@ -102,21 +187,16 @@ public class WriteTest {
     // Clear the sink's contents.
     sinkContents.clear();
 
-    // Construct the input PCollection and test Sink.
-    PCollection<String> input;
-    if (windowed) {
-      List<Long> timestamps = new ArrayList<>();
-      for (long i = 0; i < inputs.size(); i++) {
-        timestamps.add(i + 1);
-      }
-      input = p.apply(Create.timestamped(inputs, timestamps).withCoder(StringUtf8Coder.of()))
-               .apply(Window.<String>into(FixedWindows.of(new Duration(2))));
-    } else {
-      input = p.apply(Create.of(inputs).withCoder(StringUtf8Coder.of()));
+    // Prepare timestamps for the elements.
+    List<Long> timestamps = new ArrayList<>();
+    for (long i = 0; i < inputs.size(); i++) {
+      timestamps.add(i + 1);
     }
-    TestSink sink = new TestSink();
 
-    input.apply(Write.to(sink));
+    TestSink sink = new TestSink();
+    p.apply(Create.timestamped(inputs, timestamps).withCoder(StringUtf8Coder.of()))
+     .apply(transform)
+     .apply(Write.to(sink));
 
     p.run();
     assertThat(sinkContents, containsInAnyOrder(inputs.toArray()));

@@ -76,6 +76,13 @@ page at http://checkstyle.sourceforge.net/config.html -->
     <property name="severity" value="error"/>
   </module>
 
+  <module name="RegexpSingleline">
+    <!-- Checks that Throwables.propagate is not used.  -->
+    <property name="format" value="Throwables.propagate\(" />
+    <property name="message" value='Throwables.propagate is deprecated.' />
+    <property name="severity" value="error"/>
+  </module>
+
   <!-- Allow use of comment to suppress javadocstyle -->
   <module name="SuppressionCommentFilter">
     <property name="offCommentFormat" value="CHECKSTYLE.OFF\: ([\w\|]+)"/>
@@ -120,6 +127,10 @@ page at http://checkstyle.sourceforge.net/config.html -->
 
     <module name="AvoidStarImport">
       <property name="severity" value="error"/>
+    </module>
+
+    <module name="IllegalImport">
+      <property name="illegalPkgs" value="com.google.api.client.repackaged, org.apache.beam"/>
     </module>
 
     <module name="UnusedImports">
@@ -396,6 +407,16 @@ page at http://checkstyle.sourceforge.net/config.html -->
       <property name="tokens" value="SEMI, DOT, POST_DEC, POST_INC"/>
       <property name="allowLineBreaks" value="true"/>
       <property name="severity" value="error"/>
+    </module>
+
+    <module name="OperatorWrap">
+      <!-- Checks that operators like + and ? appear at newlines rather than
+           at the end of the previous line.
+      -->
+      <property name="option" value="NL"/>
+      <property name="tokens" value="BAND, BOR, BSR, BXOR, DIV, EQUAL,
+        GE, GT, LAND, LE, LITERAL_INSTANCEOF, LOR, LT, MINUS, MOD,
+        NOT_EQUAL, PLUS, QUESTION, SL, SR, STAR "/>
     </module>
 
     <module name="ParenPad">

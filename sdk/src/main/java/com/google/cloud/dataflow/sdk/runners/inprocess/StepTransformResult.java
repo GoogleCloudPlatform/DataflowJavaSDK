@@ -15,10 +15,13 @@
  */
 package com.google.cloud.dataflow.sdk.runners.inprocess;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.cloud.dataflow.sdk.runners.inprocess.InMemoryWatermarkManager.TimerUpdate;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.UncommittedBundle;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
+import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.common.CounterSet;
 import com.google.cloud.dataflow.sdk.util.state.CopyOnAccessInMemoryStateInternals;
 import com.google.common.base.MoreObjects;
@@ -28,35 +31,45 @@ import org.joda.time.Instant;
 
 import java.util.Collection;
 
+import javax.annotation.Nullable;
+
 /**
  * An immutable {@link InProcessTransformResult}.
  */
 public class StepTransformResult implements InProcessTransformResult {
   private final AppliedPTransform<?, ?, ?> transform;
   private final Iterable<? extends UncommittedBundle<?>> bundles;
-  private final CopyOnAccessInMemoryStateInternals<?> state;
+  private final Iterable<? extends WindowedValue<?>> unprocessedElements;
+  @Nullable private final CopyOnAccessInMemoryStateInternals<?> state;
   private final TimerUpdate timerUpdate;
-  private final CounterSet counters;
+  @Nullable private final CounterSet counters;
   private final Instant watermarkHold;
 
   private StepTransformResult(
       AppliedPTransform<?, ?, ?> transform,
       Iterable<? extends UncommittedBundle<?>> outputBundles,
+      Iterable<? extends WindowedValue<?>> unprocessedElements,
       CopyOnAccessInMemoryStateInternals<?> state,
       TimerUpdate timerUpdate,
       CounterSet counters,
       Instant watermarkHold) {
-    this.transform = transform;
-    this.bundles = outputBundles;
+    this.transform = checkNotNull(transform);
+    this.bundles = checkNotNull(outputBundles);
+    this.unprocessedElements = checkNotNull(unprocessedElements);
     this.state = state;
-    this.timerUpdate = timerUpdate;
+    this.timerUpdate = checkNotNull(timerUpdate);
     this.counters = counters;
-    this.watermarkHold = watermarkHold;
+    this.watermarkHold = checkNotNull(watermarkHold);
   }
 
   @Override
   public Iterable<? extends UncommittedBundle<?>> getOutputBundles() {
     return bundles;
+  }
+
+  @Override
+  public Iterable<? extends WindowedValue<?>> getUnprocessedElements() {
+    return unprocessedElements;
   }
 
   @Override
@@ -74,6 +87,7 @@ public class StepTransformResult implements InProcessTransformResult {
     return watermarkHold;
   }
 
+  @Nullable
   @Override
   public CopyOnAccessInMemoryStateInternals<?> getState() {
     return state;
@@ -105,6 +119,7 @@ public class StepTransformResult implements InProcessTransformResult {
   public static class Builder {
     private final AppliedPTransform<?, ?, ?> transform;
     private final ImmutableList.Builder<UncommittedBundle<?>> bundlesBuilder;
+    private final ImmutableList.Builder<WindowedValue<?>> unprocessedElementsBuilder;
     private CopyOnAccessInMemoryStateInternals<?> state;
     private TimerUpdate timerUpdate;
     private CounterSet counters;
@@ -114,6 +129,7 @@ public class StepTransformResult implements InProcessTransformResult {
       this.transform = transform;
       this.watermarkHold = watermarkHold;
       this.bundlesBuilder = ImmutableList.builder();
+      this.unprocessedElementsBuilder = ImmutableList.builder();
       this.timerUpdate = TimerUpdate.builder(null).build();
     }
 
@@ -121,6 +137,7 @@ public class StepTransformResult implements InProcessTransformResult {
       return new StepTransformResult(
           transform,
           bundlesBuilder.build(),
+          unprocessedElementsBuilder.build(),
           state,
           timerUpdate,
           counters,
@@ -139,6 +156,11 @@ public class StepTransformResult implements InProcessTransformResult {
 
     public Builder withTimerUpdate(TimerUpdate timerUpdate) {
       this.timerUpdate = timerUpdate;
+      return this;
+    }
+
+    public Builder addUnprocessedElements(Iterable<? extends WindowedValue<?>> unprocessed) {
+      unprocessedElementsBuilder.addAll(unprocessed);
       return this;
     }
 

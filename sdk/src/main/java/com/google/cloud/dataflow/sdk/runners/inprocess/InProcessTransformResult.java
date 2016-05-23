@@ -20,6 +20,7 @@ import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.U
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
+import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.common.CounterSet;
 import com.google.cloud.dataflow.sdk.util.state.CopyOnAccessInMemoryStateInternals;
 
@@ -43,6 +44,12 @@ public interface InProcessTransformResult {
   Iterable<? extends UncommittedBundle<?>> getOutputBundles();
 
   /**
+   * Returns elements that were provided to the {@link TransformEvaluator} as input but were not
+   * processed.
+   */
+  Iterable<? extends WindowedValue<?>> getUnprocessedElements();
+
+  /**
    * Returns the {@link CounterSet} used by this {@link PTransform}, or null if this transform did
    * not use a {@link CounterSet}.
    */
@@ -61,6 +68,7 @@ public interface InProcessTransformResult {
    *
    * If this evaluation did not access state, this may return null.
    */
+  @Nullable
   CopyOnAccessInMemoryStateInternals<?> getState();
 
   /**
@@ -71,5 +79,4 @@ public interface InProcessTransformResult {
    * <p>If this evaluation did not add or remove any timers, returns an empty TimerUpdate.
    */
   TimerUpdate getTimerUpdate();
-
 }

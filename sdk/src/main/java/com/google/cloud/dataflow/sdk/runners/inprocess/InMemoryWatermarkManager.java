@@ -15,6 +15,7 @@
  */
 package com.google.cloud.dataflow.sdk.runners.inprocess;
 
+import com.google.auto.value.AutoValue;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.CommittedBundle;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
@@ -27,8 +28,11 @@ import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PValue;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
 import com.google.common.base.MoreObjects;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -51,6 +55,7 @@ import java.util.Objects;
 import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.annotation.Nullable;
@@ -205,7 +210,7 @@ public class InMemoryWatermarkManager {
 
     public AppliedPTransformInputWatermark(Collection<? extends Watermark> inputWatermarks) {
       this.inputWatermarks = inputWatermarks;
-      this.pendingElements = TreeMultiset.create(PENDING_ELEMENT_COMPARATOR);
+      this.pendingElements = TreeMultiset.create(new WindowedValueByTimestampComparator());
       this.objectTimers = new HashMap<>();
       currentWatermark = new AtomicReference<>(BoundedWindow.TIMESTAMP_MIN_VALUE);
     }
@@ -463,15 +468,16 @@ public class InMemoryWatermarkManager {
     }
 
     private synchronized void updateTimers(TimerUpdate update) {
-      for (TimerData completedTimer : update.completedTimers) {
-        pendingTimers.remove(completedTimer);
-      }
       Map<TimeDomain, NavigableSet<TimerData>> timerMap = timerMap(update.key);
       for (TimerData addedTimer : update.setTimers) {
         NavigableSet<TimerData> timerQueue = timerMap.get(addedTimer.getDomain());
         if (timerQueue != null) {
           timerQueue.add(addedTimer);
         }
+      }
+
+      for (TimerData completedTimer : update.completedTimers) {
+        pendingTimers.remove(completedTimer);
       }
       for (TimerData deletedTimer : update.deletedTimers) {
         NavigableSet<TimerData> timerQueue = timerMap.get(deletedTimer.getDomain());
@@ -619,12 +625,17 @@ public class InMemoryWatermarkManager {
   private static final Ordering<Instant> INSTANT_ORDERING = Ordering.natural();
 
   /**
-   * An ordering that compares windowed values by timestamp, then arbitrarily. This ensures that
-   * {@link WindowedValue WindowedValues} will be sorted by timestamp, while two different
-   * {@link WindowedValue WindowedValues} with the same timestamp are not considered equal.
+   * A function that takes a WindowedValue and returns the exploded representation of that
+   * {@link WindowedValue}.
    */
-  private static final Ordering<WindowedValue<? extends Object>> PENDING_ELEMENT_COMPARATOR =
-      (new WindowedValueByTimestampComparator()).compound(Ordering.arbitrary());
+  private static final Function<WindowedValue<?>, ? extends Iterable<? extends WindowedValue<?>>>
+      EXPLODE_WINDOWS_FN =
+          new Function<WindowedValue<?>, Iterable<? extends WindowedValue<?>>>() {
+            @Override
+            public Iterable<? extends WindowedValue<?>> apply(WindowedValue<?> input) {
+              return input.explodeWindows();
+            }
+          };
 
   /**
    * For each (Object, PriorityQueue) pair in the provided map, remove each Timer that is before the
@@ -674,6 +685,17 @@ public class InMemoryWatermarkManager {
   private final Map<AppliedPTransform<?, ?, ?>, TransformWatermarks> transformToWatermarks;
 
   /**
+   * A queue of pending updates to the state of this {@link InMemoryWatermarkManager}.
+   */
+  private final ConcurrentLinkedQueue<PendingWatermarkUpdate> pendingUpdates;
+
+  /**
+   * A queue of pending {@link AppliedPTransform AppliedPTransforms} that have potentially
+   * stale data.
+   */
+  private final ConcurrentLinkedQueue<AppliedPTransform<?, ?, ?>> pendingRefreshes;
+
+  /**
    * Creates a new {@link InMemoryWatermarkManager}. All watermarks within the newly created
    * {@link InMemoryWatermarkManager} start at {@link BoundedWindow#TIMESTAMP_MIN_VALUE}, the
    * minimum watermark, with no watermark holds or pending elements.
@@ -695,6 +717,8 @@ public class InMemoryWatermarkManager {
       Map<PValue, Collection<AppliedPTransform<?, ?, ?>>> consumers) {
     this.clock = clock;
     this.consumers = consumers;
+    this.pendingUpdates = new ConcurrentLinkedQueue<>();
+    this.pendingRefreshes = new ConcurrentLinkedQueue<>();
 
     transformToWatermarks = new HashMap<>();
 
@@ -788,61 +812,108 @@ public class InMemoryWatermarkManager {
    * </pre>.
    *
    * @param completed the input that has completed
-   * @param transform the transform that has completed processing the input
-   * @param outputs the bundles the transform has output
+   * @param timerUpdate the timers that were added, removed, and completed as part of producing
+   *                    this update
+   * @param result the result that was produced by processing the input
    * @param earliestHold the earliest watermark hold in the transform's state. {@code null} if there
    *                     is no hold
    */
   public void updateWatermarks(
       @Nullable CommittedBundle<?> completed,
-      AppliedPTransform<?, ?, ?> transform,
       TimerUpdate timerUpdate,
-      Iterable<? extends CommittedBundle<?>> outputs,
-      @Nullable Instant earliestHold) {
-    updatePending(completed, transform, timerUpdate, outputs);
-    TransformWatermarks transformWms = transformToWatermarks.get(transform);
-    transformWms.setEventTimeHold(completed == null ? null : completed.getKey(), earliestHold);
-    refreshWatermarks(transform);
-  }
-
-  private void refreshWatermarks(AppliedPTransform<?, ?, ?> transform) {
-    TransformWatermarks myWatermarks = transformToWatermarks.get(transform);
-    WatermarkUpdate updateResult = myWatermarks.refresh();
-    if (updateResult.isAdvanced()) {
-      for (PValue outputPValue : transform.getOutput().expand()) {
-        Collection<AppliedPTransform<?, ?, ?>> downstreamTransforms = consumers.get(outputPValue);
-        if (downstreamTransforms != null) {
-          for (AppliedPTransform<?, ?, ?> downstreamTransform : downstreamTransforms) {
-            refreshWatermarks(downstreamTransform);
-          }
-        }
-      }
-    }
+      CommittedResult result,
+      Instant earliestHold) {
+    pendingUpdates.offer(PendingWatermarkUpdate.create(completed,
+        timerUpdate,
+        result,
+        earliestHold));
   }
 
   /**
-   * Removes all of the completed Timers from the collection of pending timers, adds all new timers,
-   * and removes all deleted timers. Removes all elements consumed by the input bundle from the
-   * {@link PTransform PTransforms} collection of pending elements, and adds all elements produced
-   * by the {@link PTransform} to the pending queue of each consumer.
+   * Applies all pending updates to this {@link InMemoryWatermarkManager}, causing the pending state
+   * of all {@link TransformWatermarks} to be advanced as far as possible.
+   */
+  private void applyPendingUpdates() {
+    Set<AppliedPTransform<?, ?, ?>> updatedTransforms = new HashSet<>();
+    PendingWatermarkUpdate pending = pendingUpdates.poll();
+    while (pending != null) {
+      applyPendingUpdate(pending);
+      updatedTransforms.add(pending.getTransform());
+      pending = pendingUpdates.poll();
+    }
+    pendingRefreshes.addAll(updatedTransforms);
+  }
+
+  private void applyPendingUpdate(PendingWatermarkUpdate pending) {
+    CommittedResult result = pending.getResult();
+    AppliedPTransform transform = result.getTransform();
+    CommittedBundle<?> inputBundle = pending.getInputBundle();
+
+    updatePending(inputBundle, pending.getTimerUpdate(), result);
+
+    TransformWatermarks transformWms = transformToWatermarks.get(transform);
+    transformWms.setEventTimeHold(inputBundle == null ? null : inputBundle.getKey(),
+        pending.getEarliestHold());
+  }
+
+  /**
+   * First adds all produced elements to the queue of pending elements for each consumer, then adds
+   * all pending timers to the collection of pending timers, then removes all completed and deleted
+   * timers from the collection of pending timers, then removes all completed elements from the
+   * pending queue of the transform.
+   *
+   * <p>It is required that all newly pending elements are added to the queue of pending elements
+   * for each consumer prior to the completed elements being removed, as doing otherwise could cause
+   * a Watermark to appear in a state in which the upstream (completed) element does not hold the
+   * watermark but the element it produced is not yet pending. This can cause the watermark to
+   * erroneously advance.
    */
   private void updatePending(
       CommittedBundle<?> input,
-      AppliedPTransform<?, ?, ?> transform,
       TimerUpdate timerUpdate,
-      Iterable<? extends CommittedBundle<?>> outputs) {
-    TransformWatermarks completedTransform = transformToWatermarks.get(transform);
-    completedTransform.updateTimers(timerUpdate);
-    if (input != null) {
-      completedTransform.removePending(input);
-    }
-
-    for (CommittedBundle<?> bundle : outputs) {
+      CommittedResult result) {
+    // Newly pending elements must be added before completed elements are removed, as the two
+    // do not share a Mutex within this call and thus can be interleaved with external calls to
+    // refresh.
+    for (CommittedBundle<?> bundle : result.getOutputs()) {
       for (AppliedPTransform<?, ?, ?> consumer : consumers.get(bundle.getPCollection())) {
         TransformWatermarks watermarks = transformToWatermarks.get(consumer);
         watermarks.addPending(bundle);
       }
     }
+
+    TransformWatermarks completedTransform = transformToWatermarks.get(result.getTransform());
+    if (input != null) {
+      // Add the unprocessed inputs
+      completedTransform.addPending(result.getUnprocessedInputs());
+    }
+    completedTransform.updateTimers(timerUpdate);
+    if (input != null) {
+      completedTransform.removePending(input);
+    }
+  }
+
+  /**
+   * Refresh the watermarks contained within this {@link InMemoryWatermarkManager}, causing all
+   * watermarks to be advanced as far as possible.
+   */
+  synchronized void refreshAll() {
+    applyPendingUpdates();
+    while (!pendingRefreshes.isEmpty()) {
+      refreshWatermarks(pendingRefreshes.poll());
+    }
+  }
+
+  private void refreshWatermarks(AppliedPTransform<?, ?, ?> toRefresh) {
+    TransformWatermarks myWatermarks = transformToWatermarks.get(toRefresh);
+    WatermarkUpdate updateResult = myWatermarks.refresh();
+    Set<AppliedPTransform<?, ?, ?>> additionalRefreshes = new HashSet<>();
+    if (updateResult.isAdvanced()) {
+      for (PValue outputPValue : toRefresh.getOutput().expand()) {
+        additionalRefreshes.addAll(consumers.get(outputPValue));
+      }
+    }
+    pendingRefreshes.addAll(additionalRefreshes);
   }
 
   /**
@@ -859,22 +930,6 @@ public class InMemoryWatermarkManager {
       }
     }
     return allTimers;
-  }
-
-  /**
-   * Returns true if, for any {@link TransformWatermarks} returned by
-   * {@link #getWatermarks(AppliedPTransform)}, the output watermark will be equal to
-   * {@link BoundedWindow#TIMESTAMP_MAX_VALUE}.
-   */
-  public boolean isDone() {
-    for (Map.Entry<AppliedPTransform<?, ?, ?>, TransformWatermarks> watermarksEntry :
-        transformToWatermarks.entrySet()) {
-      Instant endOfTime = THE_END_OF_TIME.get();
-      if (watermarksEntry.getValue().getOutputWatermark().isBefore(endOfTime)) {
-        return false;
-      }
-    }
-    return true;
   }
 
   /**
@@ -1010,7 +1065,7 @@ public class InMemoryWatermarkManager {
      * Returns the input watermark of the {@link AppliedPTransform}.
      */
     public Instant getInputWatermark() {
-      return inputWatermark.get();
+      return Preconditions.checkNotNull(inputWatermark.get());
     }
 
     /**
@@ -1059,13 +1114,17 @@ public class InMemoryWatermarkManager {
     }
 
     private void removePending(CommittedBundle<?> bundle) {
-      inputWatermark.removePendingElements(bundle.getElements());
+      inputWatermark.removePendingElements(elementsFromBundle(bundle));
       synchronizedProcessingInputWatermark.removePending(bundle);
     }
 
     private void addPending(CommittedBundle<?> bundle) {
-      inputWatermark.addPendingElements(bundle.getElements());
+      inputWatermark.addPendingElements(elementsFromBundle(bundle));
       synchronizedProcessingInputWatermark.addPending(bundle);
+    }
+
+    private Iterable<? extends WindowedValue<?>> elementsFromBundle(CommittedBundle<?> bundle) {
+      return FluentIterable.from(bundle.getElements()).transformAndConcat(EXPLODE_WINDOWS_FN);
     }
 
     private Map<Object, FiredTimers> extractFiredTimers() {
@@ -1209,8 +1268,11 @@ public class InMemoryWatermarkManager {
        * and deletedTimers.
        */
       public TimerUpdate build() {
-        return new TimerUpdate(key, ImmutableSet.copyOf(completedTimers),
-            ImmutableSet.copyOf(setTimers), ImmutableSet.copyOf(deletedTimers));
+        return new TimerUpdate(
+            key,
+            ImmutableSet.copyOf(completedTimers),
+            ImmutableSet.copyOf(setTimers),
+            ImmutableSet.copyOf(deletedTimers));
       }
     }
 
@@ -1243,6 +1305,13 @@ public class InMemoryWatermarkManager {
     @VisibleForTesting
     Iterable<? extends TimerData> getDeletedTimers() {
       return deletedTimers;
+    }
+
+    /**
+     * Returns a {@link TimerUpdate} that is like this one, but with the specified completed timers.
+     */
+    public TimerUpdate withCompletedTimers(Iterable<TimerData> completedTimers) {
+      return new TimerUpdate(this.key, completedTimers, setTimers, deletedTimers);
     }
 
     @Override
@@ -1299,7 +1368,9 @@ public class InMemoryWatermarkManager {
   private static class WindowedValueByTimestampComparator extends Ordering<WindowedValue<?>> {
     @Override
     public int compare(WindowedValue<?> o1, WindowedValue<?> o2) {
-      return o1.getTimestamp().compareTo(o2.getTimestamp());
+      return ComparisonChain.start()
+          .compare(o1.getTimestamp(), o2.getTimestamp())
+          .result();
     }
   }
 
@@ -1312,5 +1383,31 @@ public class InMemoryWatermarkManager {
       }
     }
     return result;
+  }
+
+  @AutoValue
+  abstract static class PendingWatermarkUpdate {
+    @Nullable
+    public abstract CommittedBundle<?> getInputBundle();
+    public abstract TimerUpdate getTimerUpdate();
+    public abstract CommittedResult getResult();
+    public abstract Instant getEarliestHold();
+
+    /**
+     * Gets the {@link AppliedPTransform} that generated this result.
+     */
+    public AppliedPTransform<?, ?, ?> getTransform() {
+      return getResult().getTransform();
+    }
+
+    public static PendingWatermarkUpdate create(
+        CommittedBundle<?> inputBundle,
+        TimerUpdate timerUpdate,
+        CommittedResult result, Instant earliestHold) {
+      return new AutoValue_InMemoryWatermarkManager_PendingWatermarkUpdate(inputBundle,
+          timerUpdate,
+          result,
+          earliestHold);
+    }
   }
 }

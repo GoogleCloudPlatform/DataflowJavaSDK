@@ -56,7 +56,6 @@ import com.google.cloud.dataflow.sdk.values.TupleTag;
 import com.google.common.base.Function;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Throwables;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -235,6 +234,10 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     return createRunner().isFinished(window);
   }
 
+  public boolean hasNoActiveWindows() {
+    return createRunner().hasNoActiveWindows();
+  }
+
   @SafeVarargs
   public final void assertHasOnlyGlobalAndFinishedSetsFor(W... expectedWindows) {
     assertHasOnlyGlobalAndAllowedTags(
@@ -402,7 +405,7 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
                   windowFn, value, timestamp, Arrays.asList(GlobalWindow.INSTANCE)));
               return WindowedValue.of(value, timestamp, windows, PaneInfo.NO_FIRING);
             } catch (Exception e) {
-              throw Throwables.propagate(e);
+              throw new RuntimeException(e);
             }
           }
         }));
@@ -599,7 +602,7 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
 
     /** Current input watermark. */
     @Nullable
-    private Instant inputWatermarkTime = null;
+    private Instant inputWatermarkTime = BoundedWindow.TIMESTAMP_MIN_VALUE;
 
     /** Current output watermark. */
     @Nullable
@@ -666,9 +669,8 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     }
 
     @Override
-    @Nullable
     public Instant currentInputWatermarkTime() {
-      return inputWatermarkTime;
+      return Preconditions.checkNotNull(inputWatermarkTime);
     }
 
     @Override
@@ -692,7 +694,7 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
         ReduceFnRunner<?, ?, ?, ?> runner, Instant newInputWatermark) throws Exception {
       Preconditions.checkNotNull(newInputWatermark);
       Preconditions.checkState(
-          inputWatermarkTime == null || !newInputWatermark.isBefore(inputWatermarkTime),
+          !newInputWatermark.isBefore(inputWatermarkTime),
           "Cannot move input watermark time backwards from %s to %s", inputWatermarkTime,
           newInputWatermark);
       WindowTracing.trace("TestTimerInternals.advanceInputWatermark: from {} to {}",
@@ -713,7 +715,6 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
 
     public void advanceOutputWatermark(Instant newOutputWatermark) {
       Preconditions.checkNotNull(newOutputWatermark);
-      Preconditions.checkNotNull(inputWatermarkTime);
       if (newOutputWatermark.isAfter(inputWatermarkTime)) {
         WindowTracing.trace(
             "TestTimerInternals.advanceOutputWatermark: clipping output watermark from {} to {}",

@@ -27,8 +27,8 @@ import com.google.bigtable.v1.SampleRowKeysResponse;
 import com.google.cloud.bigtable.config.BigtableOptions;
 import com.google.cloud.dataflow.sdk.annotations.Experimental;
 import com.google.cloud.dataflow.sdk.coders.Coder;
-import com.google.cloud.dataflow.sdk.coders.Proto2Coder;
 import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
+import com.google.cloud.dataflow.sdk.coders.protobuf.ProtoCoder;
 import com.google.cloud.dataflow.sdk.io.BoundedSource;
 import com.google.cloud.dataflow.sdk.io.BoundedSource.BoundedReader;
 import com.google.cloud.dataflow.sdk.io.Sink.WriteOperation;
@@ -39,6 +39,7 @@ import com.google.cloud.dataflow.sdk.io.range.ByteKeyRangeTracker;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.DataflowReleaseInfo;
 import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PBegin;
@@ -72,7 +73,7 @@ import javax.annotation.Nullable;
  * <h3>Reading from Cloud Bigtable</h3>
  *
  * <p>The Bigtable source returns a set of rows from a single table, returning a
- * {@code PCollection&lt;Row&gt;}.
+ * {@code PCollection<Row>}.
  *
  * <p>To configure a Cloud Bigtable source, you must supply a table id and a {@link BigtableOptions}
  * or builder configured with the project and other information necessary to identify the
@@ -211,7 +212,7 @@ public class BigtableIO {
      *
      * <p>Does not modify this object.
      */
-    Read withRowFilter(RowFilter filter) {
+    public Read withRowFilter(RowFilter filter) {
       checkNotNull(filter, "filter");
       return new Read(options, tableId, filter, bigtableService);
     }
@@ -256,6 +257,24 @@ public class BigtableIO {
             getBigtableService().tableExists(tableId), "Table %s does not exist", tableId);
       } catch (IOException e) {
         logger.warn("Error checking whether table {} exists; proceeding.", tableId, e);
+      }
+    }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+
+      builder.add(DisplayData.item("tableId", tableId)
+        .withLinkUrl("Table ID"));
+
+      if (options != null) {
+        builder.add(DisplayData.item("bigtableOptions", options.toString())
+          .withLabel("Bigtable Options"));
+      }
+
+      if (filter != null) {
+        builder.add(DisplayData.item("rowFilter", filter.toString())
+          .withLabel("Table Row Filter"));
       }
     }
 
@@ -424,6 +443,19 @@ public class BigtableIO {
     Write withBigtableService(BigtableService bigtableService) {
       checkNotNull(bigtableService, "bigtableService");
       return new Write(options, tableId, bigtableService);
+    }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+
+      builder.add(DisplayData.item("tableId", tableId)
+        .withLabel("Table ID"));
+
+      if (options != null) {
+        builder.add(DisplayData.item("bigtableOptions", options.toString())
+          .withLabel("Bigtable Options"));
+      }
     }
 
     @Override
@@ -658,7 +690,7 @@ public class BigtableIO {
 
     @Override
     public Coder<Row> getDefaultOutputCoder() {
-      return Proto2Coder.of(Row.class);
+      return ProtoCoder.of(Row.class);
     }
 
     /** Helper that splits the specified range in this source into bundles. */

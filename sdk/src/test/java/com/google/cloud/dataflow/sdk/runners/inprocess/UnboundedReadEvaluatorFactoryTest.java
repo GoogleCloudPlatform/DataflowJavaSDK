@@ -18,21 +18,30 @@ package com.google.cloud.dataflow.sdk.runners.inprocess;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.emptyIterable;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.cloud.dataflow.sdk.coders.AtomicCoder;
+import com.google.cloud.dataflow.sdk.coders.BigEndianLongCoder;
+import com.google.cloud.dataflow.sdk.coders.Coder;
+import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.io.CountingSource;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.io.UnboundedSource;
-import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.InProcessEvaluationContext;
+import com.google.cloud.dataflow.sdk.io.UnboundedSource.CheckpointMark;
+import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.CommittedBundle;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.UncommittedBundle;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
+import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
-import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.GlobalWindow;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.values.PCollection;
+import com.google.common.collect.ImmutableList;
 
 import org.hamcrest.Matchers;
 import org.joda.time.DateTime;
@@ -42,6 +51,15 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Arrays;
+import java.util.List;
+import java.util.NoSuchElementException;
+
+import javax.annotation.Nullable;
 /**
  * Tests for {@link UnboundedReadEvaluatorFactory}.
  */
@@ -52,6 +70,8 @@ public class UnboundedReadEvaluatorFactoryTest {
   private InProcessEvaluationContext context;
   private UncommittedBundle<Long> output;
 
+  private BundleFactory bundleFactory = InProcessBundleFactory.create();
+
   @Before
   public void setup() {
     UnboundedSource<Long, ?> source =
@@ -61,7 +81,7 @@ public class UnboundedReadEvaluatorFactoryTest {
 
     factory = new UnboundedReadEvaluatorFactory();
     context = mock(InProcessEvaluationContext.class);
-    output = InProcessBundle.unkeyed(longs);
+    output = bundleFactory.createRootBundle(longs);
     when(context.createRootBundle(longs)).thenReturn(output);
   }
 
@@ -98,7 +118,7 @@ public class UnboundedReadEvaluatorFactoryTest {
             tgw(1L), tgw(2L), tgw(4L), tgw(8L), tgw(9L), tgw(7L), tgw(6L), tgw(5L), tgw(3L),
             tgw(0L)));
 
-    UncommittedBundle<Long> secondOutput = InProcessBundle.unkeyed(longs);
+    UncommittedBundle<Long> secondOutput = bundleFactory.createRootBundle(longs);
     when(context.createRootBundle(longs)).thenReturn(secondOutput);
     TransformEvaluator<?> secondEvaluator =
         factory.forApplication(longs.getProducingTransformInternal(), null, context);
@@ -112,6 +132,43 @@ public class UnboundedReadEvaluatorFactoryTest {
             tgw(15L), tgw(13L), tgw(10L)));
   }
 
+  @Test
+  public void evaluatorClosesReader() throws Exception {
+    TestUnboundedSource<Long> source =
+        new TestUnboundedSource<>(BigEndianLongCoder.of(), 1L, 2L, 3L);
+
+    TestPipeline p = TestPipeline.create();
+    PCollection<Long> pcollection = p.apply(Read.from(source));
+    AppliedPTransform<?, ?, ?> sourceTransform = pcollection.getProducingTransformInternal();
+
+    UncommittedBundle<Long> output = bundleFactory.createRootBundle(pcollection);
+    when(context.createRootBundle(pcollection)).thenReturn(output);
+
+    TransformEvaluator<?> evaluator = factory.forApplication(sourceTransform, null, context);
+    evaluator.finishBundle();
+    CommittedBundle<Long> committed = output.commit(Instant.now());
+    assertThat(ImmutableList.copyOf(committed.getElements()), hasSize(3));
+    assertThat(TestUnboundedSource.readerClosedCount, equalTo(1));
+  }
+
+  @Test
+  public void evaluatorNoElementsClosesReader() throws Exception {
+    TestUnboundedSource<Long> source = new TestUnboundedSource<>(BigEndianLongCoder.of());
+
+    TestPipeline p = TestPipeline.create();
+    PCollection<Long> pcollection = p.apply(Read.from(source));
+    AppliedPTransform<?, ?, ?> sourceTransform = pcollection.getProducingTransformInternal();
+
+    UncommittedBundle<Long> output = bundleFactory.createRootBundle(pcollection);
+    when(context.createRootBundle(pcollection)).thenReturn(output);
+
+    TransformEvaluator<?> evaluator = factory.forApplication(sourceTransform, null, context);
+    evaluator.finishBundle();
+    CommittedBundle<Long> committed = output.commit(Instant.now());
+    assertThat(committed.getElements(), emptyIterable());
+    assertThat(TestUnboundedSource.readerClosedCount, equalTo(1));
+  }
+
   // TODO: Once the source is split into multiple sources before evaluating, this test will have to
   // be updated.
   /**
@@ -120,15 +177,13 @@ public class UnboundedReadEvaluatorFactoryTest {
    */
   @Test
   public void unboundedSourceWithMultipleSimultaneousEvaluatorsIndependent() throws Exception {
-    UncommittedBundle<Long> secondOutput = InProcessBundle.unkeyed(longs);
-
     TransformEvaluator<?> evaluator =
         factory.forApplication(longs.getProducingTransformInternal(), null, context);
 
     TransformEvaluator<?> secondEvaluator =
         factory.forApplication(longs.getProducingTransformInternal(), null, context);
 
-    InProcessTransformResult secondResult = secondEvaluator.finishBundle();
+    assertThat(secondEvaluator, nullValue());
     InProcessTransformResult result = evaluator.finishBundle();
 
     assertThat(
@@ -138,9 +193,6 @@ public class UnboundedReadEvaluatorFactoryTest {
         containsInAnyOrder(
             tgw(1L), tgw(2L), tgw(4L), tgw(8L), tgw(9L), tgw(7L), tgw(6L), tgw(5L), tgw(3L),
             tgw(0L)));
-
-    assertThat(secondResult.getWatermarkHold(), equalTo(BoundedWindow.TIMESTAMP_MIN_VALUE));
-    assertThat(secondOutput.commit(Instant.now()).getElements(), emptyIterable());
   }
 
   /**
@@ -155,6 +207,120 @@ public class UnboundedReadEvaluatorFactoryTest {
     @Override
     public Instant apply(Long input) {
       return new Instant(input);
+    }
+  }
+
+  private static class TestUnboundedSource<T> extends UnboundedSource<T, TestCheckpointMark> {
+    static int readerClosedCount;
+    private final Coder<T> coder;
+    private final List<T> elems;
+
+    public TestUnboundedSource(Coder<T> coder, T... elems) {
+      readerClosedCount = 0;
+      this.coder = coder;
+      this.elems = Arrays.asList(elems);
+    }
+
+    @Override
+    public List<? extends UnboundedSource<T, TestCheckpointMark>> generateInitialSplits(
+        int desiredNumSplits, PipelineOptions options) throws Exception {
+      return ImmutableList.of(this);
+    }
+
+    @Override
+    public UnboundedSource.UnboundedReader<T> createReader(
+        PipelineOptions options, TestCheckpointMark checkpointMark) {
+      return new TestUnboundedReader(elems);
+    }
+
+    @Override
+    @Nullable
+    public Coder<TestCheckpointMark> getCheckpointMarkCoder() {
+      return new TestCheckpointMark.Coder();
+    }
+
+    @Override
+    public void validate() {}
+
+    @Override
+    public Coder<T> getDefaultOutputCoder() {
+      return coder;
+    }
+
+    private class TestUnboundedReader extends UnboundedReader<T> {
+      private final List<T> elems;
+      private int index;
+
+      public TestUnboundedReader(List<T> elems) {
+        this.elems = elems;
+        this.index = -1;
+      }
+
+      @Override
+      public boolean start() throws IOException {
+        return advance();
+      }
+
+      @Override
+      public boolean advance() throws IOException {
+        if (index + 1 < elems.size()) {
+          index++;
+          return true;
+        }
+        return false;
+      }
+
+      @Override
+      public Instant getWatermark() {
+        return Instant.now();
+      }
+
+      @Override
+      public CheckpointMark getCheckpointMark() {
+        return new TestCheckpointMark();
+      }
+
+      @Override
+      public UnboundedSource<T, ?> getCurrentSource() {
+        TestUnboundedSource<T> source = TestUnboundedSource.this;
+        return source;
+      }
+
+      @Override
+      public T getCurrent() throws NoSuchElementException {
+        return elems.get(index);
+      }
+
+      @Override
+      public Instant getCurrentTimestamp() throws NoSuchElementException {
+        return Instant.now();
+      }
+
+      @Override
+      public void close() throws IOException {
+        readerClosedCount++;
+      }
+    }
+  }
+
+  private static class TestCheckpointMark implements CheckpointMark {
+    @Override
+    public void finalizeCheckpoint() throws IOException {}
+
+    public static class Coder extends AtomicCoder<TestCheckpointMark> {
+      @Override
+      public void encode(
+          TestCheckpointMark value,
+          OutputStream outStream,
+          com.google.cloud.dataflow.sdk.coders.Coder.Context context)
+          throws CoderException, IOException {}
+
+      @Override
+      public TestCheckpointMark decode(
+          InputStream inStream, com.google.cloud.dataflow.sdk.coders.Coder.Context context)
+          throws CoderException, IOException {
+        return new TestCheckpointMark();
+      }
     }
   }
 }

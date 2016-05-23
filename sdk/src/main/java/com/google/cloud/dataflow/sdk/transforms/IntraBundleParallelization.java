@@ -19,6 +19,7 @@ package com.google.cloud.dataflow.sdk.transforms;
 import com.google.cloud.dataflow.sdk.options.GcsOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.PaneInfo;
 import com.google.cloud.dataflow.sdk.util.WindowingInternals;
@@ -170,6 +171,17 @@ public class IntraBundleParallelization {
       return input.apply(
           ParDo.of(new MultiThreadedIntraBundleProcessingDoFn<>(doFn, maxParallelism)));
     }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+      builder
+          .add(DisplayData.item("maxParallelism", maxParallelism)
+            .withLabel("Maximum Parallelism"))
+          .add(DisplayData.item("fn", doFn.getClass())
+            .withLabel("Function"))
+          .include(doFn);
+    }
   }
 
   /**
@@ -204,11 +216,12 @@ public class IntraBundleParallelization {
       try {
         workTickets.acquire();
       } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
         throw new RuntimeException("Interrupted while scheduling work", e);
       }
 
       if (failure.get() != null) {
-        throw Throwables.propagate(failure.get());
+        throw new RuntimeException(failure.get());
       }
 
       executor.submit(new Runnable() {
@@ -233,7 +246,7 @@ public class IntraBundleParallelization {
       // processElement calls have finished.
       workTickets.acquire(maxParallelism);
       if (failure.get() != null) {
-        throw Throwables.propagate(failure.get());
+        throw new RuntimeException(failure.get());
       }
       doFn.finishBundle(c);
     }

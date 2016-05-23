@@ -28,6 +28,7 @@ import static com.google.cloud.dataflow.sdk.util.Structs.addObject;
 import static com.google.cloud.dataflow.sdk.util.Structs.addString;
 import static com.google.cloud.dataflow.sdk.util.Structs.getString;
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.api.services.dataflow.model.AutoscalingSettings;
 import com.google.api.services.dataflow.model.DataflowPackage;
@@ -41,14 +42,10 @@ import com.google.cloud.dataflow.sdk.Pipeline.PipelineVisitor;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.coders.IterableCoder;
-import com.google.cloud.dataflow.sdk.io.BigQueryIO;
-import com.google.cloud.dataflow.sdk.io.PubsubIO;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.options.StreamingOptions;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner.GroupByKeyAndSortValuesOnly;
-import com.google.cloud.dataflow.sdk.runners.dataflow.BigQueryIOTranslator;
-import com.google.cloud.dataflow.sdk.runners.dataflow.PubsubIOTranslator;
 import com.google.cloud.dataflow.sdk.runners.dataflow.ReadTranslator;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
 import com.google.cloud.dataflow.sdk.transforms.Combine;
@@ -59,6 +56,8 @@ import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.View;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
+import com.google.cloud.dataflow.sdk.transforms.display.HasDisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.DefaultTrigger;
 import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
 import com.google.cloud.dataflow.sdk.util.AppliedCombineFn;
@@ -548,6 +547,7 @@ public class DataflowPipelineTranslator {
       currentStep.setKind(type);
       steps.add(currentStep);
       addInput(PropertyNames.USER_NAME, getFullName(transform));
+      addDisplayData(stepName, transform);
     }
 
     @Override
@@ -672,7 +672,7 @@ public class DataflowPipelineTranslator {
                                                PValue inputValue,
                                                PValue outputValue) {
       Coder<?> inputValueCoder =
-          Preconditions.checkNotNull(outputCoders.get(inputValue));
+          checkNotNull(outputCoders.get(inputValue));
       // The inputValueCoder for the input PCollection should be some
       // WindowedValueCoder of the input PCollection's element
       // coder.
@@ -723,6 +723,12 @@ public class DataflowPipelineTranslator {
       }
 
       outputInfoList.add(outputInfo);
+    }
+
+    private void addDisplayData(String stepName, HasDisplayData hasDisplayData) {
+      DisplayData displayData = DisplayData.from(hasDisplayData);
+      List<Map<String, Object>> list = MAPPER.convertValue(displayData, List.class);
+      addList(getProperties(), PropertyNames.DISPLAY_DATA, list);
     }
 
     @Override
@@ -952,6 +958,9 @@ public class DataflowPipelineTranslator {
             context.addInput(
                 PropertyNames.SERIALIZED_FN,
                 byteArrayToJsonString(serializeToByteArray(windowingStrategy)));
+            context.addInput(
+                PropertyNames.IS_MERGING_WINDOW_FN,
+                !windowingStrategy.getWindowFn().isNonMerging());
           }
         });
 
@@ -1025,17 +1034,6 @@ public class DataflowPipelineTranslator {
 
     ///////////////////////////////////////////////////////////////////////////
     // IO Translation.
-
-    registerTransformTranslator(
-        BigQueryIO.Read.Bound.class, new BigQueryIOTranslator.ReadTranslator());
-    registerTransformTranslator(
-        BigQueryIO.Write.Bound.class, new BigQueryIOTranslator.WriteTranslator());
-
-    registerTransformTranslator(
-        PubsubIO.Read.Bound.class, new PubsubIOTranslator.ReadTranslator());
-    registerTransformTranslator(
-        DataflowPipelineRunner.StreamingPubsubIOWrite.class,
-        new PubsubIOTranslator.WriteTranslator());
 
     registerTransformTranslator(Read.Bounded.class, new ReadTranslator());
   }

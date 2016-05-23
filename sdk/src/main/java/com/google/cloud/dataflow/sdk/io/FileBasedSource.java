@@ -15,6 +15,7 @@
 package com.google.cloud.dataflow.sdk.io;
 
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.IOChannelFactory;
 import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
 import com.google.common.base.Preconditions;
@@ -257,6 +258,13 @@ public abstract class FileBasedSource<T> extends OffsetBasedSource<T> {
         / selectedFiles.size();
   }
 
+  @Override
+  public void populateDisplayData(DisplayData.Builder builder) {
+    super.populateDisplayData(builder);
+    builder.add(DisplayData.item("filePattern", getFileOrPatternSpec())
+      .withLabel("File Pattern"));
+  }
+
   private ListenableFuture<List<? extends FileBasedSource<T>>> createFutureForFileSplit(
       final String file,
       final long desiredBundleSizeBytes,
@@ -304,8 +312,7 @@ public abstract class FileBasedSource<T> extends OffsetBasedSource<T> {
     } else {
       if (isSplittable()) {
         List<FileBasedSource<T>> splitResults = new ArrayList<>();
-        for (OffsetBasedSource<T> split :
-            super.splitIntoBundles(desiredBundleSizeBytes, options)) {
+        for (OffsetBasedSource<T> split : super.splitIntoBundles(desiredBundleSizeBytes, options)) {
           splitResults.add((FileBasedSource<T>) split);
         }
         return splitResults;
@@ -466,7 +473,7 @@ public abstract class FileBasedSource<T> extends OffsetBasedSource<T> {
     }
 
     @Override
-    public FileBasedSource<T> getCurrentSource() {
+    public synchronized FileBasedSource<T> getCurrentSource() {
       return (FileBasedSource<T>) super.getCurrentSource();
     }
 

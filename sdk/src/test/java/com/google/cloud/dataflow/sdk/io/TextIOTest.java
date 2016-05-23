@@ -20,9 +20,15 @@ import static com.google.cloud.dataflow.sdk.TestUtils.INTS_ARRAY;
 import static com.google.cloud.dataflow.sdk.TestUtils.LINES_ARRAY;
 import static com.google.cloud.dataflow.sdk.TestUtils.NO_INTS_ARRAY;
 import static com.google.cloud.dataflow.sdk.TestUtils.NO_LINES_ARRAY;
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasValue;
+
 import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
@@ -31,6 +37,7 @@ import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.TextualIntegerCoder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
+import com.google.cloud.dataflow.sdk.io.BoundedSource.BoundedReader;
 import com.google.cloud.dataflow.sdk.io.TextIO.CompressionType;
 import com.google.cloud.dataflow.sdk.io.TextIO.TextSource;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
@@ -40,8 +47,13 @@ import com.google.cloud.dataflow.sdk.testing.TestDataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
+import com.google.cloud.dataflow.sdk.transforms.display.DataflowDisplayDataEvaluator;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayDataEvaluator;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
 import com.google.cloud.dataflow.sdk.util.GcsUtil;
+import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
 import com.google.cloud.dataflow.sdk.util.TestCredential;
 import com.google.cloud.dataflow.sdk.util.gcsfs.GcsPath;
 import com.google.cloud.dataflow.sdk.values.PCollection;
@@ -72,6 +84,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.GZIPOutputStream;
 
 /**
@@ -197,37 +210,79 @@ public class TextIOTest {
     }
   }
 
+  @Test
+  public void testReadDisplayData() {
+    TextIO.Read.Bound<?> read = TextIO.Read
+        .from("foo.*")
+        .withCompressionType(CompressionType.BZIP2)
+        .withoutValidation();
+
+    DisplayData displayData = DisplayData.from(read);
+
+    assertThat(displayData, hasDisplayItem("filePattern", "foo.*"));
+    assertThat(displayData, hasDisplayItem("compressionType", CompressionType.BZIP2.toString()));
+    assertThat(displayData, hasDisplayItem("validation", false));
+  }
+
   <T> void runTestWrite(T[] elems, Coder<T> coder) throws Exception {
-    File tmpFile = tmpFolder.newFile("file.txt");
-    String filename = tmpFile.getPath();
+    runTestWrite(elems, coder, 1);
+  }
+
+  <T> void runTestWrite(T[] elems, Coder<T> coder, int numShards) throws Exception {
+    String outputName = "file.txt";
+    String baseFilename = tmpFolder.newFile(outputName).getPath();
 
     Pipeline p = TestPipeline.create();
 
-    PCollection<T> input =
-        p.apply(Create.of(Arrays.asList(elems)).withCoder(coder));
+    PCollection<T> input = p.apply(Create.of(Arrays.asList(elems)).withCoder(coder));
 
     TextIO.Write.Bound<T> write;
     if (coder.equals(StringUtf8Coder.of())) {
-      TextIO.Write.Bound<String> writeStrings =
-          TextIO.Write.to(filename).withoutSharding();
+      TextIO.Write.Bound<String> writeStrings = TextIO.Write.to(baseFilename);
       // T==String
       write = (TextIO.Write.Bound<T>) writeStrings;
     } else {
-      write = TextIO.Write.to(filename).withCoder(coder).withoutSharding();
+      write = TextIO.Write.to(baseFilename).withCoder(coder);
+    }
+    if (numShards == 1) {
+      write = write.withoutSharding();
+    } else {
+      write = write.withNumShards(numShards).withShardNameTemplate(ShardNameTemplate.INDEX_OF_MAX);
     }
 
     input.apply(write);
 
     p.run();
 
+    assertOutputFiles(elems, coder, numShards, tmpFolder, outputName, write.getShardNameTemplate());
+  }
+
+  public static <T> void assertOutputFiles(
+      T[] elems,
+      Coder<T> coder,
+      int numShards,
+      TemporaryFolder rootLocation,
+      String outputName,
+      String shardNameTemplate)
+      throws Exception {
+    List<File> expectedFiles = new ArrayList<>();
+    for (int i = 0; i < numShards; i++) {
+      expectedFiles.add(
+          new File(
+              rootLocation.getRoot(),
+              IOChannelUtils.constructName(outputName, shardNameTemplate, "", i, numShards)));
+    }
+
     List<String> actual = new ArrayList<>();
-    try (BufferedReader reader = new BufferedReader(new FileReader(tmpFile))) {
-      for (;;) {
-        String line = reader.readLine();
-        if (line == null) {
-          break;
+    for (File tmpFile : expectedFiles) {
+      try (BufferedReader reader = new BufferedReader(new FileReader(tmpFile))) {
+        for (;;) {
+          String line = reader.readLine();
+          if (line == null) {
+            break;
+          }
+          actual.add(line);
         }
-        actual.add(line);
       }
     }
 
@@ -239,8 +294,7 @@ public class TextIOTest {
       expected[i] = line;
     }
 
-    assertThat(actual,
-               containsInAnyOrder(expected));
+    assertThat(actual, containsInAnyOrder(expected));
   }
 
   @Test
@@ -282,6 +336,54 @@ public class TextIOTest {
           TextIO.Write.to("/tmp/file.txt").named("HerWrite");
       assertEquals("HerWrite", transform3.getName());
     }
+  }
+
+  @Test
+  public void testShardedWrite() throws Exception {
+    runTestWrite(LINES_ARRAY, StringUtf8Coder.of(), 5);
+  }
+
+  @Test
+  public void testWriteDisplayData() {
+    TextIO.Write.Bound<?> write = TextIO.Write
+        .to("foo")
+        .withSuffix("bar")
+        .withShardNameTemplate("-SS-of-NN-")
+        .withNumShards(100)
+        .withoutValidation();
+
+    DisplayData displayData = DisplayData.from(write);
+
+    assertThat(displayData, hasDisplayItem("filePrefix", "foo"));
+    assertThat(displayData, hasDisplayItem("fileSuffix", "bar"));
+    assertThat(displayData, hasDisplayItem("shardNameTemplate", "-SS-of-NN-"));
+    assertThat(displayData, hasDisplayItem("numShards", 100));
+    assertThat(displayData, hasDisplayItem("validation", false));
+  }
+
+  @Test
+  public void testPrimitiveWriteDisplayData() {
+    DisplayDataEvaluator evaluator = DataflowDisplayDataEvaluator.create();
+
+    TextIO.Write.Bound<?> write = TextIO.Write.to("foobar");
+
+    Set<DisplayData> displayData = evaluator.displayDataForPrimitiveTransforms(write);
+    assertThat("TextIO.Write should include the file prefix in its primitive display data",
+        displayData, hasItem(hasDisplayItem(hasValue(startsWith("foobar")))));
+  }
+
+  @Test
+  public void testPrimitiveReadDisplayData() {
+    DisplayDataEvaluator evaluator = DataflowDisplayDataEvaluator.create();
+
+    TextIO.Read.Bound<String> read = TextIO.Read
+        .from("foobar")
+        .withoutValidation();
+
+    Set<DisplayData> displayData = evaluator.displayDataForPrimitiveTransforms(read);
+    assertThat("TextIO.Read should include the file prefix in its primitive display data",
+        displayData,
+        hasItem(hasDisplayItem(DisplayDataMatchers.hasValue(startsWith("foobar")))));
   }
 
   @Test
@@ -429,6 +531,117 @@ public class TextIOTest {
     assertEquals("TextIO.Read", TextIO.Read.from("somefile").toString());
     assertEquals(
         "ReadMyFile [TextIO.Read]", TextIO.Read.named("ReadMyFile").from("somefile").toString());
+  }
+
+  @Test
+  public void testProgressEmptyFile() throws IOException {
+    try (BoundedReader<String> reader =
+        prepareSource(new byte[0]).createReader(PipelineOptionsFactory.create())) {
+      // Check preconditions before starting.
+      assertEquals(0.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, reader.getSplitPointsRemaining());
+
+      // Assert empty
+      assertFalse(reader.start());
+
+      // Check postconditions after finishing
+      assertEquals(1.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(0, reader.getSplitPointsRemaining());
+    }
+  }
+
+  @Test
+  public void testProgressTextFile() throws IOException {
+    String file = "line1\nline2\nline3";
+    try (BoundedReader<String> reader =
+        prepareSource(file.getBytes()).createReader(PipelineOptionsFactory.create())) {
+      // Check preconditions before starting
+      assertEquals(0.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, reader.getSplitPointsRemaining());
+
+      // Line 1
+      assertTrue(reader.start());
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, reader.getSplitPointsRemaining());
+
+      // Line 2
+      assertTrue(reader.advance());
+      assertEquals(1, reader.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, reader.getSplitPointsRemaining());
+
+      // Line 3
+      assertTrue(reader.advance());
+      assertEquals(2, reader.getSplitPointsConsumed());
+      assertEquals(1, reader.getSplitPointsRemaining());
+
+      // Check postconditions after finishing
+      assertFalse(reader.advance());
+      assertEquals(1.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(3, reader.getSplitPointsConsumed());
+      assertEquals(0, reader.getSplitPointsRemaining());
+    }
+  }
+
+  @Test
+  public void testProgressAfterSplitting() throws IOException {
+    String file = "line1\nline2\nline3";
+    BoundedSource source = prepareSource(file.getBytes());
+    BoundedSource remainder;
+
+    // Create the remainder, verifying properties pre- and post-splitting.
+    try (BoundedReader<String> readerOrig = source.createReader(PipelineOptionsFactory.create())) {
+      // Preconditions.
+      assertEquals(0.0, readerOrig.getFractionConsumed(), 1e-6);
+      assertEquals(0, readerOrig.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, readerOrig.getSplitPointsRemaining());
+
+      // First record, before splitting.
+      assertTrue(readerOrig.start());
+      assertEquals(0, readerOrig.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, readerOrig.getSplitPointsRemaining());
+
+      // Split. 0.1 is in line1, so should now be able to detect last record.
+      remainder = readerOrig.splitAtFraction(0.1);
+      System.err.println(readerOrig.getCurrentSource());
+      assertNotNull(remainder);
+
+      // First record, after splitting.
+      assertEquals(0, readerOrig.getSplitPointsConsumed());
+      assertEquals(1, readerOrig.getSplitPointsRemaining());
+
+      // Finish and postconditions.
+      assertFalse(readerOrig.advance());
+      assertEquals(1.0, readerOrig.getFractionConsumed(), 1e-6);
+      assertEquals(1, readerOrig.getSplitPointsConsumed());
+      assertEquals(0, readerOrig.getSplitPointsRemaining());
+    }
+
+    // Check the properties of the remainder.
+    try (BoundedReader<String> reader = remainder.createReader(PipelineOptionsFactory.create())) {
+      // Preconditions.
+      assertEquals(0.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, reader.getSplitPointsRemaining());
+
+      // First record should be line 2.
+      assertTrue(reader.start());
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, reader.getSplitPointsRemaining());
+
+      // Second record is line 3
+      assertTrue(reader.advance());
+      assertEquals(1, reader.getSplitPointsConsumed());
+      assertEquals(1, reader.getSplitPointsRemaining());
+
+      // Check postconditions after finishing
+      assertFalse(reader.advance());
+      assertEquals(1.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(2, reader.getSplitPointsConsumed());
+      assertEquals(0, reader.getSplitPointsRemaining());
+    }
   }
 
   @Test

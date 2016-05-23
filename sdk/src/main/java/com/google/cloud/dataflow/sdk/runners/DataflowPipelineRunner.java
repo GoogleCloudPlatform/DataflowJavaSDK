@@ -23,6 +23,9 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
+import com.google.api.client.json.JsonFactory;
+import com.google.api.services.bigquery.model.TableReference;
+import com.google.api.services.bigquery.model.TableRow;
 import com.google.api.services.clouddebugger.v2.Clouddebugger;
 import com.google.api.services.clouddebugger.v2.model.Debuggee;
 import com.google.api.services.clouddebugger.v2.model.RegisterDebuggeeRequest;
@@ -49,12 +52,15 @@ import com.google.cloud.dataflow.sdk.coders.ListCoder;
 import com.google.cloud.dataflow.sdk.coders.MapCoder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.coders.StandardCoder;
+import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
 import com.google.cloud.dataflow.sdk.coders.VarIntCoder;
 import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
 import com.google.cloud.dataflow.sdk.io.AvroIO;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO;
 import com.google.cloud.dataflow.sdk.io.FileBasedSink;
 import com.google.cloud.dataflow.sdk.io.PubsubIO;
+import com.google.cloud.dataflow.sdk.io.PubsubUnboundedSink;
+import com.google.cloud.dataflow.sdk.io.PubsubUnboundedSource;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.io.ShardNameTemplate;
 import com.google.cloud.dataflow.sdk.io.TextIO;
@@ -71,7 +77,6 @@ import com.google.cloud.dataflow.sdk.runners.DataflowPipelineTranslator.Transfor
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineTranslator.TranslationContext;
 import com.google.cloud.dataflow.sdk.runners.dataflow.AssignWindows;
 import com.google.cloud.dataflow.sdk.runners.dataflow.DataflowAggregatorTransforms;
-import com.google.cloud.dataflow.sdk.runners.dataflow.PubsubIOTranslator;
 import com.google.cloud.dataflow.sdk.runners.dataflow.ReadTranslator;
 import com.google.cloud.dataflow.sdk.runners.worker.IsmFormat;
 import com.google.cloud.dataflow.sdk.runners.worker.IsmFormat.IsmRecord;
@@ -90,6 +95,7 @@ import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.transforms.View;
 import com.google.cloud.dataflow.sdk.transforms.View.CreatePCollectionView;
 import com.google.cloud.dataflow.sdk.transforms.WithKeys;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.AfterPane;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.DefaultTrigger;
@@ -112,6 +118,7 @@ import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.WindowedValue.FullWindowedValueCoder;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
 import com.google.cloud.dataflow.sdk.values.KV;
+import com.google.cloud.dataflow.sdk.values.PBegin;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
 import com.google.cloud.dataflow.sdk.values.PCollectionList;
@@ -171,6 +178,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import javax.annotation.Nullable;
 
 /**
  * A {@link PipelineRunner} that executes the operations in the
@@ -211,9 +219,9 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
   // Default Docker container images that execute Dataflow worker harness, residing in Google
   // Container Registry, separately for Batch and Streaming.
   public static final String BATCH_WORKER_HARNESS_CONTAINER_IMAGE
-      = "dataflow.gcr.io/v1beta3/java-batch:1.5.0";
+      = "dataflow.gcr.io/v1beta3/java-batch:1.5.1";
   public static final String STREAMING_WORKER_HARNESS_CONTAINER_IMAGE
-      = "dataflow.gcr.io/v1beta3/java-streaming:1.5.0";
+      = "dataflow.gcr.io/v1beta3/java-streaming:1.5.1";
 
   // The limit of CreateJob request size.
   private static final int CREATE_JOB_REQUEST_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -228,6 +236,7 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
    */
   public static final String PROJECT_ID_REGEXP = "[a-z][-a-z0-9:.]+[a-z0-9]";
 
+  private static final JsonFactory JSON_FACTORY = Transport.getJsonFactory();
   /**
    * Construct a runner from the provided options.
    *
@@ -251,6 +260,10 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     }
 
     PathValidator validator = dataflowOptions.getPathValidator();
+    Preconditions.checkArgument(!(Strings.isNullOrEmpty(dataflowOptions.getTempLocation())
+        && Strings.isNullOrEmpty(dataflowOptions.getStagingLocation())),
+        "Missing required value: at least one of tempLocation or stagingLocation must be set.");
+
     if (dataflowOptions.getStagingLocation() != null) {
       validator.validateOutputFilePrefixSupported(dataflowOptions.getStagingLocation());
     }
@@ -279,13 +292,25 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
       LOG.debug("Classpath elements: {}", dataflowOptions.getFilesToStage());
     }
 
-    // Verify jobName according to service requirements.
-    String jobName = dataflowOptions.getJobName().toLowerCase();
-    Preconditions.checkArgument(
+    // Verify jobName according to service requirements, truncating converting to lowercase if
+    // necessary.
+    String jobName =
+        dataflowOptions
+            .getJobName()
+            .toLowerCase();
+    checkArgument(
         jobName.matches("[a-z]([-a-z0-9]*[a-z0-9])?"),
         "JobName invalid; the name must consist of only the characters "
             + "[-a-z0-9], starting with a letter and ending with a letter "
             + "or number");
+    if (!jobName.equals(dataflowOptions.getJobName())) {
+      LOG.info(
+          "PipelineOptions.jobName did not match the service requirements. "
+              + "Using {} instead of {}.",
+          jobName,
+          dataflowOptions.getJobName());
+    }
+    dataflowOptions.setJobName(jobName);
 
     // Verify project
     String project = dataflowOptions.getProject();
@@ -316,33 +341,46 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     this.pcollectionsRequiringIndexedFormat = new HashSet<>();
     this.ptransformViewsWithNonDeterministicKeyCoders = new HashSet<>();
 
+    ImmutableMap.Builder<Class<?>, Class<?>> builder = ImmutableMap.<Class<?>, Class<?>>builder();
     if (options.isStreaming()) {
-      overrides = ImmutableMap.<Class<?>, Class<?>>builder()
-          .put(Combine.GloballyAsSingletonView.class, StreamingCombineGloballyAsSingletonView.class)
-          .put(Create.Values.class, StreamingCreate.class)
-          .put(View.AsMap.class, StreamingViewAsMap.class)
-          .put(View.AsMultimap.class, StreamingViewAsMultimap.class)
-          .put(View.AsSingleton.class, StreamingViewAsSingleton.class)
-          .put(View.AsList.class, StreamingViewAsList.class)
-          .put(View.AsIterable.class, StreamingViewAsIterable.class)
-          .put(Write.Bound.class, StreamingWrite.class)
-          .put(PubsubIO.Write.Bound.class, StreamingPubsubIOWrite.class)
-          .put(Read.Unbounded.class, StreamingUnboundedRead.class)
-          .put(Read.Bounded.class, UnsupportedIO.class)
-          .put(AvroIO.Read.Bound.class, UnsupportedIO.class)
-          .put(AvroIO.Write.Bound.class, UnsupportedIO.class)
-          .put(BigQueryIO.Read.Bound.class, UnsupportedIO.class)
-          .put(TextIO.Read.Bound.class, UnsupportedIO.class)
-          .put(TextIO.Write.Bound.class, UnsupportedIO.class)
-          .put(Window.Bound.class, AssignWindows.class)
-          .build();
+      builder.put(Combine.GloballyAsSingletonView.class,
+                  StreamingCombineGloballyAsSingletonView.class);
+      builder.put(Create.Values.class, StreamingCreate.class);
+      builder.put(View.AsMap.class, StreamingViewAsMap.class);
+      builder.put(View.AsMultimap.class, StreamingViewAsMultimap.class);
+      builder.put(View.AsSingleton.class, StreamingViewAsSingleton.class);
+      builder.put(View.AsList.class, StreamingViewAsList.class);
+      builder.put(View.AsIterable.class, StreamingViewAsIterable.class);
+      builder.put(Write.Bound.class, StreamingWrite.class);
+      builder.put(Read.Unbounded.class, StreamingUnboundedRead.class);
+      builder.put(Read.Bounded.class, UnsupportedIO.class);
+      builder.put(AvroIO.Read.Bound.class, UnsupportedIO.class);
+      builder.put(AvroIO.Write.Bound.class, UnsupportedIO.class);
+      builder.put(BigQueryIO.Read.Bound.class, UnsupportedIO.class);
+      builder.put(TextIO.Read.Bound.class, UnsupportedIO.class);
+      builder.put(TextIO.Write.Bound.class, UnsupportedIO.class);
+      builder.put(Window.Bound.class, AssignWindows.class);
+      // In streaming mode must use either the custom Pubsub unbounded source/sink or
+      // defer to Windmill's built-in implementation.
+      builder.put(PubsubIO.Read.Bound.PubsubBoundedReader.class, UnsupportedIO.class);
+      builder.put(PubsubIO.Write.Bound.PubsubBoundedWriter.class, UnsupportedIO.class);
+      if (options.getExperiments() == null
+          || !options.getExperiments().contains("enable_custom_pubsub_source")) {
+        builder.put(PubsubUnboundedSource.class, StreamingPubsubIORead.class);
+      }
+      if (options.getExperiments() == null
+          || !options.getExperiments().contains("enable_custom_pubsub_sink")) {
+        builder.put(PubsubUnboundedSink.class, StreamingPubsubIOWrite.class);
+      }
     } else {
-      ImmutableMap.Builder<Class<?>, Class<?>> builder = ImmutableMap.<Class<?>, Class<?>>builder();
       builder.put(Read.Unbounded.class, UnsupportedIO.class);
       builder.put(Window.Bound.class, AssignWindows.class);
       builder.put(Write.Bound.class, BatchWrite.class);
       builder.put(AvroIO.Write.Bound.class, BatchAvroIOWrite.class);
       builder.put(TextIO.Write.Bound.class, BatchTextIOWrite.class);
+      // In batch mode must use the custom Pubsub bounded source/sink.
+      builder.put(PubsubUnboundedSource.class, UnsupportedIO.class);
+      builder.put(PubsubUnboundedSink.class, UnsupportedIO.class);
       if (options.getExperiments() == null
           || !options.getExperiments().contains("disable_ism_side_input")) {
         builder.put(View.AsMap.class, BatchViewAsMap.class);
@@ -351,8 +389,16 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
         builder.put(View.AsList.class, BatchViewAsList.class);
         builder.put(View.AsIterable.class, BatchViewAsIterable.class);
       }
-      overrides = builder.build();
+      if (options.getExperiments() == null
+          || !options.getExperiments().contains("enable_custom_bigquery_source")) {
+        builder.put(BigQueryIO.Read.Bound.class, BatchBigQueryIONativeRead.class);
+      }
+      if (options.getExperiments() == null
+          || !options.getExperiments().contains("enable_custom_bigquery_sink")) {
+        builder.put(BigQueryIO.Write.Bound.class, BatchBigQueryIOWrite.class);
+      }
     }
+    overrides = builder.build();
   }
 
   /**
@@ -424,6 +470,12 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     return super.apply(new AssignWindows<>(transform), input);
   }
 
+  private String debuggerMessage(String projectId, String uniquifier) {
+    return String.format("To debug your job, visit Google Cloud Debugger at: "
+        + "https://console.developers.google.com/debug?project=%s&dbgee=%s",
+        projectId, uniquifier);
+  }
+
   private void maybeRegisterDebuggee(DataflowPipelineOptions options, String uniquifier) {
     if (!options.getEnableCloudDebugger()) {
       return;
@@ -436,6 +488,8 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     Clouddebugger debuggerClient = Transport.newClouddebuggerClient(options).build();
     Debuggee debuggee = registerDebuggee(debuggerClient, uniquifier);
     options.setDebuggee(debuggee);
+
+    System.out.println(debuggerMessage(options.getProject(), debuggee.getUniquifier()));
   }
 
   private Debuggee registerDebuggee(Clouddebugger debuggerClient, String uniquifier) {
@@ -451,8 +505,8 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
           debuggerClient.controller().debuggees().register(registerReq).execute();
       Debuggee debuggee = registerResponse.getDebuggee();
       if (debuggee.getStatus() != null && debuggee.getStatus().getIsError()) {
-        throw new RuntimeException("Unable to register with the debugger: " +
-            debuggee.getStatus().getDescription().getFormat());
+        throw new RuntimeException("Unable to register with the debugger: "
+            + debuggee.getStatus().getDescription().getFormat());
       }
 
       return debuggee;
@@ -817,14 +871,36 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
         extends DoFn<KV<Integer, Iterable<KV<W, WindowedValue<T>>>>,
                      IsmRecord<WindowedValue<T>>> {
 
+      private final Coder<W> windowCoder;
+      IsmRecordForSingularValuePerWindowDoFn(Coder<W> windowCoder) {
+        this.windowCoder = windowCoder;
+      }
+
       @Override
       public void processElement(ProcessContext c) throws Exception {
+        Optional<Object> previousWindowStructuralValue = Optional.absent();
+        T previousValue = null;
+
         Iterator<KV<W, WindowedValue<T>>> iterator = c.element().getValue().iterator();
         while (iterator.hasNext()) {
           KV<W, WindowedValue<T>> next = iterator.next();
+          Object currentWindowStructuralValue = windowCoder.structuralValue(next.getKey());
+
+          // Verify that the user isn't trying to have more than one element per window as
+          // a singleton.
+          checkState(!previousWindowStructuralValue.isPresent()
+              || !previousWindowStructuralValue.get().equals(currentWindowStructuralValue),
+              "Multiple values [%s, %s] found for singleton within window [%s].",
+              previousValue,
+              next.getValue().getValue(),
+              next.getKey());
+
           c.output(
               IsmRecord.of(
                   ImmutableList.of(next.getKey()), next.getValue()));
+
+          previousWindowStructuralValue = Optional.of(currentWindowStructuralValue);
+          previousValue = next.getValue().getValue();
         }
       }
     }
@@ -842,10 +918,14 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
 
     @Override
     public PCollectionView<T> apply(PCollection<T> input) {
+      @SuppressWarnings("unchecked")
+      Coder<BoundedWindow> windowCoder = (Coder<BoundedWindow>)
+          input.getWindowingStrategy().getWindowFn().windowCoder();
+
       return BatchViewAsSingleton.<T, T, T, BoundedWindow>applyForSingleton(
           runner,
           input,
-          new IsmRecordForSingularValuePerWindowDoFn<T, BoundedWindow>(),
+          new IsmRecordForSingularValuePerWindowDoFn<T, BoundedWindow>(windowCoder),
           transform.hasDefaultValue(),
           transform.defaultValue(),
           input.getCoder());
@@ -2048,6 +2128,199 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
   }
 
   /**
+   * This {@link PTransform} is used by the {@link DataflowPipelineTranslator} as a way
+   * to provide the native definition of the BigQuery sink.
+   */
+  private static class BatchBigQueryIONativeRead extends PTransform<PInput, PCollection<TableRow>> {
+    private final BigQueryIO.Read.Bound transform;
+    /**
+     * Builds an instance of this class from the overridden transform.
+     */
+    @SuppressWarnings("unused") // used via reflection in DataflowPipelineRunner#apply()
+    public BatchBigQueryIONativeRead(
+        DataflowPipelineRunner runner, BigQueryIO.Read.Bound transform) {
+      this.transform = transform;
+    }
+
+    @Override
+    public PCollection<TableRow> apply(PInput input) {
+      return PCollection.<TableRow>createPrimitiveOutputInternal(
+          input.getPipeline(),
+          WindowingStrategy.globalDefault(),
+          IsBounded.BOUNDED)
+          // Force the output's Coder to be what the read is using, and
+          // unchangeable later, to ensure that we read the input in the
+          // format specified by the Read transform.
+          .setCoder(TableRowJsonCoder.of());
+    }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      transform.populateDisplayData(builder);
+    }
+
+    static {
+      DataflowPipelineTranslator.registerTransformTranslator(
+          BatchBigQueryIONativeRead.class, new BatchBigQueryIONativeReadTranslator());
+    }
+  }
+
+  /**
+   * Implements BigQueryIO Read translation for the Dataflow backend.
+   */
+  public static class BatchBigQueryIONativeReadTranslator
+      implements DataflowPipelineTranslator.TransformTranslator<BatchBigQueryIONativeRead> {
+
+    @Override
+    public void translate(
+        BatchBigQueryIONativeRead transform,
+        DataflowPipelineTranslator.TranslationContext context) {
+      translateWriteHelper(transform, transform.transform, context);
+    }
+
+    private void translateWriteHelper(
+        BatchBigQueryIONativeRead transform,
+        BigQueryIO.Read.Bound originalTransform,
+        TranslationContext context) {
+      // Actual translation.
+      context.addStep(transform, "ParallelRead");
+      context.addInput(PropertyNames.FORMAT, "bigquery");
+      context.addInput(PropertyNames.BIGQUERY_EXPORT_FORMAT, "FORMAT_AVRO");
+
+      if (originalTransform.getQuery() != null) {
+        context.addInput(PropertyNames.BIGQUERY_QUERY, originalTransform.getQuery());
+        context.addInput(
+            PropertyNames.BIGQUERY_FLATTEN_RESULTS, originalTransform.getFlattenResults());
+      } else {
+        TableReference table = originalTransform.getTable();
+        if (table.getProjectId() == null) {
+          // If user does not specify a project we assume the table to be located in the project
+          // that owns the Dataflow job.
+          String projectIdFromOptions = context.getPipelineOptions().getProject();
+          LOG.warn(
+              "No project specified for BigQuery table \"{}.{}\". Assuming it is in \"{}\". If the"
+              + " table is in a different project please specify it as a part of the BigQuery table"
+              + " definition.",
+              table.getDatasetId(),
+              table.getTableId(),
+              projectIdFromOptions);
+          table.setProjectId(projectIdFromOptions);
+        }
+
+        context.addInput(PropertyNames.BIGQUERY_TABLE, table.getTableId());
+        context.addInput(PropertyNames.BIGQUERY_DATASET, table.getDatasetId());
+        if (table.getProjectId() != null) {
+          context.addInput(PropertyNames.BIGQUERY_PROJECT, table.getProjectId());
+        }
+      }
+      context.addValueOnlyOutput(PropertyNames.OUTPUT, context.getOutput(transform));
+    }
+  }
+
+  private static class BatchBigQueryIOWrite extends PTransform<PCollection<TableRow>, PDone> {
+    private final BigQueryIO.Write.Bound transform;
+    /**
+     * Builds an instance of this class from the overridden transform.
+     */
+    @SuppressWarnings("unused") // used via reflection in DataflowPipelineRunner#apply()
+    public BatchBigQueryIOWrite(DataflowPipelineRunner runner, BigQueryIO.Write.Bound transform) {
+      this.transform = transform;
+    }
+
+    @Override
+    public PDone apply(PCollection<TableRow> input) {
+      if (transform.getTable() == null) {
+        // BigQueryIO.Write is using tableRefFunction with StreamWithDeDup.
+        return transform.apply(input);
+      } else {
+        return input
+            .apply(new BatchBigQueryIONativeWrite(transform));
+      }
+    }
+  }
+
+  /**
+   * This {@link PTransform} is used by the {@link DataflowPipelineTranslator} as a way
+   * to provide the native definition of the BigQuery sink.
+   */
+  private static class BatchBigQueryIONativeWrite extends PTransform<PCollection<TableRow>, PDone> {
+    private final BigQueryIO.Write.Bound transform;
+    public BatchBigQueryIONativeWrite(BigQueryIO.Write.Bound transform) {
+      this.transform = transform;
+    }
+
+    @Override
+    public PDone apply(PCollection<TableRow> input) {
+      return PDone.in(input.getPipeline());
+    }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      transform.populateDisplayData(builder);
+    }
+
+    static {
+      DataflowPipelineTranslator.registerTransformTranslator(
+          BatchBigQueryIONativeWrite.class, new BatchBigQueryIONativeWriteTranslator());
+    }
+  }
+
+  /**
+   * {@code BigQueryIO.Write.Bound} support code for the Dataflow backend.
+   */
+  private static class BatchBigQueryIONativeWriteTranslator
+      implements TransformTranslator<BatchBigQueryIONativeWrite> {
+    @SuppressWarnings("unchecked")
+    @Override
+    public void translate(BatchBigQueryIONativeWrite transform,
+        TranslationContext context) {
+      translateWriteHelper(transform, transform.transform, context);
+    }
+
+    private void translateWriteHelper(
+        BatchBigQueryIONativeWrite transform,
+        BigQueryIO.Write.Bound originalTransform,
+        TranslationContext context) {
+      if (context.getPipelineOptions().isStreaming()) {
+        // Streaming is handled by the streaming runner.
+        throw new AssertionError(
+            "BigQueryIO is specified to use streaming write in batch mode.");
+      }
+
+      TableReference table = originalTransform.getTable();
+
+      // Actual translation.
+      context.addStep(transform, "ParallelWrite");
+      context.addInput(PropertyNames.FORMAT, "bigquery");
+      context.addInput(PropertyNames.BIGQUERY_TABLE,
+                       table.getTableId());
+      context.addInput(PropertyNames.BIGQUERY_DATASET,
+                       table.getDatasetId());
+      if (table.getProjectId() != null) {
+        context.addInput(PropertyNames.BIGQUERY_PROJECT, table.getProjectId());
+      }
+      if (originalTransform.getSchema() != null) {
+        try {
+          context.addInput(PropertyNames.BIGQUERY_SCHEMA,
+                           JSON_FACTORY.toString(originalTransform.getSchema()));
+        } catch (IOException exn) {
+          throw new IllegalArgumentException("Invalid table schema.", exn);
+        }
+      }
+      context.addInput(
+          PropertyNames.BIGQUERY_CREATE_DISPOSITION,
+          originalTransform.getCreateDisposition().name());
+      context.addInput(
+          PropertyNames.BIGQUERY_WRITE_DISPOSITION,
+          originalTransform.getWriteDisposition().name());
+      // Set sink encoding to TableRowJsonCoder.
+      context.addEncodingInput(
+          WindowedValue.getValueOnlyCoder(TableRowJsonCoder.of()));
+      context.addInput(PropertyNames.PARALLEL_INPUT, context.getInput(transform));
+    }
+  }
+
+  /**
    * Specialized implementation which overrides
    * {@link com.google.cloud.dataflow.sdk.io.TextIO.Write.Bound TextIO.Write.Bound} with
    * a native sink instead of a custom sink as workaround until custom sinks
@@ -2278,27 +2551,104 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     }
   }
 
+  // ================================================================================
+  // PubsubIO translations
+  // ================================================================================
+
   /**
-   * Specialized implementation for
-   * {@link com.google.cloud.dataflow.sdk.io.PubsubIO.Write PubsubIO.Write} for the
-   * Dataflow runner in streaming mode.
-   *
-   * <p>For internal use only. Subject to change at any time.
-   *
-   * <p>Public so the {@link PubsubIOTranslator} can access.
+   * Suppress application of {@link PubsubUnboundedSource#apply} in streaming mode so that we
+   * can instead defer to Windmill's implementation.
    */
-  public static class StreamingPubsubIOWrite<T> extends PTransform<PCollection<T>, PDone> {
-    private final PubsubIO.Write.Bound<T> transform;
+  private static class StreamingPubsubIORead<T> extends PTransform<PBegin, PCollection<T>> {
+    private final PubsubUnboundedSource<T> transform;
+
+    /**
+     * Builds an instance of this class from the overridden transform.
+     */
+    public StreamingPubsubIORead(
+        DataflowPipelineRunner runner, PubsubUnboundedSource<T> transform) {
+      this.transform = transform;
+    }
+
+    PubsubUnboundedSource<T> getOverriddenTransform() {
+      return transform;
+    }
+
+    @Override
+    public PCollection<T> apply(PBegin input) {
+      return PCollection.<T>createPrimitiveOutputInternal(
+          input.getPipeline(), WindowingStrategy.globalDefault(), IsBounded.UNBOUNDED)
+          .setCoder(transform.getElementCoder());
+    }
+
+    @Override
+    protected String getKindString() {
+      return "StreamingPubsubIORead";
+    }
+
+    static {
+      DataflowPipelineTranslator.registerTransformTranslator(
+          StreamingPubsubIORead.class, new StreamingPubsubIOReadTranslator());
+    }
+  }
+
+  /**
+   * Rewrite {@link StreamingPubsubIORead} to the appropriate internal node.
+   */
+  private static class StreamingPubsubIOReadTranslator implements
+      TransformTranslator<StreamingPubsubIORead> {
+    @Override
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public void translate(
+        StreamingPubsubIORead transform,
+        TranslationContext context) {
+      translateTyped(transform, context);
+    }
+
+    private <T> void translateTyped(
+        StreamingPubsubIORead<T> transform,
+        TranslationContext context) {
+      Preconditions.checkState(context.getPipelineOptions().isStreaming(),
+                               "StreamingPubsubIORead is only for streaming pipelines.");
+      PubsubUnboundedSource<T> overriddenTransform = transform.getOverriddenTransform();
+      context.addStep(transform, "ParallelRead");
+      context.addInput(PropertyNames.FORMAT, "pubsub");
+      if (overriddenTransform.getTopic() != null) {
+        context.addInput(PropertyNames.PUBSUB_TOPIC,
+                         overriddenTransform.getTopic().getV1Beta1Path());
+      }
+      if (overriddenTransform.getSubscription() != null) {
+        context.addInput(
+            PropertyNames.PUBSUB_SUBSCRIPTION,
+            overriddenTransform.getSubscription().getV1Beta1Path());
+      }
+      if (overriddenTransform.getTimestampLabel() != null) {
+        context.addInput(PropertyNames.PUBSUB_TIMESTAMP_LABEL,
+                         overriddenTransform.getTimestampLabel());
+      }
+      if (overriddenTransform.getIdLabel() != null) {
+        context.addInput(PropertyNames.PUBSUB_ID_LABEL, overriddenTransform.getIdLabel());
+      }
+      context.addValueOnlyOutput(PropertyNames.OUTPUT, context.getOutput(transform));
+    }
+  }
+
+  /**
+   * Suppress application of {@link PubsubUnboundedSink#apply} in streaming mode so that we
+   * can instead defer to Windmill's implementation.
+   */
+  private static class StreamingPubsubIOWrite<T> extends PTransform<PCollection<T>, PDone> {
+    private final PubsubUnboundedSink<T> transform;
 
     /**
      * Builds an instance of this class from the overridden transform.
      */
     public StreamingPubsubIOWrite(
-        DataflowPipelineRunner runner, PubsubIO.Write.Bound<T> transform) {
+        DataflowPipelineRunner runner, PubsubUnboundedSink<T> transform) {
       this.transform = transform;
     }
 
-    public PubsubIO.Write.Bound<T> getOverriddenTransform() {
+    PubsubUnboundedSink<T> getOverriddenTransform() {
       return transform;
     }
 
@@ -2311,7 +2661,50 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     protected String getKindString() {
       return "StreamingPubsubIOWrite";
     }
+
+    static {
+      DataflowPipelineTranslator.registerTransformTranslator(
+          StreamingPubsubIOWrite.class, new StreamingPubsubIOWriteTranslator());
+    }
   }
+
+  /**
+   * Rewrite {@link StreamingPubsubIOWrite} to the appropriate internal node.
+   */
+  private static class StreamingPubsubIOWriteTranslator implements
+      TransformTranslator<StreamingPubsubIOWrite> {
+
+    @Override
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public void translate(
+        StreamingPubsubIOWrite transform,
+        TranslationContext context) {
+      translateTyped(transform, context);
+    }
+
+    private <T> void translateTyped(
+        StreamingPubsubIOWrite<T> transform,
+        TranslationContext context) {
+      Preconditions.checkState(context.getPipelineOptions().isStreaming(),
+                               "StreamingPubsubIOWrite is only for streaming pipelines.");
+      PubsubUnboundedSink<T> overriddenTransform = transform.getOverriddenTransform();
+      context.addStep(transform, "ParallelWrite");
+      context.addInput(PropertyNames.FORMAT, "pubsub");
+      context.addInput(PropertyNames.PUBSUB_TOPIC, overriddenTransform.getTopic().getV1Beta1Path());
+      if (overriddenTransform.getTimestampLabel() != null) {
+        context.addInput(PropertyNames.PUBSUB_TIMESTAMP_LABEL,
+                         overriddenTransform.getTimestampLabel());
+      }
+      if (overriddenTransform.getIdLabel() != null) {
+        context.addInput(PropertyNames.PUBSUB_ID_LABEL, overriddenTransform.getIdLabel());
+      }
+      context.addEncodingInput(
+          WindowedValue.getValueOnlyCoder(overriddenTransform.getElementCoder()));
+      context.addInput(PropertyNames.PARALLEL_INPUT, context.getInput(transform));
+    }
+  }
+
+  // ================================================================================
 
   /**
    * Specialized implementation for
@@ -2854,11 +3247,14 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
   }
 
   /**
-   * Specialized expansion for unsupported IO transforms that throws an error.
+   * Specialized expansion for unsupported IO transforms and DoFns that throws an error.
    */
   private static class UnsupportedIO<InputT extends PInput, OutputT extends POutput>
       extends PTransform<InputT, OutputT> {
+    @Nullable
     private PTransform<?, ?> transform;
+    @Nullable
+    private DoFn<?, ?> doFn;
 
     /**
      * Builds an instance of this class from the overridden transform.
@@ -2916,13 +3312,51 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
       this.transform = transform;
     }
 
+    /**
+     * Builds an instance of this class from the overridden doFn.
+     */
+    @SuppressWarnings("unused") // used via reflection in DataflowPipelineRunner#apply()
+    public UnsupportedIO(DataflowPipelineRunner runner,
+                         PubsubIO.Read.Bound<?>.PubsubBoundedReader doFn) {
+      this.doFn = doFn;
+    }
+
+    /**
+     * Builds an instance of this class from the overridden doFn.
+     */
+    @SuppressWarnings("unused") // used via reflection in DataflowPipelineRunner#apply()
+    public UnsupportedIO(DataflowPipelineRunner runner,
+                         PubsubIO.Write.Bound<?>.PubsubBoundedWriter doFn) {
+      this.doFn = doFn;
+    }
+
+    /**
+     * Builds an instance of this class from the overridden transform.
+     */
+    @SuppressWarnings("unused") // used via reflection in DataflowPipelineRunner#apply()
+    public UnsupportedIO(DataflowPipelineRunner runner, PubsubUnboundedSource<?> transform) {
+      this.transform = transform;
+    }
+
+    /**
+     * Builds an instance of this class from the overridden transform.
+     */
+    @SuppressWarnings("unused") // used via reflection in DataflowPipelineRunner#apply()
+    public UnsupportedIO(DataflowPipelineRunner runner, PubsubUnboundedSink<?> transform) {
+      this.transform = transform;
+    }
+
+
     @Override
     public OutputT apply(InputT input) {
       String mode = input.getPipeline().getOptions().as(StreamingOptions.class).isStreaming()
           ? "streaming" : "batch";
+      String name =
+          transform == null
+              ? approximateSimpleName(doFn.getClass())
+              : approximatePTransformName(transform.getClass());
       throw new UnsupportedOperationException(
-          String.format("The DataflowPipelineRunner in %s mode does not support %s.",
-              mode, approximatePTransformName(transform.getClass())));
+          String.format("The DataflowPipelineRunner in %s mode does not support %s.", mode, name));
     }
   }
 

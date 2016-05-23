@@ -22,7 +22,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.CommittedBundle;
-import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.InProcessEvaluationContext;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.UncommittedBundle;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
@@ -44,6 +43,7 @@ import org.junit.runners.JUnit4;
  */
 @RunWith(JUnit4.class)
 public class FlattenEvaluatorFactoryTest {
+  private BundleFactory bundleFactory = InProcessBundleFactory.create();
   @Test
   public void testFlattenInMemoryEvaluator() throws Exception {
     TestPipeline p = TestPipeline.create();
@@ -53,13 +53,15 @@ public class FlattenEvaluatorFactoryTest {
 
     PCollection<Integer> flattened = list.apply(Flatten.<Integer>pCollections());
 
-    CommittedBundle<Integer> leftBundle = InProcessBundle.unkeyed(left).commit(Instant.now());
-    CommittedBundle<Integer> rightBundle = InProcessBundle.unkeyed(right).commit(Instant.now());
+    CommittedBundle<Integer> leftBundle =
+        bundleFactory.createRootBundle(left).commit(Instant.now());
+    CommittedBundle<Integer> rightBundle =
+        bundleFactory.createRootBundle(right).commit(Instant.now());
 
     InProcessEvaluationContext context = mock(InProcessEvaluationContext.class);
 
-    UncommittedBundle<Integer> flattenedLeftBundle = InProcessBundle.unkeyed(flattened);
-    UncommittedBundle<Integer> flattenedRightBundle = InProcessBundle.unkeyed(flattened);
+    UncommittedBundle<Integer> flattenedLeftBundle = bundleFactory.createRootBundle(flattened);
+    UncommittedBundle<Integer> flattenedRightBundle = bundleFactory.createRootBundle(flattened);
 
     when(context.createBundle(leftBundle, flattened)).thenReturn(flattenedLeftBundle);
     when(context.createBundle(rightBundle, flattened)).thenReturn(flattenedRightBundle);

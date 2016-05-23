@@ -19,6 +19,8 @@ package com.google.cloud.dataflow.sdk.transforms;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.CannotProvideCoderException;
 import com.google.cloud.dataflow.sdk.coders.Coder;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData.Builder;
+import com.google.cloud.dataflow.sdk.transforms.display.HasDisplayData;
 import com.google.cloud.dataflow.sdk.util.StringUtils;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.cloud.dataflow.sdk.values.POutput;
@@ -161,14 +163,14 @@ import java.io.Serializable;
  * operations that do not save or restore any state.
  *
  * @see <a href=
- * "https://cloud.google.com/dataflow/java-sdk/applying-transforms"
+ * "https://cloud.google.com/dataflow/model/transforms#How-Transforms-Work"
  * >Applying Transformations</a>
  *
  * @param <InputT> the type of the input to this PTransform
  * @param <OutputT> the type of the output of this PTransform
  */
 public abstract class PTransform<InputT extends PInput, OutputT extends POutput>
-    implements Serializable /* See the note above */ {
+    implements Serializable /* See the note above */, HasDisplayData {
   /**
    * Applies this {@code PTransform} on the given {@code InputT}, and returns its
    * {@code Output}.
@@ -308,5 +310,15 @@ public abstract class PTransform<InputT extends PInput, OutputT extends POutput>
     @SuppressWarnings("unchecked")
     Coder<T> defaultOutputCoder = (Coder<T>) getDefaultOutputCoder(input);
     return defaultOutputCoder;
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>By default, does not register any display data. Implementors may override this method
+   * to provide their own display data.
+   */
+  @Override
+  public void populateDisplayData(Builder builder) {
   }
 }

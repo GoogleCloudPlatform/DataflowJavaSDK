@@ -23,6 +23,7 @@ import com.google.cloud.dataflow.sdk.io.CountingSource.NowTimestampFn;
 import com.google.cloud.dataflow.sdk.io.Read.Unbounded;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.values.PBegin;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
@@ -108,6 +109,13 @@ public class CountingInput {
     public PCollection<Long> apply(PBegin begin) {
       return begin.apply(Read.from(CountingSource.upTo(numElements)));
     }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+      builder.add(DisplayData.item("upTo", numElements)
+        .withLabel("Count Up To"));
+    }
   }
 
   /**
@@ -185,6 +193,24 @@ public class CountingInput {
       } else {
         return begin.apply(
             read.withMaxReadTime(maxReadTime.get()).withMaxNumRecords(maxNumRecords.get()));
+      }
+    }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+
+      builder.add(DisplayData.item("timestampFn", timestampFn.getClass())
+        .withLabel("Timestamp Function"));
+
+      if (maxReadTime.isPresent()) {
+        builder.add(DisplayData.item("maxReadTime", maxReadTime.get())
+          .withLabel("Maximum Read Time"));
+      }
+
+      if (maxNumRecords.isPresent()) {
+        builder.add(DisplayData.item("maxRecords", maxNumRecords.get())
+          .withLabel("Maximum Read Records"));
       }
     }
   }

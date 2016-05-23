@@ -82,8 +82,8 @@ public class Transport {
   private static ApiComponents apiComponentsFromUrl(String urlString) {
     try {
       URL url = new URL(urlString);
-      String rootUrl = url.getProtocol() + "://" + url.getHost() +
-          (url.getPort() > 0 ? ":" + url.getPort() : "");
+      String rootUrl = url.getProtocol() + "://" + url.getHost()
+          + (url.getPort() > 0 ? ":" + url.getPort() : "");
       return new ApiComponents(rootUrl, url.getPath());
     } catch (MalformedURLException e) {
       throw new RuntimeException("Invalid URL: " + urlString);
@@ -112,7 +112,11 @@ public class Transport {
    *
    * <p>Note: this client's endpoint is <b>not</b> modified by the
    * {@link DataflowPipelineDebugOptions#getApiRootUrl()} option.
+   *
+   * @deprecated Use an appropriate
+   * {@link com.google.cloud.dataflow.sdk.util.PubsubClient.PubsubClientFactory}
    */
+  @Deprecated
   public static Pubsub.Builder
       newPubsubClient(DataflowPipelineOptions options) {
     return new Pubsub.Builder(getTransport(), getJsonFactory(),

@@ -25,6 +25,7 @@ import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.DoFn.Context;
+import com.google.cloud.dataflow.sdk.transforms.display.HasDisplayData;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -137,7 +138,8 @@ import javax.annotation.concurrent.ThreadSafe;
  *
  * <p>{@link Default @Default} represents a set of annotations that can be used to annotate getter
  * properties on {@link PipelineOptions} with information representing the default value to be
- * returned if no value is specified.
+ * returned if no value is specified. Any default implementation (using the {@code default} keyword)
+ * is ignored.
  *
  * <p>{@link Hidden @Hidden} hides an option from being listed when {@code --help}
  * is invoked via {@link PipelineOptionsFactory#fromArgs(String[])}.
@@ -191,7 +193,7 @@ import javax.annotation.concurrent.ThreadSafe;
 @JsonSerialize(using = Serializer.class)
 @JsonDeserialize(using = Deserializer.class)
 @ThreadSafe
-public interface PipelineOptions {
+public interface PipelineOptions extends HasDisplayData {
   /**
    * Transforms this object into an object of type {@code <T>} saving each property
    * that has been manipulated. {@code <T>} must extend {@link PipelineOptions}.
@@ -245,4 +247,18 @@ public interface PipelineOptions {
   @Default.Enum("WARNING")
   CheckEnabled getStableUniqueNames();
   void setStableUniqueNames(CheckEnabled enabled);
+
+  /**
+   * A pipeline level default location for storing temporary files.
+   *
+   * <p>This can be a path of any file system.
+   *
+   * <p>{@link #getTempLocation()} can be used as a default location in other
+   * {@link PipelineOptions}.
+   *
+   * <p>If it is unset, {@link PipelineRunner} can override it.
+   */
+  @Description("A pipeline level default location for storing temporary files.")
+  String getTempLocation();
+  void setTempLocation(String value);
 }

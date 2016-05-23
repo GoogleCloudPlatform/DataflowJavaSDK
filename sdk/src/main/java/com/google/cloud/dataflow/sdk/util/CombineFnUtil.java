@@ -19,9 +19,13 @@ package com.google.cloud.dataflow.sdk.util;
 import com.google.cloud.dataflow.sdk.coders.CannotProvideCoderException;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.CoderRegistry;
+import com.google.cloud.dataflow.sdk.transforms.Combine.CombineFn;
 import com.google.cloud.dataflow.sdk.transforms.Combine.KeyedCombineFn;
+import com.google.cloud.dataflow.sdk.transforms.CombineFnBase.GlobalCombineFn;
+import com.google.cloud.dataflow.sdk.transforms.CombineWithContext.CombineFnWithContext;
 import com.google.cloud.dataflow.sdk.transforms.CombineWithContext.Context;
 import com.google.cloud.dataflow.sdk.transforms.CombineWithContext.KeyedCombineFnWithContext;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.state.StateContext;
 
 import java.io.IOException;
@@ -44,6 +48,65 @@ public class CombineFnUtil {
       StateContext<?> stateContext) {
     Context context = CombineContextFactory.createFromStateContext(stateContext);
     return new NonSerializableBoundedKeyedCombineFn<>(combineFn, context);
+  }
+
+  /**
+   * Return a {@link CombineFnWithContext} from the given {@link GlobalCombineFn}.
+   */
+  public static <InputT, AccumT, OutputT>
+      CombineFnWithContext<InputT, AccumT, OutputT> toFnWithContext(
+          GlobalCombineFn<InputT, AccumT, OutputT> globalCombineFn) {
+    if (globalCombineFn instanceof CombineFnWithContext) {
+      @SuppressWarnings("unchecked")
+      CombineFnWithContext<InputT, AccumT, OutputT> combineFnWithContext =
+          (CombineFnWithContext<InputT, AccumT, OutputT>) globalCombineFn;
+      return combineFnWithContext;
+    } else {
+      @SuppressWarnings("unchecked")
+      final CombineFn<InputT, AccumT, OutputT> combineFn =
+          (CombineFn<InputT, AccumT, OutputT>) globalCombineFn;
+      return new CombineFnWithContext<InputT, AccumT, OutputT>() {
+        @Override
+        public AccumT createAccumulator(Context c) {
+          return combineFn.createAccumulator();
+        }
+        @Override
+        public AccumT addInput(AccumT accumulator, InputT input, Context c) {
+          return combineFn.addInput(accumulator, input);
+        }
+        @Override
+        public AccumT mergeAccumulators(Iterable<AccumT> accumulators, Context c) {
+          return combineFn.mergeAccumulators(accumulators);
+        }
+        @Override
+        public OutputT extractOutput(AccumT accumulator, Context c) {
+          return combineFn.extractOutput(accumulator);
+        }
+        @Override
+        public AccumT compact(AccumT accumulator, Context c) {
+          return combineFn.compact(accumulator);
+        }
+        @Override
+        public OutputT defaultValue() {
+          return combineFn.defaultValue();
+        }
+        @Override
+        public Coder<AccumT> getAccumulatorCoder(CoderRegistry registry, Coder<InputT> inputCoder)
+            throws CannotProvideCoderException {
+          return combineFn.getAccumulatorCoder(registry, inputCoder);
+        }
+        @Override
+        public Coder<OutputT> getDefaultOutputCoder(
+            CoderRegistry registry, Coder<InputT> inputCoder) throws CannotProvideCoderException {
+          return combineFn.getDefaultOutputCoder(registry, inputCoder);
+        }
+        @Override
+        public void populateDisplayData(DisplayData.Builder builder) {
+          super.populateDisplayData(builder);
+          combineFn.populateDisplayData(builder);
+        }
+      };
+    }
   }
 
   private static class NonSerializableBoundedKeyedCombineFn<K, InputT, AccumT, OutputT>
@@ -86,6 +149,10 @@ public class CombineFnUtil {
     public Coder<OutputT> getDefaultOutputCoder(CoderRegistry registry, Coder<K> keyCoder,
         Coder<InputT> inputCoder) throws CannotProvideCoderException {
       return combineFn.getDefaultOutputCoder(registry, keyCoder, inputCoder);
+    }
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      combineFn.populateDisplayData(builder);
     }
 
     private void writeObject(@SuppressWarnings("unused") ObjectOutputStream out)

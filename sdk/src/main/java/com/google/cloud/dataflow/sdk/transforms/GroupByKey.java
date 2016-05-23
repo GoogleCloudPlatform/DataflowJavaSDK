@@ -25,6 +25,7 @@ import com.google.cloud.dataflow.sdk.coders.IterableCoder;
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner.ValueWithMetadata;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.transforms.windowing.DefaultTrigger;
 import com.google.cloud.dataflow.sdk.transforms.windowing.GlobalWindows;
@@ -315,6 +316,15 @@ public class GroupByKey<K, V>
     return KvCoder.of(getKeyCoder(inputCoder), getOutputValueCoder(inputCoder));
   }
 
+  @Override
+  public void populateDisplayData(DisplayData.Builder builder) {
+    super.populateDisplayData(builder);
+    if (fewKeys) {
+      builder.add(DisplayData.item("fewKeys", true)
+        .withLabel("Has Few Keys"));
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////
 
   /**
@@ -515,8 +525,8 @@ public class GroupByKey<K, V>
         // TODO: Put in better element printing:
         // truncate if too long.
         throw new IllegalArgumentException(
-            "unable to encode key " + key + " of input to " + transform +
-            " using " + keyCoder,
+            "unable to encode key " + key + " of input to " + transform
+            + " using " + keyCoder,
             exn);
       }
       GroupingKey<K> groupingKey = new GroupingKey<>(key, encodedKey);

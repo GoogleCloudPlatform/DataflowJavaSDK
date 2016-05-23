@@ -16,15 +16,24 @@
 package com.google.cloud.dataflow.sdk.runners.inprocess;
 
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessExecutionContext.InProcessStepContext;
+import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.CommittedBundle;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.UncommittedBundle;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
+import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.util.DoFnRunner;
+import com.google.cloud.dataflow.sdk.util.DoFnRunners;
 import com.google.cloud.dataflow.sdk.util.DoFnRunners.OutputManager;
+import com.google.cloud.dataflow.sdk.util.PushbackSideInputDoFnRunner;
+import com.google.cloud.dataflow.sdk.util.ReadyCheckingSideInputReader;
+import com.google.cloud.dataflow.sdk.util.SerializableUtils;
+import com.google.cloud.dataflow.sdk.util.UserCodeException;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.common.CounterSet;
 import com.google.cloud.dataflow.sdk.util.state.CopyOnAccessInMemoryStateInternals;
 import com.google.cloud.dataflow.sdk.values.PCollection;
+import com.google.cloud.dataflow.sdk.values.PCollectionView;
 import com.google.cloud.dataflow.sdk.values.TupleTag;
+import com.google.common.collect.ImmutableList;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -33,14 +42,68 @@ import java.util.List;
 import java.util.Map;
 
 class ParDoInProcessEvaluator<T> implements TransformEvaluator<T> {
-  private final DoFnRunner<T, ?> fnRunner;
+  public static <InputT, OutputT> ParDoInProcessEvaluator<InputT> create(
+      InProcessEvaluationContext evaluationContext,
+      CommittedBundle<InputT> inputBundle,
+      AppliedPTransform<PCollection<InputT>, ?, ?> application,
+      DoFn<InputT, OutputT> fn,
+      List<PCollectionView<?>> sideInputs,
+      TupleTag<OutputT> mainOutputTag,
+      List<TupleTag<?>> sideOutputTags,
+      Map<TupleTag<?>, PCollection<?>> outputs) {
+    InProcessExecutionContext executionContext =
+        evaluationContext.getExecutionContext(application, inputBundle.getKey());
+    String stepName = evaluationContext.getStepName(application);
+    InProcessStepContext stepContext =
+        executionContext.getOrCreateStepContext(stepName, stepName, null);
+
+    CounterSet counters = evaluationContext.createCounterSet();
+
+    Map<TupleTag<?>, UncommittedBundle<?>> outputBundles = new HashMap<>();
+    for (Map.Entry<TupleTag<?>, PCollection<?>> outputEntry : outputs.entrySet()) {
+      outputBundles.put(
+          outputEntry.getKey(),
+          evaluationContext.createBundle(inputBundle, outputEntry.getValue()));
+    }
+
+    ReadyCheckingSideInputReader sideInputReader =
+        evaluationContext.createSideInputReader(sideInputs);
+    DoFnRunner<InputT, OutputT> underlying =
+        DoFnRunners.createDefault(
+            evaluationContext.getPipelineOptions(),
+            SerializableUtils.clone(fn),
+            sideInputReader,
+            BundleOutputManager.create(outputBundles),
+            mainOutputTag,
+            sideOutputTags,
+            stepContext,
+            counters.getAddCounterMutator(),
+            application.getInput().getWindowingStrategy());
+    PushbackSideInputDoFnRunner<InputT, OutputT> runner =
+        PushbackSideInputDoFnRunner.create(underlying, sideInputs, sideInputReader);
+
+    try {
+      runner.startBundle();
+    } catch (Exception e) {
+      throw UserCodeException.wrap(e);
+    }
+
+    return new ParDoInProcessEvaluator<>(
+        runner, application, counters, outputBundles.values(), stepContext);
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////
+
+  private final PushbackSideInputDoFnRunner<T, ?> fnRunner;
   private final AppliedPTransform<PCollection<T>, ?, ?> transform;
   private final CounterSet counters;
   private final Collection<UncommittedBundle<?>> outputBundles;
   private final InProcessStepContext stepContext;
 
-  public ParDoInProcessEvaluator(
-      DoFnRunner<T, ?> fnRunner,
+  private final ImmutableList.Builder<WindowedValue<T>> unprocessedElements;
+
+  private ParDoInProcessEvaluator(
+      PushbackSideInputDoFnRunner<T, ?> fnRunner,
       AppliedPTransform<PCollection<T>, ?, ?> transform,
       CounterSet counters,
       Collection<UncommittedBundle<?>> outputBundles,
@@ -50,16 +113,27 @@ class ParDoInProcessEvaluator<T> implements TransformEvaluator<T> {
     this.counters = counters;
     this.outputBundles = outputBundles;
     this.stepContext = stepContext;
+
+    this.unprocessedElements = ImmutableList.builder();
   }
 
   @Override
   public void processElement(WindowedValue<T> element) {
-    fnRunner.processElement(element);
+    try {
+      Iterable<WindowedValue<T>> unprocessed = fnRunner.processElementInReadyWindows(element);
+      unprocessedElements.addAll(unprocessed);
+    } catch (Exception e) {
+      throw UserCodeException.wrap(e);
+    }
   }
 
   @Override
   public InProcessTransformResult finishBundle() {
-    fnRunner.finishBundle();
+    try {
+      fnRunner.finishBundle();
+    } catch (Exception e) {
+      throw UserCodeException.wrap(e);
+    }
     StepTransformResult.Builder resultBuilder;
     CopyOnAccessInMemoryStateInternals<?> state = stepContext.commitState();
     if (state != null) {
@@ -73,6 +147,7 @@ class ParDoInProcessEvaluator<T> implements TransformEvaluator<T> {
         .addOutput(outputBundles)
         .withTimerUpdate(stepContext.getTimerUpdate())
         .withCounters(counters)
+        .addUnprocessedElements(unprocessedElements.build())
         .build();
   }
 

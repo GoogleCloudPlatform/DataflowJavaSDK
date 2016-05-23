@@ -16,21 +16,31 @@
 
 package com.google.cloud.dataflow.sdk.io;
 
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.includesDisplayDataFrom;
+
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.not;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
+import com.google.cloud.dataflow.sdk.io.BoundedSource.BoundedReader;
+import com.google.cloud.dataflow.sdk.io.CompressedSource.CompressedReader;
 import com.google.cloud.dataflow.sdk.io.CompressedSource.CompressionMode;
 import com.google.cloud.dataflow.sdk.io.CompressedSource.DecompressingChannelFactory;
+import com.google.cloud.dataflow.sdk.io.FileBasedSource.FileBasedReader;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.testing.DataflowAssert;
 import com.google.cloud.dataflow.sdk.testing.SourceTestUtils;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.common.io.Files;
 import com.google.common.primitives.Bytes;
@@ -46,16 +56,19 @@ import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Random;
+import java.util.zip.GZIPOutputStream;
 
 import javax.annotation.Nullable;
 
@@ -95,6 +108,49 @@ public class CompressedSourceTest {
   public void testEmptyReadGzip() throws Exception {
     byte[] input = generateInput(0);
     runReadTest(input, CompressionMode.GZIP);
+  }
+
+  private static byte[] compressGzip(byte[] input) throws IOException {
+    ByteArrayOutputStream res = new ByteArrayOutputStream();
+    try (GZIPOutputStream gzipStream = new GZIPOutputStream(res)) {
+      gzipStream.write(input);
+    }
+    return res.toByteArray();
+  }
+
+  private static byte[] concat(byte[] first, byte[] second) {
+    byte[] res = new byte[first.length + second.length];
+    System.arraycopy(first, 0, res, 0, first.length);
+    System.arraycopy(second, 0, res, first.length, second.length);
+    return res;
+  }
+
+  /**
+   * Test a concatenation of gzip files is correctly decompressed.
+   *
+   * <p>A concatenation of gzip files as one file is a valid gzip file and should decompress
+   * to be the concatenation of those individual files.
+   */
+  @Test
+  public void testReadConcatenatedGzip() throws IOException {
+    byte[] header = "a,b,c\n".getBytes(StandardCharsets.UTF_8);
+    byte[] body = "1,2,3\n4,5,6\n7,8,9\n".getBytes(StandardCharsets.UTF_8);
+    byte[] expected = concat(header, body);
+    byte[] totalGz = concat(compressGzip(header), compressGzip(body));
+    File tmpFile = tmpFolder.newFile();
+    try (FileOutputStream os = new FileOutputStream(tmpFile)) {
+      os.write(totalGz);
+    }
+
+    Pipeline p = TestPipeline.create();
+
+    CompressedSource<Byte> source =
+        CompressedSource.from(new ByteSource(tmpFile.getAbsolutePath(), 1))
+            .withDecompression(CompressionMode.GZIP);
+    PCollection<Byte> output = p.apply(Read.from(source));
+
+    DataflowAssert.that(output).containsInAnyOrder(Bytes.asList(expected));
+    p.run();
   }
 
   /**
@@ -284,6 +340,27 @@ public class CompressedSourceTest {
     p.run();
   }
 
+  @Test
+  public void testDisplayData() {
+    ByteSource inputSource = new ByteSource("foobar.txt", 1) {
+      @Override
+      public void populateDisplayData(DisplayData.Builder builder) {
+        builder.add(DisplayData.item("foo", "bar"));
+      }
+    };
+
+    CompressedSource<?> compressedSource = CompressedSource.from(inputSource);
+    CompressedSource<?> gzipSource = compressedSource.withDecompression(CompressionMode.GZIP);
+
+    DisplayData compressedSourceDisplayData = DisplayData.from(compressedSource);
+    DisplayData gzipDisplayData = DisplayData.from(gzipSource);
+
+    assertThat(compressedSourceDisplayData, hasDisplayItem("compressionMode"));
+    assertThat(gzipDisplayData, hasDisplayItem("compressionMode", CompressionMode.GZIP.toString()));
+    assertThat(compressedSourceDisplayData, hasDisplayItem("source", inputSource.getClass()));
+    assertThat(compressedSourceDisplayData, includesDisplayDataFrom(inputSource));
+  }
+
   /**
    * Generate byte array of given size.
    */
@@ -388,11 +465,12 @@ public class CompressedSourceTest {
     private static class ByteReader extends FileBasedReader<Byte> {
       ByteBuffer buff = ByteBuffer.allocate(1);
       Byte current;
-      long offset = -1;
+      long offset;
       ReadableByteChannel channel;
 
       public ByteReader(ByteSource source) {
         super(source);
+        offset = source.getStartOffset() - 1;
       }
 
       @Override
@@ -425,6 +503,104 @@ public class CompressedSourceTest {
       protected long getCurrentOffset() {
         return offset;
       }
+    }
+  }
+
+  @Test
+  public void testEmptyGzipProgress() throws IOException {
+    File tmpFile = tmpFolder.newFile("empty.gz");
+    String filename = tmpFile.toPath().toString();
+    writeFile(tmpFile, new byte[0], CompressionMode.GZIP);
+
+    PipelineOptions options = PipelineOptionsFactory.create();
+    CompressedSource<Byte> source = CompressedSource.from(new ByteSource(filename, 1));
+    try (BoundedReader<Byte> readerOrig = source.createReader(options)) {
+      assertThat(readerOrig, instanceOf(CompressedReader.class));
+      CompressedReader<Byte> reader = (CompressedReader<Byte>) readerOrig;
+      // before starting
+      assertEquals(0.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(1, reader.getSplitPointsRemaining());
+
+      // confirm empty
+      assertFalse(reader.start());
+
+      // after reading empty source
+      assertEquals(1.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(0, reader.getSplitPointsRemaining());
+    }
+  }
+
+  @Test
+  public void testGzipProgress() throws IOException {
+    int numRecords = 3;
+    File tmpFile = tmpFolder.newFile("nonempty.gz");
+    String filename = tmpFile.toPath().toString();
+    writeFile(tmpFile, new byte[numRecords], CompressionMode.GZIP);
+
+    PipelineOptions options = PipelineOptionsFactory.create();
+    CompressedSource<Byte> source = CompressedSource.from(new ByteSource(filename, 1));
+    try (BoundedReader<Byte> readerOrig = source.createReader(options)) {
+      assertThat(readerOrig, instanceOf(CompressedReader.class));
+      CompressedReader<Byte> reader = (CompressedReader<Byte>) readerOrig;
+      // before starting
+      assertEquals(0.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(1, reader.getSplitPointsRemaining());
+
+      // confirm has three records
+      for (int i = 0; i < numRecords; ++i) {
+        if (i == 0) {
+          assertTrue(reader.start());
+        } else {
+          assertTrue(reader.advance());
+        }
+        assertEquals(0, reader.getSplitPointsConsumed());
+        assertEquals(1, reader.getSplitPointsRemaining());
+      }
+      assertFalse(reader.advance());
+
+      // after reading empty source
+      assertEquals(1.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(1, reader.getSplitPointsConsumed());
+      assertEquals(0, reader.getSplitPointsRemaining());
+    }
+  }
+
+  @Test
+  public void testSplittableProgress() throws IOException {
+    File tmpFile = tmpFolder.newFile("nonempty.txt");
+    String filename = tmpFile.toPath().toString();
+    Files.write(new byte[2], tmpFile);
+
+    PipelineOptions options = PipelineOptionsFactory.create();
+    CompressedSource<Byte> source = CompressedSource.from(new ByteSource(filename, 1));
+    try (BoundedReader<Byte> readerOrig = source.createReader(options)) {
+      assertThat(readerOrig, not(instanceOf(CompressedReader.class)));
+      assertThat(readerOrig, instanceOf(FileBasedReader.class));
+      FileBasedReader<Byte> reader = (FileBasedReader<Byte>) readerOrig;
+
+      // Check preconditions before starting
+      assertEquals(0.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, reader.getSplitPointsRemaining());
+
+      // First record: none consumed, unknown remaining.
+      assertTrue(reader.start());
+      assertEquals(0, reader.getSplitPointsConsumed());
+      assertEquals(BoundedReader.SPLIT_POINTS_UNKNOWN, reader.getSplitPointsRemaining());
+
+      // Second record: 1 consumed, know that we're on the last record.
+      assertTrue(reader.advance());
+      assertEquals(1, reader.getSplitPointsConsumed());
+      assertEquals(1, reader.getSplitPointsRemaining());
+
+      // Confirm empty and check post-conditions
+      assertFalse(reader.advance());
+      assertEquals(1.0, reader.getFractionConsumed(), 1e-6);
+      assertEquals(2, reader.getSplitPointsConsumed());
+      assertEquals(0, reader.getSplitPointsRemaining());
     }
   }
 }

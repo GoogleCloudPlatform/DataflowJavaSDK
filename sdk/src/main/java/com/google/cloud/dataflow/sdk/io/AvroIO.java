@@ -25,6 +25,7 @@ import com.google.cloud.dataflow.sdk.io.Read.Bounded;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
 import com.google.cloud.dataflow.sdk.util.MimeTypes;
 import com.google.cloud.dataflow.sdk.values.PCollection;
@@ -325,6 +326,16 @@ public class AvroIO {
       }
 
       @Override
+      public void populateDisplayData(DisplayData.Builder builder) {
+        super.populateDisplayData(builder);
+        builder
+          .addIfNotNull(DisplayData.item("filePattern", filepattern)
+            .withLabel("Input File Pattern"))
+          .addIfNotDefault(DisplayData.item("validation", validate)
+            .withLabel("Validation Enabled"), true);
+      }
+
+      @Override
       protected Coder<T> getDefaultOutputCoder() {
         return AvroCoder.of(type, schema);
       }
@@ -465,6 +476,8 @@ public class AvroIO {
      * @param <T> the type of each of the elements of the input PCollection
      */
     public static class Bound<T> extends PTransform<PCollection<T>, PDone> {
+      private static final String DEFAULT_SHARD_TEMPLATE = ShardNameTemplate.INDEX_OF_MAX;
+
       /** The filename to write to. */
       @Nullable
       final String filenamePrefix;
@@ -483,7 +496,7 @@ public class AvroIO {
       final boolean validate;
 
       Bound(Class<T> type) {
-        this(null, null, "", 0, ShardNameTemplate.INDEX_OF_MAX, type, null, true);
+        this(null, null, "", 0, DEFAULT_SHARD_TEMPLATE, type, null, true);
       }
 
       Bound(
@@ -675,6 +688,28 @@ public class AvroIO {
             com.google.cloud.dataflow.sdk.io.Write.to(
                 new AvroSink<>(
                     filenamePrefix, filenameSuffix, shardTemplate, AvroCoder.of(type, schema))));
+      }
+
+      @Override
+      public void populateDisplayData(DisplayData.Builder builder) {
+        super.populateDisplayData(builder);
+        builder
+            .add(DisplayData.item("schema", type)
+              .withLabel("Record Schema"))
+            .addIfNotNull(DisplayData.item("filePrefix", filenamePrefix)
+              .withLabel("Output File Prefix"))
+            .addIfNotDefault(DisplayData.item("shardNameTemplate", shardTemplate)
+                .withLabel("Output Shard Name Template"),
+                DEFAULT_SHARD_TEMPLATE)
+            .addIfNotDefault(DisplayData.item("fileSuffix", filenameSuffix)
+                .withLabel("Output File Suffix"),
+                "")
+            .addIfNotDefault(DisplayData.item("numShards", numShards)
+                .withLabel("Maximum Output Shards"),
+                0)
+            .addIfNotDefault(DisplayData.item("validation", validate)
+                .withLabel("Validation Enabled"),
+                true);
       }
 
       /**

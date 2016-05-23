@@ -56,6 +56,7 @@ import com.google.cloud.dataflow.sdk.io.Sink.Writer;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineWorkerPoolOptions;
 import com.google.cloud.dataflow.sdk.options.GcpOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.AttemptBoundedExponentialBackOff;
 import com.google.cloud.dataflow.sdk.util.RetryHttpRequestInitializer;
 import com.google.cloud.dataflow.sdk.values.PCollection;
@@ -397,6 +398,23 @@ public class DatastoreIO {
     }
 
     @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+      builder
+          .addIfNotDefault(DisplayData.item("host", host)
+            .withLabel("Datastore Service"), DEFAULT_HOST)
+          .addIfNotNull(DisplayData.item("dataset", datasetId)
+            .withLabel("Input Dataset"))
+          .addIfNotNull(DisplayData.item("namespace", namespace)
+            .withLabel("App Engine Namespace"));
+
+      if (query != null) {
+        builder.add(DisplayData.item("query", query.toString())
+          .withLabel("Query"));
+      }
+    }
+
+    @Override
     public String toString() {
       return MoreObjects.toStringHelper(getClass())
           .add("host", host)
@@ -596,6 +614,16 @@ public class DatastoreIO {
     @Override
     public DatastoreWriteOperation createWriteOperation(PipelineOptions options) {
       return new DatastoreWriteOperation(this);
+    }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+      builder
+          .addIfNotDefault(DisplayData.item("host", host)
+            .withLabel("Datastore Service"), DEFAULT_HOST)
+          .addIfNotNull(DisplayData.item("dataset", datasetId)
+            .withLabel("Output Dataset"));
     }
   }
 
@@ -847,6 +875,8 @@ public class DatastoreIO {
      */
     private int userLimit;
 
+    private volatile boolean done = false;
+
     private Entity currentEntity;
 
     /**
@@ -867,6 +897,16 @@ public class DatastoreIO {
     }
 
     @Override
+    public final long getSplitPointsConsumed() {
+      return done ? 1 : 0;
+    }
+
+    @Override
+    public final long getSplitPointsRemaining() {
+      return done ? 0 : 1;
+    }
+
+    @Override
     public boolean start() throws IOException {
       return advance();
     }
@@ -883,6 +923,7 @@ public class DatastoreIO {
 
       if (entities == null || !entities.hasNext()) {
         currentEntity = null;
+        done = true;
         return false;
       }
 

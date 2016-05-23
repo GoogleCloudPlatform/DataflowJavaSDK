@@ -36,7 +36,6 @@ import com.google.cloud.dataflow.sdk.util.AttemptBoundedExponentialBackOff;
 import com.google.cloud.dataflow.sdk.util.MapAggregatorValues;
 import com.google.cloud.dataflow.sdk.util.MonitoringUtil;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Throwables;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -348,7 +347,10 @@ public class DataflowPipelineJob implements PipelineResult {
     try {
       return BackOffUtils.next(sleeper, backoff);
     } catch (InterruptedException | IOException e) {
-      throw Throwables.propagate(e);
+      if (e instanceof InterruptedException) {
+        Thread.currentThread().interrupt();
+      }
+      throw new RuntimeException(e);
     }
   }
 

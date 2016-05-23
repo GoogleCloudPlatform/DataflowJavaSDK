@@ -27,6 +27,7 @@ import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
 import com.google.cloud.dataflow.sdk.util.MimeTypes;
 import com.google.cloud.dataflow.sdk.values.PCollection;
@@ -339,6 +340,19 @@ public class TextIO {
       }
 
       @Override
+      public void populateDisplayData(DisplayData.Builder builder) {
+        super.populateDisplayData(builder);
+
+        builder
+            .add(DisplayData.item("compressionType", compressionType.toString())
+              .withLabel("Compression Type"))
+            .addIfNotDefault(DisplayData.item("validation", validate)
+              .withLabel("Validation Enabled"), true)
+            .addIfNotNull(DisplayData.item("filePattern", filepattern)
+              .withLabel("File Pattern"));
+      }
+
+      @Override
       protected Coder<T> getDefaultOutputCoder() {
         return coder;
       }
@@ -467,6 +481,8 @@ public class TextIO {
      * @param <T> the type of the elements of the input PCollection
      */
     public static class Bound<T> extends PTransform<PCollection<T>, PDone> {
+      private static final String DEFAULT_SHARD_TEMPLATE = ShardNameTemplate.INDEX_OF_MAX;
+
       /** The prefix of each file written, combined with suffix and shardTemplate. */
       @Nullable private final String filenamePrefix;
       /** The suffix of each file written, combined with prefix and shardTemplate. */
@@ -485,7 +501,7 @@ public class TextIO {
       private final boolean validate;
 
       Bound(Coder<T> coder) {
-        this(null, null, "", coder, 0, ShardNameTemplate.INDEX_OF_MAX, true);
+        this(null, null, "", coder, 0, DEFAULT_SHARD_TEMPLATE, true);
       }
 
       private Bound(String name, String filenamePrefix, String filenameSuffix, Coder<T> coder,
@@ -629,6 +645,24 @@ public class TextIO {
         return input.apply("Write", com.google.cloud.dataflow.sdk.io.Write.to(
             new TextSink<>(
                 filenamePrefix, filenameSuffix, shardTemplate, coder)));
+      }
+
+      @Override
+      public void populateDisplayData(DisplayData.Builder builder) {
+        super.populateDisplayData(builder);
+
+        builder
+            .addIfNotNull(DisplayData.item("filePrefix", filenamePrefix)
+              .withLabel("Output File Prefix"))
+            .addIfNotDefault(DisplayData.item("fileSuffix", filenameSuffix)
+              .withLabel("Output Fix Suffix"), "")
+            .addIfNotDefault(DisplayData.item("shardNameTemplate", shardTemplate)
+              .withLabel("Output Shard Name Template"),
+                DEFAULT_SHARD_TEMPLATE)
+            .addIfNotDefault(DisplayData.item("validation", validate)
+              .withLabel("Validation Enabled"), true)
+            .addIfNotDefault(DisplayData.item("numShards", numShards)
+              .withLabel("Maximum Output Shards"), 0);
       }
 
       /**
@@ -783,9 +817,10 @@ public class TextIO {
       private ByteString buffer;
       private int startOfSeparatorInBuffer;
       private int endOfSeparatorInBuffer;
-      private long startOfNextRecord;
-      private boolean eof;
-      private boolean elementIsPresent;
+      private long startOfRecord;
+      private volatile long startOfNextRecord;
+      private volatile boolean eof;
+      private volatile boolean elementIsPresent;
       private T currentValue;
       private ReadableByteChannel inChannel;
 
@@ -800,7 +835,15 @@ public class TextIO {
         if (!elementIsPresent) {
           throw new NoSuchElementException();
         }
-        return startOfNextRecord;
+        return startOfRecord;
+      }
+
+      @Override
+      public long getSplitPointsRemaining() {
+        if (isStarted() && startOfNextRecord >= getCurrentSource().getEndOffset()) {
+          return isDone() ? 0 : 1;
+        }
+        return super.getSplitPointsRemaining();
       }
 
       @Override
@@ -878,7 +921,7 @@ public class TextIO {
 
       @Override
       protected boolean readNextRecord() throws IOException {
-        startOfNextRecord += endOfSeparatorInBuffer;
+        startOfRecord = startOfNextRecord;
         findSeparatorBounds();
 
         // If we have reached EOF file and consumed all of the buffer then we know
@@ -889,6 +932,7 @@ public class TextIO {
         }
 
         decodeCurrentElement();
+        startOfNextRecord = startOfRecord + endOfSeparatorInBuffer;
         return true;
       }
 

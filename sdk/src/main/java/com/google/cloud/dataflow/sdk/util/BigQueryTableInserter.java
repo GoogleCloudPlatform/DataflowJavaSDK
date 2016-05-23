@@ -35,7 +35,6 @@ import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.hadoop.util.ApiErrorExtractor;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import org.slf4j.Logger;
@@ -72,6 +71,10 @@ public class BigQueryTableInserter {
 
   // The initial backoff after a failure inserting rows into BigQuery.
   private static final long INITIAL_INSERT_BACKOFF_INTERVAL_MS = 200L;
+
+  // Backoff time bounds for rate limit exceeded errors.
+  private static final long INITIAL_RATE_LIMIT_EXCEEDED_BACKOFF_MS = TimeUnit.SECONDS.toMillis(1);
+  private static final long MAX_RATE_LIMIT_EXCEEDED_BACKOFF_MS = TimeUnit.MINUTES.toMillis(2);
 
   private final Bigquery client;
   private final TableReference defaultRef;
@@ -202,8 +205,8 @@ public class BigQueryTableInserter {
         rows.add(out);
 
         dataSize += row.toString().length();
-        if (dataSize >= UPLOAD_BATCH_SIZE_BYTES || rows.size() >= maxRowsPerBatch ||
-            i == rowsToPublish.size() - 1) {
+        if (dataSize >= UPLOAD_BATCH_SIZE_BYTES || rows.size() >= maxRowsPerBatch
+            || i == rowsToPublish.size() - 1) {
           TableDataInsertAllRequest content = new TableDataInsertAllRequest();
           content.setRows(rows);
 
@@ -215,7 +218,26 @@ public class BigQueryTableInserter {
               executor.submit(new Callable<List<TableDataInsertAllResponse.InsertErrors>>() {
                 @Override
                 public List<TableDataInsertAllResponse.InsertErrors> call() throws IOException {
-                  return insert.execute().getInsertErrors();
+                  BackOff backoff = new IntervalBoundedExponentialBackOff(
+                      MAX_RATE_LIMIT_EXCEEDED_BACKOFF_MS, INITIAL_RATE_LIMIT_EXCEEDED_BACKOFF_MS);
+                  while (true) {
+                    try {
+                      return insert.execute().getInsertErrors();
+                    } catch (IOException e) {
+                      if (new ApiErrorExtractor().rateLimited(e)) {
+                        LOG.info("BigQuery insertAll exceeded rate limit, retrying");
+                        try {
+                          Thread.sleep(backoff.nextBackOffMillis());
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IOException(
+                              "Interrupted while waiting before retrying insertAll");
+                        }
+                      } else {
+                        throw e;
+                      }
+                    }
+                  }
                 }
               }));
           strideIndices.add(strideIndex);
@@ -248,15 +270,17 @@ public class BigQueryTableInserter {
           }
         }
       } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
         throw new IOException("Interrupted while inserting " + rowsToPublish);
       } catch (ExecutionException e) {
-        Throwables.propagate(e.getCause());
+        throw new RuntimeException(e.getCause());
       }
 
       if (!allErrors.isEmpty() && !backoff.atMaxAttempts()) {
         try {
           Thread.sleep(backoff.nextBackOffMillis());
         } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
           throw new IOException("Interrupted while waiting before retrying insert of " + retryRows);
         }
         LOG.info("Retrying failed inserts to BigQuery");
@@ -303,8 +327,8 @@ public class BigQueryTableInserter {
       table = get.execute();
     } catch (IOException e) {
       ApiErrorExtractor errorExtractor = new ApiErrorExtractor();
-      if (!errorExtractor.itemNotFound(e) ||
-          createDisposition != CreateDisposition.CREATE_IF_NEEDED) {
+      if (!errorExtractor.itemNotFound(e)
+          || createDisposition != CreateDisposition.CREATE_IF_NEEDED) {
         // Rethrow.
         throw e;
       }

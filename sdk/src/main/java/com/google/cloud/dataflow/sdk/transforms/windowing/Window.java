@@ -24,6 +24,7 @@ import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.AssignWindowsDoFn;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy.AccumulationMode;
@@ -601,6 +602,44 @@ public class Window {
     private <T, W extends BoundedWindow> PCollection<T> assignWindows(
         PCollection<T> input, WindowFn<? super T, W> windowFn) {
       return input.apply("AssignWindows", ParDo.of(new AssignWindowsDoFn<T, W>(windowFn)));
+    }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+
+      if (windowFn != null) {
+        builder
+            .add(DisplayData.item("windowFn", windowFn.getClass())
+              .withLabel("Windowing Function"))
+            .include(windowFn);
+      }
+
+      if (allowedLateness != null) {
+        builder.addIfNotDefault(DisplayData.item("allowedLateness", allowedLateness)
+              .withLabel("Allowed Lateness"),
+            Duration.millis(BoundedWindow.TIMESTAMP_MAX_VALUE.getMillis()));
+      }
+
+      if (trigger != null && !(trigger instanceof DefaultTrigger)) {
+        builder.add(DisplayData.item("trigger", trigger.toString())
+          .withLabel("Trigger"));
+      }
+
+      if (mode != null) {
+        builder.add(DisplayData.item("accumulationMode", mode.toString())
+          .withLabel("Accumulation Mode"));
+      }
+
+      if (closingBehavior != null) {
+        builder.add(DisplayData.item("closingBehavior", closingBehavior.toString())
+          .withLabel("Window Closing Behavior"));
+      }
+
+      if (outputTimeFn != null) {
+        builder.add(DisplayData.item("outputTimeFn", outputTimeFn.getClass())
+          .withLabel("Output Time Function"));
+      }
     }
 
     @Override

@@ -22,7 +22,6 @@ import com.google.cloud.dataflow.sdk.coders.CoderException;
 import com.google.cloud.dataflow.sdk.coders.IterableCoder;
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.CommittedBundle;
-import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.InProcessEvaluationContext;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.UncommittedBundle;
 import com.google.cloud.dataflow.sdk.runners.inprocess.StepTransformResult.Builder;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
@@ -41,6 +40,8 @@ import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
 import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
+import com.google.cloud.dataflow.sdk.values.PInput;
+import com.google.cloud.dataflow.sdk.values.POutput;
 import com.google.common.annotations.VisibleForTesting;
 
 import java.util.ArrayList;
@@ -60,8 +61,10 @@ class GroupByKeyEvaluatorFactory implements TransformEvaluatorFactory {
       AppliedPTransform<?, ?, ?> application,
       CommittedBundle<?> inputBundle,
       InProcessEvaluationContext evaluationContext) {
-    return createEvaluator(
-        (AppliedPTransform) application, (CommittedBundle) inputBundle, evaluationContext);
+    @SuppressWarnings({"cast", "unchecked", "rawtypes"})
+    TransformEvaluator<InputT> evaluator = createEvaluator(
+            (AppliedPTransform) application, (CommittedBundle) inputBundle, evaluationContext);
+    return evaluator;
   }
 
   private <K, V> TransformEvaluator<KV<K, WindowedValue<V>>> createEvaluator(
@@ -144,7 +147,7 @@ class GroupByKeyEvaluatorFactory implements TransformEvaluatorFactory {
             KeyedWorkItems.elementsWorkItem(key, groupedEntry.getValue());
         UncommittedBundle<KeyedWorkItem<K, V>> bundle =
             evaluationContext.createKeyedBundle(inputBundle, key, application.getOutput());
-        bundle.add(WindowedValue.valueInEmptyWindows(groupedKv));
+        bundle.add(WindowedValue.valueInGlobalWindow(groupedKv));
         resultBuilder.addOutput(bundle);
       }
       return resultBuilder.build();
@@ -177,14 +180,31 @@ class GroupByKeyEvaluatorFactory implements TransformEvaluatorFactory {
   }
 
   /**
+   * A {@link PTransformOverrideFactory} for {@link GroupByKey} PTransforms.
+   */
+  public static final class InProcessGroupByKeyOverrideFactory
+      implements PTransformOverrideFactory {
+    @Override
+    public <InputT extends PInput, OutputT extends POutput> PTransform<InputT, OutputT> override(
+        PTransform<InputT, OutputT> transform) {
+      if (transform instanceof GroupByKey) {
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        PTransform<InputT, OutputT> override = new InProcessGroupByKey((GroupByKey) transform);
+        return override;
+      }
+      return transform;
+    }
+  }
+
+  /**
    * An in-memory implementation of the {@link GroupByKey} primitive as a composite
    * {@link PTransform}.
    */
-  public static final class InProcessGroupByKey<K, V>
+  private static final class InProcessGroupByKey<K, V>
       extends ForwardingPTransform<PCollection<KV<K, V>>, PCollection<KV<K, Iterable<V>>>> {
     private final GroupByKey<K, V> original;
 
-    public InProcessGroupByKey(GroupByKey<K, V> from) {
+    private InProcessGroupByKey(GroupByKey<K, V> from) {
       this.original = from;
     }
 

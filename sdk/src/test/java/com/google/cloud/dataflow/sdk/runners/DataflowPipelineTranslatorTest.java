@@ -19,10 +19,14 @@ package com.google.cloud.dataflow.sdk.runners;
 import static com.google.cloud.dataflow.sdk.util.Structs.addObject;
 import static com.google.cloud.dataflow.sdk.util.Structs.getDictionary;
 import static com.google.cloud.dataflow.sdk.util.Structs.getString;
+
+import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.core.IsInstanceOf.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
@@ -53,6 +57,7 @@ import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.Sum;
 import com.google.cloud.dataflow.sdk.transforms.View;
+import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.GcsUtil;
 import com.google.cloud.dataflow.sdk.util.OutputReference;
 import com.google.cloud.dataflow.sdk.util.PropertyNames;
@@ -66,9 +71,9 @@ import com.google.cloud.dataflow.sdk.values.PDone;
 import com.google.cloud.dataflow.sdk.values.TupleTag;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 
-import org.hamcrest.Matchers;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -81,6 +86,8 @@ import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
 import java.io.IOException;
+import java.io.Serializable;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -91,9 +98,8 @@ import java.util.Map;
  * Tests for DataflowPipelineTranslator.
  */
 @RunWith(JUnit4.class)
-public class DataflowPipelineTranslatorTest {
-
-  @Rule public ExpectedException thrown = ExpectedException.none();
+public class DataflowPipelineTranslatorTest implements Serializable {
+  @Rule public transient ExpectedException thrown = ExpectedException.none();
 
   // A Custom Mockito matcher for an initial Job that checks that all
   // expected fields are set.
@@ -192,8 +198,9 @@ public class DataflowPipelineTranslatorTest {
     settings.put("numberOfWorkerHarnessThreads", 0);
     settings.put("experiments", null);
 
-    assertEquals(ImmutableMap.of("options", settings),
-        job.getEnvironment().getSdkPipelineOptions());
+    Map<String, Object> sdkPipelineOptions = job.getEnvironment().getSdkPipelineOptions();
+    assertThat(sdkPipelineOptions, hasKey("options"));
+    assertEquals(settings, sdkPipelineOptions.get("options"));
   }
 
   @Test
@@ -232,7 +239,7 @@ public class DataflowPipelineTranslatorTest {
 
   @Test
   public void testSubnetworkConfig() throws IOException {
-    final String testSubnetwork = "zones/ZONE/subnetworks/SUBNETWORK";
+    final String testSubnetwork = "regions/REGION/subnetworks/SUBNETWORK";
 
     DataflowPipelineOptions options = buildPipelineOptions();
     options.setSubnetwork(testSubnetwork);
@@ -496,7 +503,7 @@ public class DataflowPipelineTranslatorTest {
     return step;
   }
 
-  private static class NoOpFn extends DoFn<String, String>{
+  private static class NoOpFn extends DoFn<String, String> {
     @Override public void processElement(ProcessContext c) throws Exception {
       c.output(c.element());
     }
@@ -681,7 +688,7 @@ public class DataflowPipelineTranslatorTest {
     pipeline.apply(TextIO.Read.from("gs://bucket/foo**/baz"));
 
     // Check that translation does fail.
-    thrown.expectCause(Matchers.allOf(
+    thrown.expectCause(allOf(
         instanceOf(IllegalArgumentException.class),
         ThrowableMessageMatcher.hasMessage(containsString("Unsupported wildcard usage"))));
     t.translate(pipeline, pipeline.getRunner(), Collections.<DataflowPackage>emptyList());
@@ -795,5 +802,110 @@ public class DataflowPipelineTranslatorTest {
 
     Step collectionToSingletonStep = steps.get(2);
     assertEquals("CollectionToSingleton", collectionToSingletonStep.getKind());
+  }
+
+  @Test
+  public void testStepDisplayData() throws Exception {
+    DataflowPipelineOptions options = buildPipelineOptions();
+    DataflowPipelineTranslator translator = DataflowPipelineTranslator.fromOptions(options);
+    DataflowPipeline pipeline = DataflowPipeline.create(options);
+
+    DoFn<Integer, Integer> fn1 = new DoFn<Integer, Integer>() {
+      @Override
+      public void processElement(ProcessContext c) throws Exception {
+        c.output(c.element());
+      }
+
+      @Override
+      public void populateDisplayData(DisplayData.Builder builder) {
+        builder
+            .add(DisplayData.item("foo", "bar"))
+            .add(DisplayData.item("foo2", DataflowPipelineTranslatorTest.class)
+                .withLabel("Test Class")
+                .withLinkUrl("http://www.google.com"));
+      }
+    };
+
+    DoFn<Integer, Integer> fn2 = new DoFn<Integer, Integer>() {
+      @Override
+      public void processElement(ProcessContext c) throws Exception {
+        c.output(c.element());
+      }
+
+      @Override
+      public void populateDisplayData(DisplayData.Builder builder) {
+        builder.add(DisplayData.item("foo3", 1234));
+      }
+    };
+
+    ParDo.Bound<Integer, Integer> parDo1 = ParDo.of(fn1);
+    ParDo.Bound<Integer, Integer> parDo2 = ParDo.of(fn2);
+    pipeline
+      .apply(Create.of(1, 2, 3))
+      .apply(parDo1)
+      .apply(parDo2);
+
+    Job job = translator.translate(
+        pipeline, pipeline.getRunner(), Collections.<DataflowPackage>emptyList()).getJob();
+
+    List<Step> steps = job.getSteps();
+    assertEquals(3, steps.size());
+
+    Map<String, Object> parDo1Properties = steps.get(1).getProperties();
+    Map<String, Object> parDo2Properties = steps.get(2).getProperties();
+    assertThat(parDo1Properties, hasKey("display_data"));
+
+    @SuppressWarnings("unchecked")
+    Collection<Map<String, String>> fn1displayData =
+            (Collection<Map<String, String>>) parDo1Properties.get("display_data");
+    @SuppressWarnings("unchecked")
+    Collection<Map<String, String>> fn2displayData =
+            (Collection<Map<String, String>>) parDo2Properties.get("display_data");
+
+    ImmutableSet<ImmutableMap<String, Object>> expectedFn1DisplayData = ImmutableSet.of(
+        ImmutableMap.<String, Object>builder()
+            .put("key", "foo")
+            .put("type", "STRING")
+            .put("value", "bar")
+            .put("namespace", fn1.getClass().getName())
+            .build(),
+        ImmutableMap.<String, Object>builder()
+            .put("key", "fn")
+            .put("label", "Transform Function")
+            .put("type", "JAVA_CLASS")
+            .put("value", fn1.getClass().getName())
+            .put("shortValue", fn1.getClass().getSimpleName())
+            .put("namespace", parDo1.getClass().getName())
+            .build(),
+        ImmutableMap.<String, Object>builder()
+            .put("key", "foo2")
+            .put("type", "JAVA_CLASS")
+            .put("value", DataflowPipelineTranslatorTest.class.getName())
+            .put("shortValue", DataflowPipelineTranslatorTest.class.getSimpleName())
+            .put("namespace", fn1.getClass().getName())
+            .put("label", "Test Class")
+            .put("linkUrl", "http://www.google.com")
+            .build()
+    );
+
+    ImmutableSet<ImmutableMap<String, Object>> expectedFn2DisplayData = ImmutableSet.of(
+        ImmutableMap.<String, Object>builder()
+            .put("key", "fn")
+            .put("label", "Transform Function")
+            .put("type", "JAVA_CLASS")
+            .put("value", fn2.getClass().getName())
+            .put("shortValue", fn2.getClass().getSimpleName())
+            .put("namespace", parDo2.getClass().getName())
+            .build(),
+        ImmutableMap.<String, Object>builder()
+            .put("key", "foo3")
+            .put("type", "INTEGER")
+            .put("value", 1234L)
+            .put("namespace", fn2.getClass().getName())
+            .build()
+    );
+
+    assertEquals(expectedFn1DisplayData, ImmutableSet.copyOf(fn1displayData));
+    assertEquals(expectedFn2DisplayData, ImmutableSet.copyOf(fn2displayData));
   }
 }
