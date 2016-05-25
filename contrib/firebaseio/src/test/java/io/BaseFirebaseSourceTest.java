@@ -67,7 +67,7 @@ public abstract class BaseFirebaseSourceTest {
   private class LoggingArrayList<T> extends ArrayList<T> {
     private Logger logger;
 
-    public LoggingArrayList(Logger logger){
+    LoggingArrayList(Logger logger){
       this.logger = logger;
     }
 
@@ -79,18 +79,17 @@ public abstract class BaseFirebaseSourceTest {
 
   }
 
-  protected FirebaseAuthenticator auther = new FirebaseEmptyAuthenticator();
+  FirebaseAuthenticator auther = new FirebaseEmptyAuthenticator();
   private Throwable err;
-  protected Firebase testRef;
+  Firebase testRef;
 
   static final Logger LOGGER = LoggerFactory.getLogger(BaseFirebaseSourceTest.class);
 
-  final LoggingArrayList<FirebaseEvent<JsonNode>> expected =
-      new LoggingArrayList<FirebaseEvent<JsonNode>>(LOGGER);
+  private final LoggingArrayList<FirebaseEvent<JsonNode>> expected =
+      new LoggingArrayList<>(LOGGER);
 
   @Before
-  public void setUp() throws JsonParseException,
-  JsonMappingException, IOException, InterruptedException {
+  public void setUp() throws IOException, InterruptedException {
 
     testRef = new Firebase("https://dataflowio.firebaseio-demo.com")
         .child(Integer.toHexString(this.hashCode())
@@ -109,7 +108,7 @@ public abstract class BaseFirebaseSourceTest {
     cleanFirebase(testRef);
   }
 
-  protected Thread getPipelineThread(final Pipeline p){
+  private Thread getPipelineThread(final Pipeline p){
     Thread t = new Thread(new Runnable(){
       @Override
       public void run() {
@@ -125,7 +124,7 @@ public abstract class BaseFirebaseSourceTest {
     return t;
   }
 
-  protected void cleanFirebase(Firebase f) throws InterruptedException{
+  private void cleanFirebase(Firebase f) throws InterruptedException{
     final CountDownLatch lock = new CountDownLatch(1);
     f.removeValue(new CompletionListener(){
       @Override
@@ -153,10 +152,10 @@ public abstract class BaseFirebaseSourceTest {
     //Generate expected events
     addListener(testRef, expected);
     triggerEvents(testRef);
+    cleanFirebase(testRef);
     removeListener(testRef);
     LOGGER.info("At most " + expected.size() + " elements to look for in pipeline");
 
-    cleanFirebase(testRef);
 
     FirebaseSource<JsonNode> source = makeSource(auther, testRef);
 
@@ -174,6 +173,7 @@ public abstract class BaseFirebaseSourceTest {
     t.start();
     Thread.sleep(1500);
     triggerEvents(testRef);
+    cleanFirebase(testRef);
     t.join();
     if (err != null){
       throw err;

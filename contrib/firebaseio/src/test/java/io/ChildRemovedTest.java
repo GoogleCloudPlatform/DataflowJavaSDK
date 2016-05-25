@@ -16,10 +16,10 @@
 package io;
 
 import com.google.cloud.dataflow.sdk.transforms.DoFnTester;
+import com.google.cloud.dataflow.sdk.values.KV;
 
 import com.firebase.client.Firebase;
 
-import java.util.AbstractMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -32,27 +32,28 @@ import events.ChildRemoved;
  */
 public class ChildRemovedTest extends FirebaseChildTest {
 
-  Entry<String, Object>[] someData;
-  Entry<String, Object>[] nulls;
+  private KV<String, Object>[] someData;
+  private KV<String, Object>[] nulls;
 
   @SuppressWarnings("unchecked")
   @Override
   public void prepareData(List<Map<String, Object>> testData) {
     Set<Entry<String, Object>> entrySet = testData.get(0).entrySet();
-    someData = entrySet.toArray(new Entry[entrySet.size()]);
 
-    nulls = new Entry[entrySet.size()];
+    nulls = new KV[entrySet.size()];
+    someData = new KV[entrySet.size()];
     int i = 0;
     for (Entry<String, Object> entry : entrySet){
       LOGGER.info(entry.getKey());
-      nulls[i] = new AbstractMap.SimpleImmutableEntry<String, Object>(entry.getKey(), null);
+      nulls[i] = KV.of(entry.getKey(), null);
+      someData[i] = KV.of(entry.getKey(), entry.getValue());
       i++;
     }
   }
 
   @Override
   public void triggerEvents(Firebase f) {
-    DoFnTester<Entry<String, Object>, Void> setter = DoFnTester.of(
+    DoFnTester<KV<String, Object>, Void> setter = DoFnTester.of(
         new DoFirebaseSet(f.toString(), auther));
     setter.processBatch(someData);
     setter.processBatch(nulls);

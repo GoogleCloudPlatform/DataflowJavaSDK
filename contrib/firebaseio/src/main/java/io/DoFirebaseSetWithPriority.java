@@ -19,30 +19,29 @@ import com.google.cloud.dataflow.sdk.transforms.DoFn;
 
 import com.firebase.client.Firebase;
 
-import java.util.Map.Entry;
-
+import com.google.cloud.dataflow.sdk.values.KV;
 import utils.FirebaseAuthenticator;
 
 /**
  * Uses {@link Firebase#setValue(Object, Object)} to set an object with a priority.
- * This is a bad pattern, and only used to trigger {@link ChildMovedTest}. Users should prefer
+ * This is a bad pattern, and only used to trigger ChildMovedTest. Users should prefer
  * {@link Firebase#orderByKey()} to {@link Firebase#orderByPriority()} and as such have no need
  * to set priority.
  */
 @Deprecated
-public class DoFirebaseSetWithPriority extends
-FirebaseDoFn<Entry<String, Entry<Object, Object>>, Void> {
+class DoFirebaseSetWithPriority extends
+FirebaseDoFn<KV<String, KV<Object, Object>>, Void> {
 
   private static final long serialVersionUID = 1321447767620652932L;
 
-  public DoFirebaseSetWithPriority(String url, FirebaseAuthenticator auther) {
+  DoFirebaseSetWithPriority(String url, FirebaseAuthenticator auther) {
     super(url, auther);
   }
 
   @Override
   public void asyncProcessElement(
-      DoFn<Entry<String, Entry<Object, Object>>, Void>.ProcessContext context,
-      FirebaseDoFn<Entry<String, Entry<Object, Object>>, Void>.FirebaseListener listener) {
+      DoFn<KV<String, KV<Object, Object>>, Void>.ProcessContext context,
+      FirebaseDoFn<KV<String, KV<Object, Object>>, Void>.FirebaseListener listener) {
     root.child(context.element().getKey())
     .setValue(
         context.element().getValue().getKey(),

@@ -17,18 +17,19 @@ package io;
 
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 
+
 import com.firebase.client.Firebase;
 
 import java.util.AbstractMap;
-import java.util.Map.Entry;
 
+import com.google.cloud.dataflow.sdk.values.KV;
 import utils.FirebaseAuthenticator;
 
 /**
  * Creates a unique String ID using {@link Firebase#push()} and outputs an
- * {@link java.util.Map.Entry} with the String as a key.
+ * {@link com.google.cloud.dataflow.sdk.values.KV} with the String as a key.
  */
-public class DoFirebasePush extends FirebaseDoFn<Object, Entry<String, Object>> {
+public class DoFirebasePush extends FirebaseDoFn<Object, KV<String, Object>> {
 
   private static final long serialVersionUID = -2377431649046447957L;
 
@@ -37,17 +38,15 @@ public class DoFirebasePush extends FirebaseDoFn<Object, Entry<String, Object>> 
   }
 
   @Override
-  public void processElement(DoFn<Object, Entry<String, Object>>.ProcessContext context) {
-    context.output(new AbstractMap.SimpleImmutableEntry<String, Object>(
-        root.push().getKey(), context.element()));
+  public void processElement(DoFn<Object, KV<String, Object>>.ProcessContext context) {
+    context.output(KV.of(root.push().getKey(), context.element()));
   }
 
 
   @Override
-  public void asyncProcessElement(DoFn<Object, Entry<String, Object>>.ProcessContext context,
-      FirebaseDoFn<Object, Entry<String, Object>>.FirebaseListener listener) {
+  public void asyncProcessElement(DoFn<Object, KV<String, Object>>.ProcessContext context,
+      FirebaseDoFn<Object, KV<String, Object>>.FirebaseListener listener) {
     //Call is synchronous, this will not be called
-    return;
   }
 
 }

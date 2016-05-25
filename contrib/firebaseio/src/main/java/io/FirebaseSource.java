@@ -39,6 +39,7 @@ import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.CountDownLatch;
@@ -81,13 +82,13 @@ public class FirebaseSource<T>
     private ChildEventListener childListener;
     private FirebaseError error = null;
 
-    public FirebaseReader(
+    FirebaseReader(
         FirebaseSource<T> source,
         FirebaseCheckpoint<T> checkpoint) throws NoSuchAlgorithmException{
       this.source = source;
       this.digest = MessageDigest.getInstance("MD5");
       if (checkpoint == null){
-        this.checkpoint = new FirebaseCheckpoint<T>();
+        this.checkpoint = new FirebaseCheckpoint<>();
       } else {
         this.checkpoint = checkpoint.reset();
       }
@@ -173,7 +174,7 @@ public class FirebaseSource<T>
             }
             @Override
             public void onDataChange(DataSnapshot timestamp) {
-              checkpoint.put(new Record<T>(
+              checkpoint.put(new Record<>(
                   new Instant(timestamp.getValue(Long.class)),
                   event));
             }
@@ -290,7 +291,7 @@ public class FirebaseSource<T>
       Class<K> clazz,
       FirebaseAuthenticator auther,
       Query query){
-    return new FirebaseSource<K>(clazz, auther, query, true, false);
+    return new FirebaseSource<>(clazz, auther, query, true, false);
   }
 
   /**
@@ -301,7 +302,7 @@ public class FirebaseSource<T>
       Class<K> clazz,
       FirebaseAuthenticator auther,
       Query query){
-    return new FirebaseSource<K>(clazz, auther, query, false, true);
+    return new FirebaseSource<>(clazz, auther, query, false, true);
   }
 
   /**
@@ -317,7 +318,7 @@ public class FirebaseSource<T>
       Class<K> clazz,
       FirebaseAuthenticator auther,
       Query query){
-    return new FirebaseSource<K>(clazz, auther, query, true, true);
+    return new FirebaseSource<>(clazz, auther, query, true, true);
   }
 
   /**
@@ -355,7 +356,7 @@ public class FirebaseSource<T>
   public List<? extends UnboundedSource<FirebaseEvent<T>, FirebaseCheckpoint<T>>>
     generateInitialSplits(
       int numSplits, PipelineOptions arg1) throws Exception {
-    return Arrays.asList(this);
+    return Collections.singletonList(this);
   }
 
   @Override
@@ -370,14 +371,10 @@ public class FirebaseSource<T>
 
     try {
       result = auther.authenticate(this.getRef());
-    } catch (FirebaseException e) {
-      result = null;
-      e.printStackTrace();
-    } catch (InterruptedException e) {
+    } catch (FirebaseException|InterruptedException e) {
       result = null;
       e.printStackTrace();
     }
-
     Preconditions.checkNotNull(result);
   }
 

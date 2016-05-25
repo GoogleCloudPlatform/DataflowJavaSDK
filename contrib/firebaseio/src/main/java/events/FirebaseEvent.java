@@ -31,7 +31,7 @@ import java.util.Objects;
 **/
 public class FirebaseEvent<T>{
 
-  protected static ObjectMapper mapper = new ObjectMapper()
+  private static ObjectMapper mapper = new ObjectMapper()
       .enableDefaultTyping(DefaultTyping.NON_FINAL)
       .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
 

@@ -20,13 +20,15 @@ import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.firebase.client.Firebase;
 
 import java.util.Map.Entry;
+
+import com.google.cloud.dataflow.sdk.values.KV;
 import utils.FirebaseAuthenticator;
 
 /**
  * Sets a value using {@link Firebase#setValue(Object)} where the {@code String} key is the
  * path to the child to set the value on. Set a path as {@code null} to remove a value.
  */
-public class DoFirebaseSet extends FirebaseDoFn<Entry<String, Object>, Void> {
+public class DoFirebaseSet extends FirebaseDoFn<KV<String,Object>,Void> {
 
   private static final long serialVersionUID = -4587959210797506754L;
 
@@ -35,8 +37,8 @@ public class DoFirebaseSet extends FirebaseDoFn<Entry<String, Object>, Void> {
   }
 
   @Override
-  public void asyncProcessElement(DoFn<Entry<String, Object>, Void>.ProcessContext context,
-      FirebaseDoFn<Entry<String, Object>, Void>.FirebaseListener listener) {
+  public void asyncProcessElement(DoFn<KV<String, Object>, Void>.ProcessContext context,
+      FirebaseDoFn<KV<String, Object>, Void>.FirebaseListener listener) {
     root.child(context.element().getKey())
     .setValue(context.element().getValue(), listener);
   }

@@ -47,21 +47,21 @@ public class FirebaseCheckpoint<T> implements CheckpointMark {
       @JsonProperty("read") Record<T>[] read,
       @JsonProperty("unread") Record<T>[] unread,
       @JsonProperty("cur") Record<T> cur){
-    this.read = new LinkedBlockingQueue<Record<T>>(read.length);
+    this.read = new LinkedBlockingQueue<>(read.length);
     this.read.addAll(Arrays.asList(read));
-    this.unread = new PriorityBlockingQueue<Record<T>>(unread.length);
+    this.unread = new PriorityBlockingQueue<>(unread.length);
     this.unread.addAll(Arrays.asList(unread));
     this.cur = cur;
   }
 
   public FirebaseCheckpoint(){
-    this.unread = new PriorityBlockingQueue<Record<T>>();
-    this.read = new LinkedBlockingQueue<Record<T>>();
+    this.unread = new PriorityBlockingQueue<>();
+    this.read = new LinkedBlockingQueue<>();
   }
 
   @Override
   public void finalizeCheckpoint() throws IOException {
-    this.read = new LinkedBlockingQueue<Record<T>>();
+    this.read = new LinkedBlockingQueue<>();
   }
 
   public Instant minTimestamp(){
@@ -95,10 +95,7 @@ public class FirebaseCheckpoint<T> implements CheckpointMark {
       this.read.add(cur);
     }
     cur = this.unread.poll();
-    if (cur == null){
-      return false;
-    }
-    return true;
+    return cur != null;
   }
 
   /**

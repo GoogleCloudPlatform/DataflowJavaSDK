@@ -18,6 +18,7 @@ package io;
 import com.google.cloud.dataflow.sdk.transforms.DoFnTester;
 
 import com.firebase.client.Firebase;
+import com.google.cloud.dataflow.sdk.values.KV;
 
 import java.util.AbstractMap;
 import java.util.List;
@@ -30,13 +31,13 @@ import java.util.Set;
  */
 public class ChildMovedTest extends FirebaseChildTest {
 
-  Entry<String, Entry<Object, Object>>[] withPriority;
-  Entry<String, Entry<Object, Object>>[] shuffle;
+  private KV<String, KV<Object, Object>>[] withPriority;
+  private KV<String, KV<Object, Object>>[] shuffle;
 
   @Override
   public void triggerEvents(Firebase f) {
     @SuppressWarnings("deprecation")
-    DoFnTester<Entry<String, Entry<Object, Object>>, Void> setWithPriority =
+    DoFnTester<KV<String, KV<Object, Object>>, Void> setWithPriority =
         DoFnTester.of(new DoFirebaseSetWithPriority(f.toString(), auther));
 
     setWithPriority.processBatch(withPriority);
@@ -49,19 +50,19 @@ public class ChildMovedTest extends FirebaseChildTest {
   public void prepareData(List<Map<String, Object>> testData) {
     Set<Entry<String, Object>> entrySet = testData.get(0).entrySet();
 
-    withPriority = new Entry[entrySet.size()];
-    shuffle = new Entry[entrySet.size()];
+    withPriority = new KV[entrySet.size()];
+    shuffle = new KV[entrySet.size()];
 
     int i = 0;
     for (Entry<String, Object> entry : entrySet){
-      withPriority[i] = new AbstractMap.SimpleImmutableEntry<String, Entry<Object, Object>>(
+      withPriority[i] = KV.of(
           entry.getKey(),
-          new AbstractMap.SimpleImmutableEntry<Object, Object>(
+          KV.<Object, Object>of(
               entry.getValue(),
               String.valueOf(i)));
-      shuffle[i] = new AbstractMap.SimpleImmutableEntry<String, Entry<Object, Object>>(
+      shuffle[i] = KV.of(
           entry.getKey(),
-          new AbstractMap.SimpleImmutableEntry<Object, Object>(
+          KV.<Object, Object>of(
               entry.getValue(),
               String.valueOf((i + 1) % entrySet.size())));
       i++;

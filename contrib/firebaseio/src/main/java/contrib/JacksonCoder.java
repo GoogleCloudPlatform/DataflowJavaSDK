@@ -48,7 +48,7 @@ public class JacksonCoder<T> extends StandardCoder<T> {
 
   private static final long serialVersionUID = -754345287170755870L;
 
-  protected static final ObjectMapper MAPPER = new ObjectMapper()
+  private static final ObjectMapper MAPPER = new ObjectMapper()
       .enableDefaultTyping(DefaultTyping.NON_FINAL)
       .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
       .enable(DeserializationFeature.WRAP_EXCEPTIONS)
@@ -79,7 +79,7 @@ public class JacksonCoder<T> extends StandardCoder<T> {
    * @return A JacksonCoder parameterized with type {@code clazz}
    */
   public static <K> JacksonCoder<K> of(Class<K> clazz){
-    return new JacksonCoder<K>(clazz);
+    return new JacksonCoder<>(clazz);
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -92,19 +92,19 @@ public class JacksonCoder<T> extends StandardCoder<T> {
   protected JacksonCoder(Class<T> clazz){
     this.type = clazz;
     writer = MAPPER.writer();
-    reader = MAPPER.reader(type);
+    reader = MAPPER.readerFor(type);
   }
 
   @Override
   public void encode(T value, OutputStream outStream,
       com.google.cloud.dataflow.sdk.coders.Coder.Context context)
-          throws CoderException, IOException {
+          throws IOException {
     writer.writeValue(outStream, value);
   }
 
   @Override
   public T decode(InputStream inStream, com.google.cloud.dataflow.sdk.coders.Coder.Context context)
-      throws CoderException, IOException {
+      throws IOException {
     return reader.readValue(inStream);
   }
 
@@ -114,9 +114,7 @@ public class JacksonCoder<T> extends StandardCoder<T> {
   }
 
   @Override
-  public void verifyDeterministic() {
-    return;
-  }
+  public void verifyDeterministic() {  }
 
   public Class<T> getType(){
     return this.type;
@@ -149,7 +147,7 @@ public class JacksonCoder<T> extends StandardCoder<T> {
     private Object readResolve() {
       // When deserialized, instances of this object should be replaced by
       // constructing an JacksonCoder.
-      return new JacksonCoder<T>(type);
+      return new JacksonCoder<>(type);
     }
   }
 }

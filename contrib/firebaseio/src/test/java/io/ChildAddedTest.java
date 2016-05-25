@@ -19,6 +19,7 @@ import com.google.cloud.dataflow.sdk.transforms.DoFnTester;
 
 import com.firebase.client.Firebase;
 
+import com.google.cloud.dataflow.sdk.values.KV;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
@@ -35,7 +36,7 @@ import events.ChildAdded;
 @RunWith(JUnit4.class)
 public class ChildAddedTest extends FirebaseChildTest {
 
-  Entry<String, Object>[] usableData;
+  private KV<String, Object>[] usableData;
 
   @Override
   public void triggerEvents(Firebase f) {
@@ -47,11 +48,11 @@ public class ChildAddedTest extends FirebaseChildTest {
   public void prepareData(List<Map<String, Object>> testData) {
     Object[] entries = testData.toArray();
 
-    List<Entry<String, Object>> withKeys = DoFnTester.of(
+    List<KV<String, Object>> withKeys = DoFnTester.of(
         new DoFirebasePush(testRef.toString(),
         auther))
         .processBatch(entries);
 
-    usableData = withKeys.toArray(new Entry[withKeys.size()]);
+    usableData = withKeys.toArray(new KV[withKeys.size()]);
   }
 }
