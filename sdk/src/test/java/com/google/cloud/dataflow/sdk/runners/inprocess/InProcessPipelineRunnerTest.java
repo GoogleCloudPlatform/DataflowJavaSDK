@@ -123,7 +123,7 @@ public class InProcessPipelineRunnerTest implements Serializable {
     p.run();
   }
 
-  interface ObjectPipelineOptions extends PipelineOptions {
+  public interface ObjectPipelineOptions extends PipelineOptions {
     Object getValue();
     void setValue(Object value);
   }
