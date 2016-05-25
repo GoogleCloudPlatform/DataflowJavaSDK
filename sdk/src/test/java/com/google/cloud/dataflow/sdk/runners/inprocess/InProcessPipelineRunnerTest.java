@@ -123,6 +123,7 @@ public class InProcessPipelineRunnerTest implements Serializable {
     p.run();
   }
 
+  /** {@link PipelineOptions} to inject broken object type. */
   public interface ObjectPipelineOptions extends PipelineOptions {
     Object getValue();
     void setValue(Object value);
