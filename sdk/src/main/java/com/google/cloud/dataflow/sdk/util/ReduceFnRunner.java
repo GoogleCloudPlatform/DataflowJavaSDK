@@ -603,7 +603,8 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
         // and the watermark has passed the end of the window.
         @Nullable Instant newHold =
             onTrigger(directContext, renamedContext, true/* isFinished */, isEndOfWindow);
-        Preconditions.checkState(newHold == null, "Hold placed despite isFinished");
+        Preconditions.checkState(newHold == null,
+            "Hold placed at %s despite isFinished being true.", newHold);
       }
 
       // Cleanup flavor B: Clear all the remaining state for this window since we'll never
