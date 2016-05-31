@@ -603,7 +603,7 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
         // and the watermark has passed the end of the window.
         @Nullable Instant newHold =
             onTrigger(directContext, renamedContext, true/* isFinished */, isEndOfWindow);
-        Preconditions.checkState(newHold == null);
+        Preconditions.checkState(newHold == null, "Hold placed despite isFinished");
       }
 
       // Cleanup flavor B: Clear all the remaining state for this window since we'll never
@@ -688,7 +688,7 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
       //
       // But(!) for backwards compatibility we must allow a pipeline to be updated from
       // an sdk version <= 1.3. In that case it is possible we have an end-of-window or
-      // garbage collection holds keyed by the current window (reached via directContext) rather
+      // garbage collection hold keyed by the current window (reached via directContext) rather
       // than the state address window (reached via renamedContext).
       // However this can only happen if:
       // - We have merging windows.
