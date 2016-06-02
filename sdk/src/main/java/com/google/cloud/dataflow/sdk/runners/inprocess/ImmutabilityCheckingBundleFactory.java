@@ -46,7 +46,7 @@ import org.joda.time.Instant;
 class ImmutabilityCheckingBundleFactory implements BundleFactory {
   /**
    * Create a new {@link ImmutabilityCheckingBundleFactory} that uses the underlying
-   * {@link BundleFactory} create of the output bundle.
+   * {@link BundleFactory} to create the output bundle.
    */
   public static ImmutabilityCheckingBundleFactory create(BundleFactory underlying) {
     return new ImmutabilityCheckingBundleFactory(underlying);
