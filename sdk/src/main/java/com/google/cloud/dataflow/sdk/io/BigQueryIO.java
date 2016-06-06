@@ -225,8 +225,6 @@ import javax.annotation.Nullable;
  *         }));
  * }</pre>
  *
- * <p>Per-window tables are not yet supported in batch mode.
- *
  * <h3>Permissions</h3>
  * <p>Permission requirements depend on the {@link PipelineRunner} that is used to execute the
  * Dataflow job. Please refer to the documentation of corresponding {@link PipelineRunner}s for
