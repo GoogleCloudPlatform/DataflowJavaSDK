@@ -27,6 +27,8 @@ import java.util.Arrays;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.PriorityBlockingQueue;
 
+import javax.annotation.Nullable;
+
 /**
  * Maintains a {@link PriorityBlockingQueue} to store the {@link Record}s created by
  * {@link FirebaseReader}, on error these records are replayed on the new Reader to prevent
@@ -64,10 +66,12 @@ public class FirebaseCheckpoint<T> implements CheckpointMark {
   }
 
   public Instant minTimestamp(){
-    if (unread.isEmpty() || cur.compareTo(unread.peek()) < 0){
+    @Nullable Record<T> next = unread.peek();
+    // NOTE: records compare using their timestamps
+    if (next == null || cur.compareTo(next) < 0) {
       return cur.timestamp;
     } else {
-      return unread.peek().timestamp;
+      return next.timestamp;
     }
   }
 

@@ -93,9 +93,13 @@ public class FirebaseSource<T>
 
     FirebaseReader(
         FirebaseSource<T> source,
-        FirebaseCheckpoint<T> checkpoint) throws NoSuchAlgorithmException {
+        FirebaseCheckpoint<T> checkpoint) {
       this.source = source;
-      this.digest = MessageDigest.getInstance("MD5");
+      try {
+        this.digest = MessageDigest.getInstance("MD5");
+      } catch (NoSuchAlgorithmException e) {
+        throw new RuntimeException(e);
+      }
       if (checkpoint == null){
         this.checkpoint = new FirebaseCheckpoint<>();
       } else {
@@ -380,25 +384,18 @@ public class FirebaseSource<T>
     try {
       result = auther.authenticate(this.getRef());
     } catch (FirebaseException e) {
-      result = null;
-      logger.error("Firebase authentication error", e);
+      throw new RuntimeException("Authenticator failed to authenticate", e);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      logger.error("Authenticator interrupted", e);
-      result = null;
+      throw new RuntimeException("Thread interrupted while waiting for authentication to complete", e);
     }
-    Preconditions.checkNotNull(result);
+    Preconditions.checkNotNull(result, "If result is null, authenticators is ");
   }
 
   @Override
   public UnboundedReader<FirebaseEvent<T>> createReader(
       PipelineOptions arg0, @Nullable FirebaseCheckpoint<T> arg1) {
-    try {
-      return new FirebaseReader(this, arg1);
-    } catch (NoSuchAlgorithmException e) {
-      logger.error("Failed to find hashing function", e);
-    }
-    return null;
+    return new FirebaseReader(this, arg1);
   }
 
   @Override

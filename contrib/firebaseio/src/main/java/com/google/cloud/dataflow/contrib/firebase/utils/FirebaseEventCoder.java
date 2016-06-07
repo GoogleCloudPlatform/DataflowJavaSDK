@@ -26,8 +26,6 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 
-
-
 /**
  * Coder for {@link FirebaseEvent}. Subclasses {@link JacksonCoder} so that parameterized types
  * behave properly.

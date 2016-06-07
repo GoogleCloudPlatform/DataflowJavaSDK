@@ -95,7 +95,7 @@ public class FirebaseCheckpointCoder<T> extends JacksonCoder<FirebaseCheckpoint<
 
     private Object readResolve() {
       // When deserialized, instances of this object should be replaced by
-      // constructing an FirebaseJacksonCoder.
+      // constructing a FirebaseJacksonCoder.
       return new FirebaseCheckpointCoder<T>(this.type, this.subType);
     }
 
