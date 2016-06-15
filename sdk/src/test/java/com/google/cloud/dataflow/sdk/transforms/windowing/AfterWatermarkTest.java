@@ -362,16 +362,6 @@ public class AfterWatermarkTest {
   }
 
   @Test
-  public void testToStringExcludesNeverTrigger() {
-    Trigger trigger = AfterWatermark.pastEndOfWindow()
-        .withEarlyFirings(Never.ever())
-        .withLateFirings(Never.ever())
-        .buildTrigger();
-
-    assertEquals("AfterWatermark.pastEndOfWindow()", trigger.toString());
-  }
-
-  @Test
   public void testEarlyAndLateFiringsToString() {
     Trigger trigger = AfterWatermark.pastEndOfWindow()
         .withEarlyFirings(StubTrigger.named("t1"))

@@ -274,7 +274,7 @@ public class AfterWatermark<W extends BoundedWindow> {
             .append(")");
       }
 
-      if (lateTrigger != null && !(lateTrigger instanceof Never.NeverTrigger)) {
+      if (lateTrigger != null && !(lateTrigger instanceof NeverTrigger)) {
         builder
             .append(".withLateFirings(")
             .append(lateTrigger)
