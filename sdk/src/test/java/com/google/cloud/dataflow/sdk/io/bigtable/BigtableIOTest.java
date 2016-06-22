@@ -287,9 +287,6 @@ public class BigtableIOTest {
 
   /**
    * Tests dynamic work rebalancing exhaustively.
-   *
-   * <p>Because this test runs so slowly, it is disabled by default. Re-run when changing the
-   * {@link BigtableIO.Read} implementation.
    */
   @Ignore("Slow. Rerun when changing the implementation.")
   @Test
