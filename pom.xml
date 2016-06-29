@@ -65,6 +65,7 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <dataflow.javadoc_opts></dataflow.javadoc_opts>
+    <dataflow.surefire_argline></dataflow.surefire_argline>
 
     <!-- If updating dependencies, please update any relevant javadoc offlineLinks -->
     <avro.version>1.7.7</avro.version>
@@ -72,7 +73,7 @@
     <pubsubgrpc.version>0.0.2</pubsubgrpc.version>
     <bigtable.version>0.2.3</bigtable.version>
     <clouddebugger.version>v2-rev8-1.22.0</clouddebugger.version>
-    <dataflow.version>v1b3-rev28-1.22.0</dataflow.version>
+    <dataflow.version>v1b3-rev30-1.22.0</dataflow.version>
     <dataflow.proto.version>0.5.160222</dataflow.proto.version>
     <datastore.version>v1beta2-rev1-4.0.0</datastore.version>
     <google-clients.version>1.22.0</google-clients.version>
@@ -233,6 +234,7 @@
             <useManifestOnlyJar>false</useManifestOnlyJar>
             <trimStackTrace>false</trimStackTrace>
             <redirectTestOutputToFile>true</redirectTestOutputToFile>
+            <argLine>${dataflow.surefire_argline}</argLine>
           </configuration>
           <dependencies>
             <dependency>
