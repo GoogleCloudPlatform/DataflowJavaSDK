@@ -19,7 +19,7 @@ package com.google.cloud.dataflow.sdk.io.range;
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkState;
 
-import org.apache.beam.sdk.io.BoundedSource.BoundedReader;
+import com.google.cloud.dataflow.sdk.io.BoundedSource.BoundedReader;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
