@@ -244,6 +244,26 @@ public class BigQueryServicesImpl implements BigQueryServices {
           Sleeper.DEFAULT,
           backoff).getStatistics();
     }
+
+    @Override
+    public Job getJob(JobReference jobRef, int maxAttempts) throws InterruptedException {
+      BackOff backoff =
+          new AttemptBoundedExponentialBackOff(maxAttempts, INITIAL_RPC_BACKOFF_MILLIS);
+      do {
+        try {
+          return client.jobs().get(jobRef.getProjectId(), jobRef.getJobId()).execute();
+        } catch (GoogleJsonResponseException e) {
+          if (e.getStatusCode() == 404) {
+            LOG.debug("Job {} does not exists.", jobRef.getJobId());
+            return null;
+          }
+          LOG.warn("Ignore the error and retry job existence.", e);
+        } catch (IOException e) {
+          LOG.warn("Ignore the error and retry job existence.", e);
+        }
+      } while (nextBackOff(Sleeper.DEFAULT, backoff));
+      return null;
+    }
   }
 
   @VisibleForTesting

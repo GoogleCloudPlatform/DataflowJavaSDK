@@ -93,6 +93,13 @@ public interface BigQueryServices extends Serializable {
      */
     JobStatistics dryRunQuery(String projectId, String query)
         throws InterruptedException, IOException;
+
+    /**
+     * Gets the Job by {@link JobReference}.
+     *
+     * Returns null if the job is not found or if the {@code maxAttempts} retries reached.
+     */
+    Job getJob(JobReference jobRef, int maxAttempts) throws InterruptedException;
   }
 
   /**
