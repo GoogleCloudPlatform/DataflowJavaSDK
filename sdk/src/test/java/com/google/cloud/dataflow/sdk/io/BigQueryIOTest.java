@@ -325,6 +325,11 @@ public class BigQueryIOTest implements Serializable {
         throws InterruptedException, IOException {
       throw new UnsupportedOperationException();
     }
+
+    @Override
+    public Boolean exists(JobReference jobRef, int maxAttempts) throws InterruptedException {
+      throw new UnsupportedOperationException();
+    }
   }
 
   @Rule public transient ExpectedException thrown = ExpectedException.none();
