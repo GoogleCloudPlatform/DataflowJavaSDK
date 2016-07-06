@@ -210,17 +210,21 @@ public class BigQueryIOTest implements Serializable {
 
     private Object[] startJobReturns;
     private Object[] pollJobReturns;
+    private Object[] getJobReturns;
     private String executingProject;
     // Both counts will be reset back to zeros after serialization.
     // This is a work around for DoFn's verifyUnmodified check.
     private transient int startJobCallsCount;
     private transient int pollJobStatusCallsCount;
+    private transient int existsJobStatusCallsCount;
 
     public FakeJobService() {
       this.startJobReturns = new Object[0];
       this.pollJobReturns = new Object[0];
+      this.getJobReturns = new Object[0];
       this.startJobCallsCount = 0;
       this.pollJobStatusCallsCount = 0;
+      this.existsJobStatusCallsCount = 0;
     }
 
     /**
@@ -231,6 +235,16 @@ public class BigQueryIOTest implements Serializable {
      */
     public FakeJobService startJobReturns(Object... startJobReturns) {
       this.startJobReturns = startJobReturns;
+      return this;
+    }
+
+    /**
+     * Sets the return values to mock {@link JobService#getJob}.
+     *
+     * <p>Throws if the {@link Object} is a {@link InterruptedException}, returns otherwise.
+     */
+    public FakeJobService getJobReturns(Object... getJobReturns) {
+      this.getJobReturns = getJobReturns;
       return this;
     }
 
@@ -327,8 +341,29 @@ public class BigQueryIOTest implements Serializable {
     }
 
     @Override
-    public Boolean exists(JobReference jobRef, int maxAttempts) throws InterruptedException {
-      throw new UnsupportedOperationException();
+    public Job getJob(JobReference jobRef, int maxAttempts) throws InterruptedException {
+      if (!Strings.isNullOrEmpty(executingProject)) {
+        checkArgument(
+            jobRef.getProjectId().equals(executingProject),
+            "Project id: %s is not equal to executing project: %s",
+            jobRef.getProjectId(), executingProject);
+      }
+
+      if (existsJobStatusCallsCount < getJobReturns.length) {
+        Object ret = getJobReturns[existsJobStatusCallsCount++];
+        if (ret == null) {
+          return null;
+        } else if (ret instanceof Boolean) {
+          return (Job) ret;
+        } else if (ret instanceof InterruptedException) {
+          throw (InterruptedException) ret;
+        } else {
+          throw new RuntimeException("Unexpected return type: " + ret.getClass());
+        }
+      } else {
+        throw new RuntimeException(
+            "Exceeded expected number of calls: " + getJobReturns.length);
+      }
     }
   }
 
@@ -523,7 +558,7 @@ public class BigQueryIOTest implements Serializable {
     FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
         .withJobService(new FakeJobService()
             .startJobReturns("done", "done")
-            .pollJobReturns(Status.UNKNOWN)
+            .getJobReturns((Job) null)
             .verifyExecutingProject(bqOptions.getProject()))
         .readerReturns(
             toJsonString(new TableRow().set("name", "a").set("number", 1)),
@@ -583,6 +618,41 @@ public class BigQueryIOTest implements Serializable {
       public boolean accept(File pathname) {
         return pathname.isFile();
       }}).length);
+  }
+
+  @Test
+  public void testExportJobDoesNotExist() throws Exception {
+    BigQueryOptions bqOptions = PipelineOptionsFactory.as(BigQueryOptions.class);
+    bqOptions.setProject("defaultProject");
+    bqOptions.setTempLocation(testFolder.newFolder("BigQueryIOTest").getAbsolutePath());
+
+    FakeJobService fakeJobService = new FakeJobService()
+        .getJobReturns((Job) null)
+        .verifyExecutingProject(bqOptions.getProject());
+
+    FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
+        .withJobService(fakeJobService)
+        .readerReturns(
+            toJsonString(new TableRow().set("name", "a").set("number", 1)),
+            toJsonString(new TableRow().set("name", "b").set("number", 2)),
+            toJsonString(new TableRow().set("name", "c").set("number", 3)));
+
+    Pipeline p = TestPipeline.create(bqOptions);
+    PCollection<String> output = p
+        .apply(BigQueryIO.Read.from("non-executing-project:somedataset.sometable")
+            .withTestServices(fakeBqServices)
+            .withoutValidation())
+        .apply(ParDo.of(new DoFn<TableRow, String>() {
+          @Override
+          public void processElement(ProcessContext c) throws Exception {
+            c.output((String) c.element().get("name"));
+          }
+        }));
+
+    DataflowAssert.that(output)
+        .containsInAnyOrder(ImmutableList.of("a", "b", "c"));
+
+    p.run();
   }
 
   @Test
