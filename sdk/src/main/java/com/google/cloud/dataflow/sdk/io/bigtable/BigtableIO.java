@@ -206,6 +206,12 @@ public class BigtableIO {
       // TODO: is there a better way to clone a Builder? Want it to be immune from user changes.
       BigtableOptions options = optionsBuilder.build();
       RetryOptions retryOptions = options.getRetryOptions();
+
+      // Set data channel count to one because there is only 1 scanner in this session
+      // Use retryOptionsToBuilder because absent in Bigtable library
+      // TODO: replace with RetryOptions.toBuilder() when added to Bigtable library
+      // Set batch size because of bug (incorrect initialization) in Bigtable library
+      // TODO: remove setRetryOptions when fixed in Bigtable library
       BigtableOptions.Builder clonedBuilder = options.toBuilder()
           .setDataChannelCount(1)
           .setRetryOptions(
@@ -214,6 +220,7 @@ public class BigtableIO {
                       retryOptions.getStreamingBufferSize() / 2))
                   .build());
       BigtableOptions optionsWithAgent = clonedBuilder.setUserAgent(getUserAgent()).build();
+
       return new Read(optionsWithAgent, tableId, filter, bigtableService);
     }
 
@@ -398,6 +405,12 @@ public class BigtableIO {
       // TODO: is there a better way to clone a Builder? Want it to be immune from user changes.
       BigtableOptions options = optionsBuilder.build();
       RetryOptions retryOptions = options.getRetryOptions();
+
+      // Set useBulkApi to true for enabling bulk writes
+      // Use retryOptionsToBuilder because absent in Bigtable library
+      // TODO: replace with RetryOptions.toBuilder() when added to Bigtable library
+      // Set batch size because of bug (incorrect initialization) in Bigtable library
+      // TODO: remove setRetryOptions when fixed in Bigtable library
       BigtableOptions.Builder clonedBuilder = options.toBuilder()
           .setBulkOptions(
               options.getBulkOptions().toBuilder()
