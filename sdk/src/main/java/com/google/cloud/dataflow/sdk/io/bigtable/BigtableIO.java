@@ -1050,8 +1050,7 @@ public class BigtableIO {
   /**
    * A helper function to convert a RetryOptions into a RetryOptions.Builder.
    */
-
-  static RetryOptions.Builder retryOptionsToBuilder(RetryOptions options) {
+  private static RetryOptions.Builder retryOptionsToBuilder(RetryOptions options) {
     RetryOptions.Builder builder = new RetryOptions.Builder();
     builder.setEnableRetries(options.enableRetries());
     builder.setInitialBackoffMillis(options.getInitialBackoffMillis());
