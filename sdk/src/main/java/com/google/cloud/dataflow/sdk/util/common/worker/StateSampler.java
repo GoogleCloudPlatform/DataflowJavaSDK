@@ -56,11 +56,11 @@ public class StateSampler implements AutoCloseable {
    * callbacks per sample. The sampling uses a "stratified sampling" is used -- in every bucket of
    * samplingPeriodMs we choose a random point to sample. This prevents pathological behavior in
    * case some states happen to occur at a similar period
-   * <p>
-   * The current implementation uses a fixed-rate timer with a period samplingPeriodMs as a
+   *
+   * <p>The current implementation uses a fixed-rate timer with a period samplingPeriodMs as a
    * trampoline to a one-shot random timer which fires with a random delay within
    * samplingPeriodMs.
-   * */
+   */
   private static final class DefaultScheduler implements SampleScheduler {
     private static final int NUM_EXECUTOR_THREADS = 16;
     private static final ScheduledExecutorService EXECUTOR_SERVICE =
@@ -70,45 +70,42 @@ public class StateSampler implements AutoCloseable {
     @Override
     public Closeable scheduleSampling(final StateSampler sampler, final long samplingPeriodMs) {
       return new Closeable() {
-        private ScheduledFuture<?> invocationTriggerFuture = null;
         private ScheduledFuture<?> invocationFuture = null;
-        {
-          invocationTriggerFuture =
-              EXECUTOR_SERVICE.scheduleAtFixedRate(
-                  new Runnable() {
-                    @Override
-                    public void run() {
-                      long delay = ThreadLocalRandom.current().nextInt((int) samplingPeriodMs);
-                      synchronized (this) {
-                        if (invocationFuture != null) {
-                          invocationFuture.cancel(false);
+        private ScheduledFuture<?> invocationTriggerFuture = EXECUTOR_SERVICE.scheduleAtFixedRate(
+            new Runnable() {
+              @Override
+              public void run() {
+                long delay = ThreadLocalRandom.current().nextInt((int) samplingPeriodMs);
+                synchronized (this) {
+                  if (invocationFuture != null) {
+                    invocationFuture.cancel(false);
+                  }
+                  invocationFuture = EXECUTOR_SERVICE.schedule(
+                      new Runnable() {
+                        @Override
+                        public void run() {
+                          sampler.run();
                         }
-                        invocationFuture =
-                            EXECUTOR_SERVICE.schedule(
-                                new Runnable() {
-                                  @Override
-                                  public void run() {
-                                    sampler.run();
-                                  }
-                                },
-                                delay,
-                                TimeUnit.MILLISECONDS);
-                      }
-                    }
-                  },
-                  0,
-                  samplingPeriodMs,
-                  TimeUnit.MILLISECONDS);
-        }
+                      },
+                      delay,
+                      TimeUnit.MILLISECONDS);
+                }
+              }
+            },
+            0,
+            samplingPeriodMs,
+            TimeUnit.MILLISECONDS);
 
         @Override
         public void close() throws IOException {
           synchronized (this) {
             if (invocationTriggerFuture != null) {
               invocationTriggerFuture.cancel(false);
+              invocationTriggerFuture = null;
             }
             if (invocationFuture != null) {
               invocationFuture.cancel(false);
+              invocationFuture = null;
             }
           }
         }
