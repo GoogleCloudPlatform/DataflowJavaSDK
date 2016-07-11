@@ -19,7 +19,6 @@ import com.google.cloud.dataflow.sdk.util.state.StateTag.StateBinder;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
