@@ -336,6 +336,12 @@ public class BigQueryIOTest implements Serializable {
 
   private transient BigQueryOptions bqOptions;
 
+  private BigQueryOptions setLocalTempLocation(BigQueryOptions bqOptions) throws IOException {
+    BigQueryOptions options = bqOptions.cloneAs(BigQueryOptions.class);
+    options.setTempLocation(testFolder.newFolder("BigQueryIOTest").getAbsolutePath());
+    return options;
+  }
+
   private void checkReadTableObject(
       BigQueryIO.Read.Bound bound, String project, String dataset, String table) {
     checkReadTableObjectWithValidate(bound, project, dataset, table, true);
@@ -384,10 +390,10 @@ public class BigQueryIOTest implements Serializable {
   }
 
   @Before
-  public void setUp() throws IOException {
+  public void setUp() {
     bqOptions = PipelineOptionsFactory.as(BigQueryOptions.class);
     bqOptions.setProject("defaultProject");
-    bqOptions.setTempLocation(testFolder.newFolder("BigQueryIOTest").getAbsolutePath());
+    bqOptions.setTempLocation("gs://testbucket/testdir");
 
     MockitoAnnotations.initMocks(this);
   }
@@ -444,10 +450,7 @@ public class BigQueryIOTest implements Serializable {
 
   @Test
   public void testValidateReadSetsDefaultProject() {
-    BigQueryOptions options = PipelineOptionsFactory.as(BigQueryOptions.class);
-    options.setProject("someproject");
-
-    Pipeline p = Pipeline.create(options);
+    Pipeline p = Pipeline.create(bqOptions);
 
     TableReference tableRef = new TableReference();
     tableRef.setDatasetId("somedataset");
@@ -464,7 +467,7 @@ public class BigQueryIOTest implements Serializable {
   @Test
   @Category(RunnableOnService.class)
   public void testBuildSourceWithoutTableOrQuery() {
-    Pipeline p = TestPipeline.create();
+    Pipeline p = TestPipeline.create(bqOptions);
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(
         "Invalid BigQuery read operation, either table reference or query has to be set");
@@ -475,7 +478,7 @@ public class BigQueryIOTest implements Serializable {
   @Test
   @Category(RunnableOnService.class)
   public void testBuildSourceWithTableAndQuery() {
-    Pipeline p = TestPipeline.create();
+    Pipeline p = TestPipeline.create(bqOptions);
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(
         "Invalid BigQuery read operation. Specifies both a query and a table, only one of these"
@@ -490,7 +493,7 @@ public class BigQueryIOTest implements Serializable {
   @Test
   @Category(RunnableOnService.class)
   public void testBuildSourceWithTableAndFlatten() {
-    Pipeline p = TestPipeline.create();
+    Pipeline p = TestPipeline.create(bqOptions);
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(
         "Invalid BigQuery read operation. Specifies a"
@@ -503,7 +506,7 @@ public class BigQueryIOTest implements Serializable {
   }
 
   @Test
-  public void testReadFromTable() {
+  public void testReadFromTable() throws IOException {
     FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
         .withJobService(new FakeJobService()
             .startJobReturns("done", "done")
@@ -514,7 +517,9 @@ public class BigQueryIOTest implements Serializable {
             toJsonString(new TableRow().set("name", "b").set("number", 2)),
             toJsonString(new TableRow().set("name", "c").set("number", 3)));
 
-    Pipeline p = TestPipeline.create(bqOptions);
+    BigQueryOptions options = setLocalTempLocation(bqOptions);
+
+    Pipeline p = TestPipeline.create(options);
     PCollection<String> output = p
         .apply(BigQueryIO.Read.from("non-executing-project:somedataset.sometable")
             .withTestServices(fakeBqServices)
@@ -539,7 +544,9 @@ public class BigQueryIOTest implements Serializable {
             .startJobReturns("done", "done", "done")
             .pollJobReturns(Status.FAILED, Status.FAILED, Status.SUCCEEDED));
 
-    Pipeline p = TestPipeline.create(bqOptions);
+    BigQueryOptions options = setLocalTempLocation(bqOptions);
+
+    Pipeline p = TestPipeline.create(options);
     p.apply(Create.of(
         new TableRow().set("name", "a").set("number", 1),
         new TableRow().set("name", "b").set("number", 2),
@@ -557,7 +564,7 @@ public class BigQueryIOTest implements Serializable {
 
     logged.verifyInfo("Starting BigQuery load job");
     logged.verifyInfo("Previous load jobs failed, retrying.");
-    File tempDir = new File(bqOptions.getTempLocation());
+    File tempDir = new File(options.getTempLocation());
     assertEquals(0, tempDir.listFiles(new FileFilter() {
       @Override
       public boolean accept(File pathname) {
@@ -572,7 +579,9 @@ public class BigQueryIOTest implements Serializable {
             .startJobReturns("done", "done")
             .pollJobReturns(Status.FAILED, Status.UNKNOWN));
 
-    Pipeline p = TestPipeline.create(bqOptions);
+    BigQueryOptions options = setLocalTempLocation(bqOptions);
+
+    Pipeline p = TestPipeline.create(options);
     p.apply(Create.of(
         new TableRow().set("name", "a").set("number", 1),
         new TableRow().set("name", "b").set("number", 2),
@@ -587,7 +596,7 @@ public class BigQueryIOTest implements Serializable {
     thrown.expectMessage("Failed to poll the load job status.");
     p.run();
 
-    File tempDir = new File(bqOptions.getTempLocation());
+    File tempDir = new File(options.getTempLocation());
     assertEquals(0, tempDir.listFiles(new FileFilter() {
       @Override
       public boolean accept(File pathname) {
