@@ -162,10 +162,11 @@ public class DatastoreWordCount {
     String getOutput();
     void setOutput(String value);
 
-    @Description("Project ID to read from datastore")
+    // Note: This maps to Project ID for v1beta3 version of datastore
+    @Description("Dataset ID to read from datastore")
     @Validation.Required
-    String getProject();
-    void setProject(String value);
+    String getDataset();
+    void setDataset(String value);
 
     @Description("Dataset entity kind")
     @Default.String("shakespeare-demo")
@@ -194,7 +195,7 @@ public class DatastoreWordCount {
     Pipeline p = Pipeline.create(options);
     p.apply(TextIO.Read.named("ReadLines").from(options.getInput()))
         .apply(ParDo.of(new CreateEntityFn(options.getNamespace(), options.getKind())))
-        .apply(DatastoreIO.v1beta3().write().withProjectId(options.getProject()));
+        .apply(DatastoreIO.v1beta3().write().withProjectId(options.getDataset()));
 
     p.run();
   }
@@ -226,7 +227,7 @@ public class DatastoreWordCount {
 
     // For Datastore sources, the read namespace can be set on the entire query.
     V1Beta3.Read read = DatastoreIO.v1beta3().read()
-        .withProjectId(options.getProject())
+        .withProjectId(options.getDataset())
         .withQuery(query)
         .withNamespace(options.getNamespace());
 

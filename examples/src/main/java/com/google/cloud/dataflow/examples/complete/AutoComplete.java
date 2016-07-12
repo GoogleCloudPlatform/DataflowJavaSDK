@@ -443,9 +443,9 @@ public class AutoComplete {
     Boolean getOutputToDatastore();
     void setOutputToDatastore(Boolean value);
 
-    @Description("Datastore output project ID, defaults to project ID")
-    String getOutputProject();
-    void setOutputProject(String value);
+    @Description("Datastore output dataset ID, defaults to project ID")
+    String getOutputDataset();
+    void setOutputDataset(String value);
   }
 
   public static void main(String[] args) throws IOException {
@@ -488,7 +488,7 @@ public class AutoComplete {
       toWrite
           .apply(ParDo.named("FormatForDatastore").of(new FormatForDatastore(options.getKind())))
           .apply(DatastoreIO.v1beta3().write().withProjectId(MoreObjects.firstNonNull(
-              options.getOutputProject(), options.getProject())));
+              options.getOutputDataset(), options.getProject())));
     }
     if (options.getOutputToBigQuery()) {
       dataflowUtils.setupBigQueryTable();
