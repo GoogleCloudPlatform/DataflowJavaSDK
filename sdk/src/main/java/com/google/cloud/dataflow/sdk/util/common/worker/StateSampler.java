@@ -19,6 +19,7 @@ package com.google.cloud.dataflow.sdk.util.common.worker;
 import com.google.api.client.util.NanoClock;
 import com.google.cloud.dataflow.sdk.util.common.Counter;
 import com.google.cloud.dataflow.sdk.util.common.CounterSet;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import java.io.Closeable;
@@ -48,27 +49,35 @@ public class StateSampler implements AutoCloseable {
    * An interface for scheduling state sampling.
    */
   public static interface SampleScheduler {
-    Closeable scheduleSampling(StateSampler sampler, long samplingPeriodMs);
+    Closeable scheduleSampling(StateSampler sampler);
   }
 
   /**
    * An implementation of {@link SampleScheduler} using a scheduled executor service and two
-   * callbacks per sample. The sampling uses a "stratified sampling" is used -- in every bucket of
+   * callbacks per sample. The sampling uses "stratified sampling" -- in every bucket of
    * samplingPeriodMs we choose a random point to sample. This prevents pathological behavior in
-   * case some states happen to occur at a similar period
+   * case some states happen to occur at a similar period.
    *
    * <p>The current implementation uses a fixed-rate timer with a period samplingPeriodMs as a
    * trampoline to a one-shot random timer which fires with a random delay within
    * samplingPeriodMs.
    */
-  private static final class DefaultScheduler implements SampleScheduler {
+  @VisibleForTesting
+  static final class DefaultScheduler implements SampleScheduler {
     private static final int NUM_EXECUTOR_THREADS = 16;
     private static final ScheduledExecutorService EXECUTOR_SERVICE =
         Executors.newScheduledThreadPool(NUM_EXECUTOR_THREADS,
             new ThreadFactoryBuilder().setDaemon(true).build());
 
+    private final long samplingPeriodMs;
+
+    @VisibleForTesting
+    DefaultScheduler(long samplingPeriodMs) {
+      this.samplingPeriodMs = samplingPeriodMs;
+    }
+
     @Override
-    public Closeable scheduleSampling(final StateSampler sampler, final long samplingPeriodMs) {
+    public Closeable scheduleSampling(final StateSampler sampler) {
       return new Closeable() {
         private ScheduledFuture<?> invocationFuture = null;
         private ScheduledFuture<?> invocationTriggerFuture = EXECUTOR_SERVICE.scheduleAtFixedRate(
@@ -111,14 +120,11 @@ public class StateSampler implements AutoCloseable {
         }
       };
     }
-
   }
-
-  public static final SampleScheduler DEFAULT_SCHEDULER = new DefaultScheduler();
 
   public static final SampleScheduler NOOP_SCHEDULER = new SampleScheduler() {
     @Override
-    public Closeable scheduleSampling(StateSampler sampler, long samplingPeriodMs) {
+    public Closeable scheduleSampling(StateSampler sampler) {
       return new Closeable() {
         @Override
         public void close() throws IOException {
@@ -181,19 +187,17 @@ public class StateSampler implements AutoCloseable {
    * @param prefix the prefix of the counter names for the states
    * @param counterSetMutator the {@link CounterSet.AddCounterMutator}
    * used to create a counter for each distinct state
-   * @param samplingPeriodMs the sampling period in milliseconds
    * @param scheduler the sample scheduler to use
    */
   public StateSampler(String prefix,
                       CounterSet.AddCounterMutator counterSetMutator,
-                      final long samplingPeriodMs,
                       SampleScheduler scheduler,
                       NanoClock nanoClock) {
     this.prefix = prefix;
     this.counterSetMutator = counterSetMutator;
     this.nanoClock = nanoClock;
     this.currentState = DO_NOT_SAMPLE;
-    this.sampleSchedule = scheduler.scheduleSampling(this, samplingPeriodMs);
+    this.sampleSchedule = scheduler.scheduleSampling(this);
     this.stateTimestampNs = nanoClock.nanoTime();
   }
 
@@ -210,7 +214,7 @@ public class StateSampler implements AutoCloseable {
   public StateSampler(String prefix,
                       CounterSet.AddCounterMutator counterSetMutator,
                       final long samplingPeriodMs) {
-    this(prefix, counterSetMutator, samplingPeriodMs, DEFAULT_SCHEDULER, NanoClock.SYSTEM);
+    this(prefix, counterSetMutator, new DefaultScheduler(samplingPeriodMs), NanoClock.SYSTEM);
   }
 
   /**
