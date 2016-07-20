@@ -20,11 +20,11 @@ import static com.google.cloud.dataflow.sdk.io.BigQueryIO.fromJsonString;
 import static com.google.cloud.dataflow.sdk.io.BigQueryIO.toJsonString;
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
 import static com.google.common.base.Preconditions.checkArgument;
-
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.when;
@@ -35,6 +35,7 @@ import com.google.api.services.bigquery.model.Job;
 import com.google.api.services.bigquery.model.JobConfigurationExtract;
 import com.google.api.services.bigquery.model.JobConfigurationLoad;
 import com.google.api.services.bigquery.model.JobConfigurationQuery;
+import com.google.api.services.bigquery.model.JobConfigurationTableCopy;
 import com.google.api.services.bigquery.model.JobReference;
 import com.google.api.services.bigquery.model.JobStatistics;
 import com.google.api.services.bigquery.model.JobStatistics2;
@@ -47,8 +48,10 @@ import com.google.api.services.bigquery.model.TableRow;
 import com.google.api.services.bigquery.model.TableSchema;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.CoderException;
+import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
+import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO.BigQueryQuerySource;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO.BigQueryTableSource;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO.PassThroughThenCleanup;
@@ -57,6 +60,9 @@ import com.google.cloud.dataflow.sdk.io.BigQueryIO.Status;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO.TransformingSource;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.CreateDisposition;
 import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.WriteDisposition;
+import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.WritePartition;
+import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.WriteRename;
+import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.WriteTables;
 import com.google.cloud.dataflow.sdk.options.BigQueryOptions;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
@@ -69,6 +75,7 @@ import com.google.cloud.dataflow.sdk.testing.SourceTestUtils.ExpectedSplitOutcom
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
+import com.google.cloud.dataflow.sdk.transforms.DoFnTester;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.transforms.display.DataflowDisplayDataEvaluator;
@@ -81,7 +88,12 @@ import com.google.cloud.dataflow.sdk.util.BigQueryServices.JobService;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
 import com.google.cloud.dataflow.sdk.util.IOChannelFactory;
 import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
+import com.google.cloud.dataflow.sdk.util.PCollectionViews;
+import com.google.cloud.dataflow.sdk.util.WindowingStrategy;
+import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
+import com.google.cloud.dataflow.sdk.values.PCollectionView;
+import com.google.cloud.dataflow.sdk.values.TupleTag;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -106,6 +118,9 @@ import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
 import java.io.Serializable;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -118,6 +133,8 @@ import javax.annotation.Nullable;
  */
 @RunWith(JUnit4.class)
 public class BigQueryIOTest implements Serializable {
+
+  @Rule public transient TemporaryFolder tmpFolder = new TemporaryFolder();
 
   // Status.UNKNOWN maps to null
   private static final Map<Status, Job> JOB_STATUS_MAP = ImmutableMap.of(
@@ -280,6 +297,12 @@ public class BigQueryIOTest implements Serializable {
 
     @Override
     public void startQueryJob(JobReference jobRef, JobConfigurationQuery query)
+        throws IOException, InterruptedException {
+      startJob(jobRef);
+    }
+
+    @Override
+    public void startCopyJob(JobReference jobRef, JobConfigurationTableCopy copyConfig)
         throws IOException, InterruptedException {
       startJob(jobRef);
     }
@@ -592,7 +615,8 @@ public class BigQueryIOTest implements Serializable {
     FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
         .withJobService(new FakeJobService()
             .startJobReturns("done", "done", "done")
-            .pollJobReturns(Status.FAILED, Status.FAILED, Status.SUCCEEDED));
+            .pollJobReturns(Status.FAILED, Status.FAILED, Status.SUCCEEDED))
+        .withDatasetService(mockDatasetService);
 
     Pipeline p = TestPipeline.create(bqOptions);
     p.apply(Create.of(
@@ -611,7 +635,6 @@ public class BigQueryIOTest implements Serializable {
     p.run();
 
     logged.verifyInfo("Starting BigQuery load job");
-    logged.verifyInfo("Previous load jobs failed, retrying.");
     File tempDir = new File(bqOptions.getTempLocation());
     assertEquals(0, tempDir.listFiles(new FileFilter() {
       @Override
@@ -643,7 +666,7 @@ public class BigQueryIOTest implements Serializable {
         .withoutValidation());
 
     thrown.expect(RuntimeException.class);
-    thrown.expectMessage("Failed to poll the load job status.");
+    thrown.expectMessage("Failed to poll the load job status");
     p.run();
 
     File tempDir = new File(bqOptions.getTempLocation());
@@ -1234,5 +1257,189 @@ public class BigQueryIOTest implements Serializable {
     thrown.expectMessage("cleanup executed");
 
     p.run();
+  }
+
+  @Test
+  public void testWritePartitionEmptyData() throws Exception {
+    final long numFiles = 0;
+    final long fileSize = 0;
+
+    // An empty file is created for no input data. One partition is needed.
+    final long expectedNumPartitions = 1;
+    testWritePartition(numFiles, fileSize, expectedNumPartitions);
+  }
+
+  @Test
+  public void testWritePartitionSinglePartition() throws Exception {
+    final long numFiles = BigQueryIO.Write.Bound.MAX_NUM_FILES;
+    final long fileSize = 1;
+
+    // One partition is needed.
+    final long expectedNumPartitions = 1;
+    testWritePartition(numFiles, fileSize, expectedNumPartitions);
+  }
+
+  @Test
+  public void testWritePartitionManyFiles() throws Exception {
+    final long numFiles = BigQueryIO.Write.Bound.MAX_NUM_FILES * 3;
+    final long fileSize = 1;
+
+    // One partition is needed for each group of BigQueryWrite.MAX_NUM_FILES files.
+    final long expectedNumPartitions = 3;
+    testWritePartition(numFiles, fileSize, expectedNumPartitions);
+  }
+
+  @Test
+  public void testWritePartitionLargeFileSize() throws Exception {
+    final long numFiles = 10;
+    final long fileSize = BigQueryIO.Write.Bound.MAX_SIZE_BYTES / 3;
+
+    // One partition is needed for each group of three files.
+    final long expectedNumPartitions = 4;
+    testWritePartition(numFiles, fileSize, expectedNumPartitions);
+  }
+
+  private void testWritePartition(long numFiles, long fileSize, long expectedNumPartitions)
+      throws Exception {
+    final List<Long> expectedPartitionIds = Lists.newArrayList();
+    for (long i = 1; i <= expectedNumPartitions; ++i) {
+      expectedPartitionIds.add(i);
+    }
+
+    final List<KV<String, Long>> files = Lists.newArrayList();
+    final List<String> fileNames = Lists.newArrayList();
+    for (int i = 0; i < numFiles; ++i) {
+      String fileName = String.format("files%05d", i);
+      fileNames.add(fileName);
+      files.add(KV.of(fileName, fileSize));
+    }
+
+    TupleTag<KV<Long, List<String>>> multiPartitionsTag =
+        new TupleTag<KV<Long, List<String>>>("multiPartitionsTag") {};
+    TupleTag<KV<Long, List<String>>> singlePartitionTag =
+        new TupleTag<KV<Long, List<String>>>("singlePartitionTag") {};
+
+    final PCollectionView<Iterable<KV<String, Long>>> filesView = PCollectionViews.iterableView(
+        TestPipeline.create(),
+        WindowingStrategy.globalDefault(),
+        KvCoder.of(StringUtf8Coder.of(), VarLongCoder.of()));
+
+    WritePartition writePartition =
+        new WritePartition(filesView, multiPartitionsTag, singlePartitionTag);
+
+    DoFnTester<String, KV<Long, List<String>>> tester = DoFnTester.of(writePartition);
+    // tester.setSideInput(filesView, GlobalWindow.INSTANCE, files);
+    tester.setSideInputInGlobalWindow(filesView, files);
+    tester.processElement(tmpFolder.getRoot().getAbsolutePath());
+
+    List<KV<Long, List<String>>> partitions;
+    if (expectedNumPartitions > 1) {
+      partitions = tester.takeSideOutputElements(multiPartitionsTag);
+    } else {
+      partitions = tester.takeSideOutputElements(singlePartitionTag);
+    }
+    List<Long> partitionIds = Lists.newArrayList();
+    List<String> partitionFileNames = Lists.newArrayList();
+    for (KV<Long, List<String>> partition : partitions) {
+      partitionIds.add(partition.getKey());
+      for (String name : partition.getValue()) {
+        partitionFileNames.add(name);
+      }
+    }
+
+    assertEquals(expectedPartitionIds, partitionIds);
+    if (numFiles == 0) {
+      assertThat(partitionFileNames, Matchers.hasSize(1));
+      assertTrue(Files.exists(Paths.get(partitionFileNames.get(0))));
+      assertThat(Files.readAllBytes(Paths.get(partitionFileNames.get(0))).length,
+          Matchers.equalTo(0));
+    } else {
+      assertEquals(fileNames, partitionFileNames);
+    }
+  }
+
+  @Test
+  public void testWriteTables() throws Exception {
+    FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
+        .withJobService(new FakeJobService()
+            .startJobReturns("done", "done", "done", "done")
+            .pollJobReturns(Status.FAILED, Status.SUCCEEDED, Status.SUCCEEDED, Status.SUCCEEDED))
+        .withDatasetService(mockDatasetService);
+
+    final long numPartitions = 3;
+    final long numFilesPerPartition = 10;
+    final String jobIdToken = "jobIdToken";
+    final String tempFilePrefix = "tempFilePrefix";
+    final String jsonTable = "{}";
+    final String jsonSchema = "{}";
+    final List<String> expectedTempTables = Lists.newArrayList();
+
+    final List<KV<Long, Iterable<List<String>>>> partitions = Lists.newArrayList();
+    for (long i = 0; i < numPartitions; ++i) {
+      List<String> filesPerPartition = Lists.newArrayList();
+      for (int j = 0; j < numFilesPerPartition; ++j) {
+        filesPerPartition.add(String.format("files%05d", j));
+      }
+      partitions.add(KV.of(i, (Iterable<List<String>>) Collections.singleton(filesPerPartition)));
+      expectedTempTables.add(String.format("{\"tableId\":\"%s_%05d\"}", jobIdToken, i));
+    }
+
+    WriteTables writeTables = new WriteTables(
+        false,
+        fakeBqServices,
+        jobIdToken,
+        tempFilePrefix,
+        jsonTable,
+        jsonSchema,
+        WriteDisposition.WRITE_EMPTY,
+        CreateDisposition.CREATE_IF_NEEDED);
+
+    DoFnTester<KV<Long, Iterable<List<String>>>, String> tester = DoFnTester.of(writeTables);
+    for (KV<Long, Iterable<List<String>>> partition : partitions) {
+      tester.processElement(partition);
+    }
+
+    List<String> tempTables = tester.takeOutputElements();
+
+    logged.verifyInfo("Starting BigQuery load job");
+
+    assertEquals(expectedTempTables, tempTables);
+  }
+
+  @Test
+  public void testWriteRename() throws Exception {
+    FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
+        .withJobService(new FakeJobService()
+            .startJobReturns("done", "done")
+            .pollJobReturns(Status.FAILED, Status.SUCCEEDED))
+        .withDatasetService(mockDatasetService);
+
+    final long numTempTables = 3;
+    final String jobIdToken = "jobIdToken";
+    final String jsonTable = "{}";
+    final List<String> tempTables = Lists.newArrayList();
+    for (long i = 0; i < numTempTables; ++i) {
+      tempTables.add(String.format("{\"tableId\":\"%s_%05d\"}", jobIdToken, i));
+    }
+
+    final PCollectionView<Iterable<String>> tempTablesView = PCollectionViews.iterableView(
+        TestPipeline.create(),
+        WindowingStrategy.globalDefault(),
+        StringUtf8Coder.of());
+
+    WriteRename writeRename = new WriteRename(
+        fakeBqServices,
+        jobIdToken,
+        jsonTable,
+        WriteDisposition.WRITE_EMPTY,
+        CreateDisposition.CREATE_IF_NEEDED,
+        tempTablesView);
+
+    DoFnTester<String, Void> tester = DoFnTester.of(writeRename);
+    // tester.setSideInput(tempTablesView, GlobalWindow.INSTANCE, tempTables);
+    // tester.setSideInputInGlobalWindow(tempTablesView, tempTables);
+    tester.processElement(null);
+
+    logged.verifyInfo("Starting BigQuery copy job");
   }
 }
