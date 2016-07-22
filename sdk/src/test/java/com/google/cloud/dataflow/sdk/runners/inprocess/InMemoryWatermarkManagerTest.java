@@ -26,6 +26,7 @@ import static org.junit.Assert.assertThat;
 import com.google.cloud.dataflow.sdk.coders.ByteArrayCoder;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
+import com.google.cloud.dataflow.sdk.runners.inprocess.CommittedResult.OutputType;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InMemoryWatermarkManager.FiredTimers;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InMemoryWatermarkManager.TimerUpdate;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InMemoryWatermarkManager.TimerUpdate.TimerUpdateBuilder;
@@ -55,7 +56,6 @@ import com.google.cloud.dataflow.sdk.values.PValue;
 import com.google.cloud.dataflow.sdk.values.TimestampedValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-
 import org.hamcrest.BaseMatcher;
 import org.hamcrest.Description;
 import org.hamcrest.Matcher;
@@ -65,13 +65,12 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
-
 import javax.annotation.Nullable;
 
 /**
@@ -1423,6 +1422,8 @@ public class InMemoryWatermarkManagerTest implements Serializable {
         StepTransformResult.withoutHold(transform).build(),
         unprocessedBundle,
         bundles,
-        !Iterables.isEmpty(bundles));
+        Iterables.isEmpty(bundles)
+            ? EnumSet.noneOf(OutputType.class)
+            : EnumSet.of(OutputType.BUNDLE));
   }
 }

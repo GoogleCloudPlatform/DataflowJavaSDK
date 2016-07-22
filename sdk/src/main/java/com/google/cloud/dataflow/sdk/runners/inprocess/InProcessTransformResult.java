@@ -15,6 +15,7 @@
  */
 package com.google.cloud.dataflow.sdk.runners.inprocess;
 
+import com.google.cloud.dataflow.sdk.runners.inprocess.CommittedResult.OutputType;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InMemoryWatermarkManager.TimerUpdate;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.UncommittedBundle;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
@@ -23,9 +24,8 @@ import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.common.CounterSet;
 import com.google.cloud.dataflow.sdk.util.state.CopyOnAccessInMemoryStateInternals;
-
 import org.joda.time.Instant;
-
+import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
@@ -81,9 +81,8 @@ interface InProcessTransformResult {
   TimerUpdate getTimerUpdate();
 
   /**
-   * Returns whether output was produced by the evaluation of this transform. True if
-   * {@link #getOutputBundles()} is nonempty, or if pipeline-visible state has changed (for example,
-   * the contents of a {@link PCollectionView} were updated).
+   * Returns the types of output produced by this {@link PTransform}. This may not include
+   * {@link OutputType#BUNDLE}, as empty bundles may be dropped when the transform is committed.
    */
-  boolean producedOutput();
+  Set<OutputType> getOutputTypes();
 }

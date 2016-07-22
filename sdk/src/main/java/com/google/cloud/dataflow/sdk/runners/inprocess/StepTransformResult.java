@@ -16,6 +16,7 @@
 package com.google.cloud.dataflow.sdk.runners.inprocess;
 
 import com.google.auto.value.AutoValue;
+import com.google.cloud.dataflow.sdk.runners.inprocess.CommittedResult.OutputType;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InMemoryWatermarkManager.TimerUpdate;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.UncommittedBundle;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
@@ -24,12 +25,10 @@ import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.common.CounterSet;
 import com.google.cloud.dataflow.sdk.util.state.CopyOnAccessInMemoryStateInternals;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
-
 import org.joda.time.Instant;
-
 import java.util.Collection;
-
+import java.util.EnumSet;
+import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
@@ -61,17 +60,7 @@ public abstract class StepTransformResult implements InProcessTransformResult {
   public abstract TimerUpdate getTimerUpdate();
 
   @Override
-  public boolean producedOutput() {
-    return !Iterables.isEmpty(getOutputBundles()) || producedAdditionalOutput();
-  }
-
-  /**
-   * Returns {@code true} if the step produced output that is not reflected in the Output Bundles.
-   *
-   * <p>If a step modifies the contents of a {@link PCollectionView}, this should return {@code
-   * true}.
-   */
-  abstract boolean producedAdditionalOutput();
+  public abstract Set<OutputType> getOutputTypes();
 
   public static Builder withHold(AppliedPTransform<?, ?, ?> transform, Instant watermarkHold) {
     return new Builder(transform, watermarkHold);
@@ -91,13 +80,14 @@ public abstract class StepTransformResult implements InProcessTransformResult {
     private CopyOnAccessInMemoryStateInternals<?> state;
     private TimerUpdate timerUpdate;
     private CounterSet counters;
-    private boolean producedAdditionalOutput;
+    private final Set<OutputType> producedOutputs;
     private final Instant watermarkHold;
 
     private Builder(AppliedPTransform<?, ?, ?> transform, Instant watermarkHold) {
       this.transform = transform;
       this.watermarkHold = watermarkHold;
       this.bundlesBuilder = ImmutableList.builder();
+      this.producedOutputs = EnumSet.noneOf(OutputType.class);
       this.unprocessedElementsBuilder = ImmutableList.builder();
       this.timerUpdate = TimerUpdate.builder(null).build();
     }
@@ -111,7 +101,7 @@ public abstract class StepTransformResult implements InProcessTransformResult {
           watermarkHold,
           state,
           timerUpdate,
-          producedAdditionalOutput);
+          producedOutputs);
     }
 
     public Builder withCounters(CounterSet counters) {
@@ -146,8 +136,8 @@ public abstract class StepTransformResult implements InProcessTransformResult {
       return this;
     }
 
-    public Builder withAdditionalOutput(boolean producedAdditionalOutput) {
-      this.producedAdditionalOutput = producedAdditionalOutput;
+    public Builder withAdditionalOutput(OutputType producedAdditionalOutput) {
+      producedOutputs.add(producedAdditionalOutput);
       return this;
     }
   }

@@ -15,13 +15,18 @@
  */
 package com.google.cloud.dataflow.sdk.runners.inprocess;
 
-import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.emptyIterable;
+import static org.hamcrest.Matchers.hasItem;
 import static org.junit.Assert.assertThat;
 
+import com.google.cloud.dataflow.sdk.runners.inprocess.CommittedResult.OutputType;
+import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.UncommittedBundle;
 import com.google.cloud.dataflow.sdk.testing.TestPipeline;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.values.PCollection;
+import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -47,35 +52,37 @@ public class StepTransformResultTest {
 
   @Test
   public void producedBundlesProducedOutputs() {
-    InProcessTransformResult result = StepTransformResult.withoutHold(transform)
-        .addOutput(bundleFactory.createRootBundle(pc))
+    UncommittedBundle<Integer> bundle = bundleFactory.createRootBundle(pc);
+    InProcessTransformResult result = StepTransformResult.withoutHold(transform).addOutput(bundle)
         .build();
 
-    assertThat(result.producedOutput(), is(true));
+    assertThat(result.getOutputBundles(),
+        Matchers.<UncommittedBundle<?>>containsInAnyOrder(bundle));
   }
 
   @Test
   public void withAdditionalOutputProducedOutputs() {
-    InProcessTransformResult result =
-        StepTransformResult.withoutHold(transform).withAdditionalOutput(true).build();
+    InProcessTransformResult result = StepTransformResult.withoutHold(transform)
+        .withAdditionalOutput(OutputType.PCOLLECTION_VIEW)
+        .build();
 
-    assertThat(result.producedOutput(), is(true));
+    assertThat(result.getOutputTypes(), containsInAnyOrder(OutputType.PCOLLECTION_VIEW));
   }
 
   @Test
   public void producedBundlesAndAdditionalOutputProducedOutputs() {
     InProcessTransformResult result = StepTransformResult.withoutHold(transform)
         .addOutput(bundleFactory.createRootBundle(pc))
-        .withAdditionalOutput(true)
+        .withAdditionalOutput(OutputType.PCOLLECTION_VIEW)
         .build();
 
-    assertThat(result.producedOutput(), is(true));
+    assertThat(result.getOutputTypes(), hasItem(OutputType.PCOLLECTION_VIEW));
   }
 
   @Test
   public void noBundlesNoAdditionalOutputProducedOutputsFalse() {
     InProcessTransformResult result = StepTransformResult.withoutHold(transform).build();
 
-    assertThat(result.producedOutput(), is(false));
+    assertThat(result.getOutputTypes(), emptyIterable());
   }
 }

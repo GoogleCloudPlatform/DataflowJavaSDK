@@ -17,6 +17,7 @@ package com.google.cloud.dataflow.sdk.runners.inprocess;
 
 import com.google.cloud.dataflow.sdk.coders.KvCoder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
+import com.google.cloud.dataflow.sdk.runners.inprocess.CommittedResult.OutputType;
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner.PCollectionViewWriter;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
 import com.google.cloud.dataflow.sdk.transforms.GroupByKey;
@@ -29,7 +30,6 @@ import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.cloud.dataflow.sdk.values.PCollectionView;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.cloud.dataflow.sdk.values.POutput;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -76,8 +76,11 @@ class ViewEvaluatorFactory implements TransformEvaluatorFactory {
       @Override
       public InProcessTransformResult finishBundle() {
         writer.add(elements);
-        return StepTransformResult.withoutHold(application)
-            .withAdditionalOutput(!elements.isEmpty())
+        StepTransformResult.Builder resultBuilder = StepTransformResult.withoutHold(application);
+        if (!elements.isEmpty()) {
+          resultBuilder = resultBuilder.withAdditionalOutput(OutputType.PCOLLECTION_VIEW);
+        }
+        return resultBuilder
             .build();
       }
     };
