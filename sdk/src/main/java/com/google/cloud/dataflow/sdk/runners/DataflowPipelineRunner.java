@@ -612,7 +612,7 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
         printWriter.print(workSpecJson);
         printWriter.flush();
         printWriter.close();
-        LOG.info("Printed workflow specification to {}", options.getDataflowJobFile());
+        LOG.info("Printed job specification to {}", options.getDataflowJobFile());
       } catch (IllegalStateException ex) {
 	  String error = "Cannot translate workflow spec to JSON.";
         if (hooks != null && hooks.failOnJobFileWriteFailure()) {
@@ -621,7 +621,7 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
 	    LOG.warn(error);
         }
       } catch (IOException ex) {
-	  String error = String.format("Cannot create workflow spec output file at {}",
+	  String error = String.format("Cannot create output file at {}",
 				options.getDataflowJobFile());
         if (hooks != null && hooks.failOnJobFileWriteFailure()) {
 	    throw new RuntimeException(error, ex);
