@@ -3,7 +3,7 @@
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
- * the License at
+ * the License atj
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -110,6 +110,7 @@ import com.google.cloud.dataflow.sdk.util.CoderUtils;
 import com.google.cloud.dataflow.sdk.util.DataflowReleaseInfo;
 import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
 import com.google.cloud.dataflow.sdk.util.InstanceBuilder;
+import com.google.cloud.dataflow.sdk.util.MimeTypes;
 import com.google.cloud.dataflow.sdk.util.MonitoringUtil;
 import com.google.cloud.dataflow.sdk.util.PCollectionViews;
 import com.google.cloud.dataflow.sdk.util.PathValidator;
@@ -168,6 +169,8 @@ import java.io.Serializable;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.channels.Channels;
+import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -601,16 +604,30 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     }
 
     if (!Strings.isNullOrEmpty(options.getDataflowJobFile())) {
-      try (PrintWriter printWriter = new PrintWriter(
-          new File(options.getDataflowJobFile()))) {
+      try (WritableByteChannel writer = IOChannelUtils.create(
+          options.getDataflowJobFile(), MimeTypes.TEXT)) {
+        PrintWriter printWriter = new PrintWriter(Channels.newOutputStream(writer));
         String workSpecJson = DataflowPipelineTranslator.jobToString(newJob);
         printWriter.print(workSpecJson);
+        printWriter.flush();
+        printWriter.close();
         LOG.info("Printed workflow specification to {}", options.getDataflowJobFile());
       } catch (IllegalStateException ex) {
-        LOG.warn("Cannot translate workflow spec to json for debug.");
-      } catch (FileNotFoundException ex) {
-        LOG.warn("Cannot create workflow spec output file.");
+        if (hooks != null && hooks.failOnJobFileWriteFailure()) {
+          throw new RuntimeException(ex);
+        } else {
+          LOG.warn("Cannot translate workflow spec to json for debug.");
+        }
+      } catch (IOException ex) {
+        if (hooks != null && hooks.failOnJobFileWriteFailure()) {
+          throw new RuntimeException(ex);
+        } else {
+          LOG.warn("Cannot create workflow spec output file at {}", options.getDataflowJobFile());
+        }
       }
+    }
+    if (hooks != null && !hooks.shouldActuallyRunJob()) {
+      return null;
     }
 
     String jobIdToUpdate = null;
