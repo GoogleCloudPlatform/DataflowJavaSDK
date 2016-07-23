@@ -140,7 +140,7 @@ public class TemplatingDataflowPipelineRunnerTest {
     TestDataflowPipelineOptions options =
         PipelineOptionsFactory.as(TestDataflowPipelineOptions.class);
     options.setProject(job.getProjectId());
-
+    options.setDataflowJobFile("foo");
     when(mockRunner.run(isA(Pipeline.class))).thenReturn(job);
 
     return new TemplatingDataflowPipelineRunner(mockRunner, options);
