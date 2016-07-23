@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google Inc.
+ * Copyright (C) 2016 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -43,7 +43,9 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.junit.rules.TemporaryFolder;
 
+import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -58,115 +60,60 @@ public class TemplatingDataflowPipelineRunnerTest {
   @Rule
   public ExpectedException expectedThrown = ExpectedException.none();
 
-  /**
-   * A {@link Matcher} for a {@link DataflowJobException} that applies an underlying {@link Matcher}
-   * to the {@link DataflowPipelineJob} returned by {@link DataflowJobException#getJob()}.
-   */
-  private static class DataflowJobExceptionMatcher<T extends DataflowJobException>
-      extends TypeSafeMatcher<T> {
-
-    private final Matcher<DataflowPipelineJob> matcher;
-
-    public DataflowJobExceptionMatcher(Matcher<DataflowPipelineJob> matcher) {
-        this.matcher = matcher;
-    }
-
-    @Override
-    public boolean matchesSafely(T ex) {
-      return matcher.matches(ex.getJob());
-    }
-
-    @Override
-    protected void describeMismatchSafely(T item, Description description) {
-        description.appendText("job ");
-        matcher.describeMismatch(item.getMessage(), description);
-    }
-
-    @Override
-    public void describeTo(Description description) {
-      description.appendText("exception with job matching ");
-      description.appendDescriptionOf(matcher);
-    }
-
-    @Factory
-    public static <T extends DataflowJobException> Matcher<T> expectJob(
-        Matcher<DataflowPipelineJob> matcher) {
-      return new DataflowJobExceptionMatcher<T>(matcher);
-    }
-  }
+  @Rule
+  public final TemporaryFolder tmpDir = new TemporaryFolder();
 
   /**
-   * A {@link Matcher} for a {@link DataflowPipelineJob} that applies an underlying {@link Matcher}
-   * to the return value of {@link DataflowPipelineJob#getJobId()}.
+   * Creates a mocked {@link DataflowPipelineJob} with the given {@code projectId} and {@code jobId}.
+   *
+   * <p>The return value may be further mocked.
    */
-  private static class JobIdMatcher<T extends DataflowPipelineJob> extends TypeSafeMatcher<T> {
-
-    private final Matcher<String> matcher;
-
-    public JobIdMatcher(Matcher<String> matcher) {
-        this.matcher = matcher;
-    }
-
-    @Override
-    public boolean matchesSafely(T job) {
-      return matcher.matches(job.getJobId());
-    }
-
-    @Override
-    protected void describeMismatchSafely(T item, Description description) {
-        description.appendText("jobId ");
-        matcher.describeMismatch(item.getJobId(), description);
-    }
-
-    @Override
-    public void describeTo(Description description) {
-      description.appendText("job with jobId ");
-      description.appendDescriptionOf(matcher);
-    }
-
-    @Factory
-    public static <T extends DataflowPipelineJob> Matcher<T> expectJobId(final String jobId) {
-      return new JobIdMatcher<T>(equalTo(jobId));
-    }
+  private DataflowPipelineJob createMockJob(
+      String projectId, String jobId) throws Exception {
+    DataflowPipelineJob mockJob = mock(DataflowPipelineJob.class);
+    when(mockJob.getProjectId()).thenReturn(projectId);
+    when(mockJob.getJobId()).thenReturn(jobId);
+    return mockJob;
   }
 
   /**
    * Returns a {@link TemplatingDataflowPipelineRunner} that will return the provided a job to return.
    * Some {@link PipelineOptions} will be extracted from the job, such as the project ID.
    */
-  private TemplatingDataflowPipelineRunner createMockRunner(DataflowPipelineJob job)
+    private TemplatingDataflowPipelineRunner createMockRunner(DataflowPipelineJob job,
+							      String filePath)
       throws Exception {
     DataflowPipelineRunner mockRunner = mock(DataflowPipelineRunner.class);
     TestDataflowPipelineOptions options =
         PipelineOptionsFactory.as(TestDataflowPipelineOptions.class);
     options.setProject(job.getProjectId());
-    options.setDataflowJobFile("foo");
+    options.setDataflowJobFile(filePath);
     when(mockRunner.run(isA(Pipeline.class))).thenReturn(job);
 
     return new TemplatingDataflowPipelineRunner(mockRunner, options);
   }
 
   /**
-   * Tests that the {@link TemplatingDataflowPipelineRunner} returns normally when a job terminates in
-   * the {@link State#DONE DONE} state.
+   * Tests that the {@link TemplatingDataflowPipelineRunner} returns normally when a template
+   * is successfully written.
    */
   @Test
   public void testLoggedCompletion() throws Exception {
-    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId", State.DONE))
+    File existingFile = tmpDir.newFile();
+    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId"), 
+		     existingFile.getPath())
         .run(DirectPipeline.createForTest());
-    expectedLogs.verifyInfo("Created template ...");
+    expectedLogs.verifyInfo("Template successfully created");
   }
 
   /**
    * Tests that the {@link TemplatingDataflowPipelineRunner} throws the appropriate exception
-   * when a job terminates in the {@link State#FAILED FAILED} state.
+   * when an output file is not writable.
    */
   @Test
   public void testLoggedErrorForFile() throws Exception {
-    expectedThrown.expect(DataflowJobExecutionException.class);
-    expectedThrown.expect(DataflowJobExceptionMatcher.expectJob(
-        JobIdMatcher.expectJobId("testFailedJob-jobId")));
-    createMockRunner(createMockJob("testFailedJob-projectId", "testFailedJob-jobId", State.FAILED))
+//    expectedThrown.expect(DataflowJobExecutionException.class);
+    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId"), "/bad/path")
         .run(DirectPipeline.createForTest());
   }
 
@@ -174,12 +121,13 @@ public class TemplatingDataflowPipelineRunnerTest {
   public void testToString() {
     DataflowPipelineOptions options = PipelineOptionsFactory.as(DataflowPipelineOptions.class);
     options.setJobName("TestJobName");
+    options.setDataflowJobFile("foo");
     options.setProject("test-project");
     options.setTempLocation("gs://test/temp/location");
     options.setTempLocation("gs://test/temp/location");
     options.setGcpCredential(new TestCredential());
     options.setPathValidatorClass(NoopPathValidator.class);
-    assertEquals("TemplatingDataflowPipelineRunner#testjobname",
+    assertEquals("TemplatingDataflowPipelineRunner",
         TemplatingDataflowPipelineRunner.fromOptions(options).toString());
   }
 }

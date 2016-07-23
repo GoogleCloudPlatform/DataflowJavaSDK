@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google Inc.
+ * Copyright (C) 2016 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -39,10 +39,12 @@ public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPip
   private static final Logger LOG = LoggerFactory.getLogger(TemplatingDataflowPipelineRunner.class);
 
   private final DataflowPipelineRunner dataflowPipelineRunner;
+  private final PipelineOptions options;
 
-  protected TemplatingDataflowPipelineRunner(
-      DataflowPipelineRunner internalRunner) {
+  protected TemplatingDataflowPipelineRunner(DataflowPipelineRunner internalRunner,
+					     PipelineOptions options) {
     this.dataflowPipelineRunner = internalRunner;
+    this.options = options;
   }
 
   private static class TemplateHooks extends DataflowPipelineRunnerHooks {
@@ -65,7 +67,7 @@ public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPip
         DataflowPipelineRunner.fromOptions(dataflowOptions);
     Preconditions.checkNotNull(dataflowOptions.getDataflowJobFile());
 
-    return new TemplatingDataflowPipelineRunner(dataflowPipelineRunner);
+    return new TemplatingDataflowPipelineRunner(dataflowPipelineRunner, options);
   }
 
   /** {@inheritDoc} */
