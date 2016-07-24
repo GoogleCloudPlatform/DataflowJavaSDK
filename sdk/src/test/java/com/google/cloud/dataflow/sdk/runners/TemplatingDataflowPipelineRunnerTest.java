@@ -1,16 +1,14 @@
 /*
  * Copyright (C) 2016 Google Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not
- * use this file except in compliance with the License. You may obtain a copy of
- * the License at
- *
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License. You may obtain a copy of the License at
+ * 
  * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- * License for the specific language governing permissions and limitations under
+ * 
+ * Unless required by applicable law or agreed to in writing, software distributed under the License
+ * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+ * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
 
@@ -64,12 +62,13 @@ public class TemplatingDataflowPipelineRunnerTest {
   public final TemporaryFolder tmpDir = new TemporaryFolder();
 
   /**
-   * Creates a mocked {@link DataflowPipelineJob} with the given {@code projectId} and {@code jobId}.
+   * Creates a mocked {@link DataflowPipelineJob} with the given {@code projectId} and {@code jobId}
+   * .
    *
-   * <p>The return value may be further mocked.
+   * <p>
+   * The return value may be further mocked.
    */
-  private DataflowPipelineJob createMockJob(
-      String projectId, String jobId) throws Exception {
+  private DataflowPipelineJob createMockJob(String projectId, String jobId) throws Exception {
     DataflowPipelineJob mockJob = mock(DataflowPipelineJob.class);
     when(mockJob.getProjectId()).thenReturn(projectId);
     when(mockJob.getJobId()).thenReturn(jobId);
@@ -77,11 +76,10 @@ public class TemplatingDataflowPipelineRunnerTest {
   }
 
   /**
-   * Returns a {@link TemplatingDataflowPipelineRunner} that will return the provided a job to return.
-   * Some {@link PipelineOptions} will be extracted from the job, such as the project ID.
+   * Returns a {@link TemplatingDataflowPipelineRunner} that will return the provided a job to
+   * return. Some {@link PipelineOptions} will be extracted from the job, such as the project ID.
    */
-    private TemplatingDataflowPipelineRunner createMockRunner(DataflowPipelineJob job,
-							      String filePath)
+  private TemplatingDataflowPipelineRunner createMockRunner(DataflowPipelineJob job, String filePath)
       throws Exception {
     DataflowPipelineRunner mockRunner = mock(DataflowPipelineRunner.class);
     TestDataflowPipelineOptions options =
@@ -94,27 +92,27 @@ public class TemplatingDataflowPipelineRunnerTest {
   }
 
   /**
-   * Tests that the {@link TemplatingDataflowPipelineRunner} returns normally when a template
-   * is successfully written.
+   * Tests that the {@link TemplatingDataflowPipelineRunner} returns normally when a template is
+   * successfully written.
    */
   @Test
   public void testLoggedCompletion() throws Exception {
     File existingFile = tmpDir.newFile();
-    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId"), 
-		     existingFile.getPath())
-        .run(DirectPipeline.createForTest());
+    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId"),
+        existingFile.getPath()).run(DirectPipeline.createForTest());
     expectedLogs.verifyInfo("Template successfully created");
   }
 
   /**
-   * Tests that the {@link TemplatingDataflowPipelineRunner} throws the appropriate exception
-   * when an output file is not writable.
+   * Tests that the {@link TemplatingDataflowPipelineRunner} throws the appropriate exception when
+   * an output file is not writable.
    */
   @Test
   public void testLoggedErrorForFile() throws Exception {
-//    expectedThrown.expect(DataflowJobExecutionException.class);
-    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId"), "/bad/path")
-        .run(DirectPipeline.createForTest());
+    // TODO: Determine why this isn't failing.
+    // expectedThrown.expect(IOException.class);
+    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId"), "/bad/path").run(
+        DirectPipeline.createForTest());
   }
 
   @Test

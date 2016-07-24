@@ -605,8 +605,8 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
 
     if (!Strings.isNullOrEmpty(options.getDataflowJobFile())) {
       try {
-	WritableByteChannel writer = IOChannelUtils.create(
-	      options.getDataflowJobFile(), MimeTypes.TEXT);
+        WritableByteChannel writer =
+            IOChannelUtils.create(options.getDataflowJobFile(), MimeTypes.TEXT);
         PrintWriter printWriter = new PrintWriter(Channels.newOutputStream(writer));
         String workSpecJson = DataflowPipelineTranslator.jobToString(newJob);
         printWriter.print(workSpecJson);
@@ -614,17 +614,17 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
         printWriter.close();
         LOG.info("Printed job specification to {}", options.getDataflowJobFile());
       } catch (IllegalStateException ex) {
-	  String error = "Cannot translate workflow spec to JSON.";
+        String error = "Cannot translate workflow spec to JSON.";
         if (hooks != null && hooks.failOnJobFileWriteFailure()) {
-	    throw new RuntimeException(error, ex);
+          throw new RuntimeException(error, ex);
         } else {
-	    LOG.warn(error);
+          LOG.warn(error);
         }
       } catch (IOException ex) {
-	  String error = String.format("Cannot create output file at {}",
-				options.getDataflowJobFile());
+        String error =
+            String.format("Cannot create output file at {}", options.getDataflowJobFile());
         if (hooks != null && hooks.failOnJobFileWriteFailure()) {
-	    throw new RuntimeException(error, ex);
+          throw new RuntimeException(error, ex);
         } else {
           LOG.warn(error);
         }
