@@ -1436,8 +1436,9 @@ public class KafkaIO {
   }
 
   /**
-   * Same as Write<K, V> without a Key. Null is used for key as it is the convention is Kafka when
-   * there is no key specified. Majority of Kafka writers don't specify a key.
+   * Same as {@link Write Write&lt;K, V&gt;} without a Key. Null is used for key as it is the
+   * convention is Kafka when there is no key specified. Majority of Kafka writers don't specify a
+   * key.
    */
   private static class KafkaValueWrite<V> extends PTransform<PCollection<V>, PDone> {
 
