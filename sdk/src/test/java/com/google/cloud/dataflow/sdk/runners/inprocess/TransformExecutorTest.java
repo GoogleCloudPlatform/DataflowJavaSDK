@@ -508,9 +508,8 @@ public class TransformExecutorTest {
 
       CommittedBundle<?> unprocessedBundle =
           inputBundle == null ? null : inputBundle.withElements(unprocessedElements);
-      return CommittedResult.create(result,
-          unprocessedBundle,
-          Collections.<CommittedBundle<?>>emptyList());
+      return CommittedResult.create(
+          result, unprocessedBundle, Collections.<CommittedBundle<?>>emptyList(), false);
     }
 
     @Override

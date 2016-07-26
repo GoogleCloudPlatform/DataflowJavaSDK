@@ -24,6 +24,7 @@ import com.google.cloud.dataflow.sdk.util.WindowedValue;
 import com.google.cloud.dataflow.sdk.util.common.CounterSet;
 import com.google.cloud.dataflow.sdk.util.state.CopyOnAccessInMemoryStateInternals;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 
 import org.joda.time.Instant;
 
@@ -59,6 +60,19 @@ public abstract class StepTransformResult implements InProcessTransformResult {
   @Override
   public abstract TimerUpdate getTimerUpdate();
 
+  @Override
+  public boolean producedOutput() {
+    return !Iterables.isEmpty(getOutputBundles()) || producedAdditionalOutput();
+  }
+
+  /**
+   * Returns {@code true} if the step produced output that is not reflected in the Output Bundles.
+   *
+   * <p>If a step modifies the contents of a {@link PCollectionView}, this should return {@code
+   * true}.
+   */
+  abstract boolean producedAdditionalOutput();
+
   public static Builder withHold(AppliedPTransform<?, ?, ?> transform, Instant watermarkHold) {
     return new Builder(transform, watermarkHold);
   }
@@ -77,6 +91,7 @@ public abstract class StepTransformResult implements InProcessTransformResult {
     private CopyOnAccessInMemoryStateInternals<?> state;
     private TimerUpdate timerUpdate;
     private CounterSet counters;
+    private boolean producedAdditionalOutput;
     private final Instant watermarkHold;
 
     private Builder(AppliedPTransform<?, ?, ?> transform, Instant watermarkHold) {
@@ -95,7 +110,8 @@ public abstract class StepTransformResult implements InProcessTransformResult {
           counters,
           watermarkHold,
           state,
-          timerUpdate);
+          timerUpdate,
+          producedAdditionalOutput);
     }
 
     public Builder withCounters(CounterSet counters) {
@@ -127,6 +143,11 @@ public abstract class StepTransformResult implements InProcessTransformResult {
 
     public Builder addOutput(Collection<UncommittedBundle<?>> outputBundles) {
       bundlesBuilder.addAll(outputBundles);
+      return this;
+    }
+
+    public Builder withAdditionalOutput(boolean producedAdditionalOutput) {
+      this.producedAdditionalOutput = producedAdditionalOutput;
       return this;
     }
   }

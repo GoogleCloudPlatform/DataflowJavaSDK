@@ -76,7 +76,9 @@ class ViewEvaluatorFactory implements TransformEvaluatorFactory {
       @Override
       public InProcessTransformResult finishBundle() {
         writer.add(elements);
-        return StepTransformResult.withoutHold(application).build();
+        return StepTransformResult.withoutHold(application)
+            .withAdditionalOutput(!elements.isEmpty())
+            .build();
       }
     };
   }
