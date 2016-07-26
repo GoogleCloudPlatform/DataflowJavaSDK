@@ -1598,7 +1598,8 @@ public class KafkaIO {
     public void close() {}
 
     private Coder<T> coder = null;
-    private static final String CONFIG_FORMAT = "beam.coder.based.kafka.%s.serializer";
+    private static final String CONFIG_FORMAT =
+        "com.google.cloud.dataflow.coder.based.kafka.%s.serializer";
   }
 
   private static String configForKeySerializer() {
