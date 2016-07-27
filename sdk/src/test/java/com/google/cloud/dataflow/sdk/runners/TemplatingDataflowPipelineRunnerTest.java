@@ -14,7 +14,6 @@
 
 package com.google.cloud.dataflow.sdk.runners;
 
-import static org.hamcrest.CoreMatchers.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.anyLong;
 import static org.mockito.Matchers.isA;
@@ -22,29 +21,22 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.cloud.dataflow.sdk.Pipeline;
-import com.google.cloud.dataflow.sdk.PipelineResult.State;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.testing.ExpectedLogs;
 import com.google.cloud.dataflow.sdk.testing.TestDataflowPipelineOptions;
-import com.google.cloud.dataflow.sdk.util.MonitoringUtil;
 import com.google.cloud.dataflow.sdk.util.NoopPathValidator;
 import com.google.cloud.dataflow.sdk.util.TestCredential;
 
-import org.hamcrest.Description;
-import org.hamcrest.Factory;
-import org.hamcrest.Matcher;
-import org.hamcrest.TypeSafeMatcher;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Tests for TemplatingDataflowPipelineRunner.
@@ -79,8 +71,8 @@ public class TemplatingDataflowPipelineRunnerTest {
    * Returns a {@link TemplatingDataflowPipelineRunner} that will return the provided a job to
    * return. Some {@link PipelineOptions} will be extracted from the job, such as the project ID.
    */
-  private TemplatingDataflowPipelineRunner createMockRunner(DataflowPipelineJob job, String filePath)
-      throws Exception {
+  private TemplatingDataflowPipelineRunner createMockRunner(
+      DataflowPipelineJob job, String filePath) throws Exception {
     DataflowPipelineRunner mockRunner = mock(DataflowPipelineRunner.class);
     TestDataflowPipelineOptions options =
         PipelineOptionsFactory.as(TestDataflowPipelineOptions.class);
