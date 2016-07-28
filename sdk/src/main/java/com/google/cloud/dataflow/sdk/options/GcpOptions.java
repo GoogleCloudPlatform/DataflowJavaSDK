@@ -33,6 +33,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -183,24 +184,67 @@ public interface GcpOptions extends GoogleApiDebugOptions, PipelineOptions {
   public static class DefaultProjectFactory implements DefaultValueFactory<String> {
     private static final Logger LOG = LoggerFactory.getLogger(DefaultProjectFactory.class);
 
+    private static String getUserHome() {
+      return System.getProperty("user.home");
+    }
+
+    private String getActiveConfig() throws IOException {
+      final String defaultConfigName = "default";
+
+      // get active configuration
+      File activeConfFile = new File(
+          getUserHome(),
+          ".config/gcloud/active_config");
+
+      if (!activeConfFile.exists()) {
+        LOG.debug("No active configuration file - use default");
+        return defaultConfigName;
+      }
+
+      List<String> config = Files.readLines(activeConfFile, StandardCharsets.UTF_8);
+
+      if (config.size() != 1) {
+        LOG.debug("Active config file {} corrupted - use default",
+            activeConfFile.getCanonicalPath());
+        return defaultConfigName;
+      }
+
+      String configName = config.get(0);
+
+      if (configName.isEmpty()) {
+        LOG.debug("Active config in {} is empty - use default", activeConfFile);
+        return defaultConfigName;
+      }
+
+      return configName;
+    }
+
+    private File getConfigFile() throws IOException {
+      File configFile;
+      if (getEnvironment().containsKey("CLOUDSDK_CONFIG")) {
+        configFile = new File(getEnvironment().get("CLOUDSDK_CONFIG"), "properties");
+      } else if (isWindows() && getEnvironment().containsKey("APPDATA")) {
+        configFile = new File(getEnvironment().get("APPDATA"), "gcloud/properties");
+      } else {
+        final String configName = getActiveConfig();
+
+        // New versions of gcloud use this file
+        configFile = new File(
+            getUserHome(),
+            ".config/gcloud/configurations/config_" + configName);
+
+        if (!configFile.exists()) {
+          // Old versions of gcloud use this file
+          configFile = new File(getUserHome(), ".config/gcloud/properties");
+        }
+      }
+      return configFile;
+    }
+
     @Override
     public String create(PipelineOptions options) {
       try {
-        File configFile;
-        if (getEnvironment().containsKey("CLOUDSDK_CONFIG")) {
-          configFile = new File(getEnvironment().get("CLOUDSDK_CONFIG"), "properties");
-        } else if (isWindows() && getEnvironment().containsKey("APPDATA")) {
-          configFile = new File(getEnvironment().get("APPDATA"), "gcloud/properties");
-        } else {
-          // New versions of gcloud use this file
-          configFile = new File(
-              System.getProperty("user.home"),
-              ".config/gcloud/configurations/config_default");
-          if (!configFile.exists()) {
-            // Old versions of gcloud use this file
-            configFile = new File(System.getProperty("user.home"), ".config/gcloud/properties");
-          }
-        }
+        File configFile = getConfigFile();
         String section = null;
         Pattern projectPattern = Pattern.compile("^project\\s*=\\s*(.*)$");
         Pattern sectionPattern = Pattern.compile("^\\[(.*)\\]$");
