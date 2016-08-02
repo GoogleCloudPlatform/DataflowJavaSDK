@@ -245,24 +245,44 @@ public class BigQueryServicesImpl implements BigQueryServices {
           backoff).getStatistics();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Retries the RPC for at most {@code MAX_RPC_ATTEMPTS} times until it succeeds.
+     *
+     * @throws IOException if it exceeds max RPC retries.
+     */
     @Override
-    public Job getJob(JobReference jobRef, int maxAttempts) throws InterruptedException {
+    public Job getJob(JobReference jobRef) throws IOException, InterruptedException {
       BackOff backoff =
-          new AttemptBoundedExponentialBackOff(maxAttempts, INITIAL_RPC_BACKOFF_MILLIS);
+          new AttemptBoundedExponentialBackOff(MAX_RPC_ATTEMPTS, INITIAL_RPC_BACKOFF_MILLIS);
+      return getJob(jobRef, Sleeper.DEFAULT, backoff);
+    }
+
+    @VisibleForTesting
+    public Job getJob(JobReference jobRef, Sleeper sleeper, BackOff backoff)
+        throws IOException, InterruptedException {
+      Exception lastException;
       do {
         try {
           return client.jobs().get(jobRef.getProjectId(), jobRef.getJobId()).execute();
         } catch (GoogleJsonResponseException e) {
-          if (e.getStatusCode() == 404) {
-            LOG.debug("Job {} does not exists.", jobRef.getJobId());
+          if (errorExtractor.itemNotFound(e)) {
+            LOG.info("Job {} does not exists.", jobRef.getJobId());
             return null;
           }
-          LOG.warn("Ignore the error and retry job existence.", e);
+          LOG.warn("Ignore the error and retry getting the job.", e);
+          lastException = e;
         } catch (IOException e) {
-          LOG.warn("Ignore the error and retry job existence.", e);
+          LOG.warn("Ignore the error and retry getting the job.", e);
+          lastException = e;
         }
-      } while (nextBackOff(Sleeper.DEFAULT, backoff));
-      return null;
+      } while (nextBackOff(sleeper, backoff));
+      throw new IOException(
+          String.format(
+              "Unable to find job: %s, aborting after %d retries.",
+              jobRef, MAX_RPC_ATTEMPTS),
+          lastException);
     }
   }
 
