@@ -112,7 +112,7 @@ public interface BigQueryServices extends Serializable {
   /**
    * An interface to get, create and delete Cloud BigQuery datasets and tables.
    */
-  public interface DatasetService {
+  interface DatasetService {
     /**
      * Gets the specified {@link Table} resource by table ID.
      */

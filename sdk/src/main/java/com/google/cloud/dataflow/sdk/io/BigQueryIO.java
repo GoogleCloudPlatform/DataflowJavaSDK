@@ -405,7 +405,7 @@ public class BigQueryIO {
       @Nullable final String query;
       final boolean validate;
       @Nullable final Boolean flattenResults;
-      @Nullable final BigQueryServices testBigQueryServices;
+      @Nullable BigQueryServices testBigQueryServices;
 
       private static final String QUERY_VALIDATION_FAILURE_ERROR =
           "Validation of query \"%1$s\" failed. If the query depends on an earlier stage of the"
@@ -705,11 +705,10 @@ public class BigQueryIO {
       }
 
       private BigQueryServices getBigQueryServices() {
-        if (testBigQueryServices != null) {
-          return testBigQueryServices;
-        } else {
-          return new BigQueryServicesImpl();
+        if (testBigQueryServices == null) {
+          testBigQueryServices = new BigQueryServicesImpl();
         }
+        return testBigQueryServices;
       }
     }
 
@@ -1950,11 +1949,10 @@ public class BigQueryIO {
       }
 
       private BigQueryServices getBigQueryServices() {
-        if (testBigQueryServices != null) {
-          return testBigQueryServices;
-        } else {
-          return new BigQueryServicesImpl();
+        if (testBigQueryServices == null) {
+          testBigQueryServices = new BigQueryServicesImpl();
         }
+        return testBigQueryServices;
       }
     }
 

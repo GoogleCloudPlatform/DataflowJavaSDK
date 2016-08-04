@@ -393,9 +393,9 @@ public class BigQueryIOTest implements Serializable {
   @Rule public transient ExpectedException thrown = ExpectedException.none();
   @Rule public transient ExpectedLogs logged = ExpectedLogs.none(BigQueryIO.class);
   @Rule public transient TemporaryFolder testFolder = new TemporaryFolder();
-  @Mock public transient BigQueryServices.JobService mockJobService;
+  @Mock(extraInterfaces = Serializable.class) public transient BigQueryServices.JobService mockJobService;
   @Mock private transient IOChannelFactory mockIOChannelFactory;
-  @Mock private transient DatasetService mockDatasetService;
+  @Mock(extraInterfaces = Serializable.class) private transient DatasetService mockDatasetService;
 
   private void checkReadTableObject(
       BigQueryIO.Read.Bound bound, String project, String dataset, String table) {
@@ -615,8 +615,7 @@ public class BigQueryIOTest implements Serializable {
     FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
         .withJobService(new FakeJobService()
             .startJobReturns("done", "done", "done")
-            .pollJobReturns(Status.FAILED, Status.FAILED, Status.SUCCEEDED))
-        .withDatasetService(mockDatasetService);
+            .pollJobReturns(Status.FAILED, Status.FAILED, Status.SUCCEEDED));
 
     Pipeline p = TestPipeline.create(bqOptions);
     p.apply(Create.of(
@@ -635,6 +634,10 @@ public class BigQueryIOTest implements Serializable {
     p.run();
 
     logged.verifyInfo("Starting BigQuery load job");
+    logged.verifyInfo("try 0/3");
+    logged.verifyInfo("try 1/3");
+    logged.verifyInfo("try 2/3");
+    logged.verifyNotLogged("try 3/3");
     File tempDir = new File(bqOptions.getTempLocation());
     assertEquals(0, tempDir.listFiles(new FileFilter() {
       @Override
@@ -1328,7 +1331,6 @@ public class BigQueryIOTest implements Serializable {
         new WritePartition(filesView, multiPartitionsTag, singlePartitionTag);
 
     DoFnTester<String, KV<Long, List<String>>> tester = DoFnTester.of(writePartition);
-    // tester.setSideInput(filesView, GlobalWindow.INSTANCE, files);
     tester.setSideInputInGlobalWindow(filesView, files);
     tester.processElement(tmpFolder.getRoot().getAbsolutePath());
 
@@ -1363,8 +1365,7 @@ public class BigQueryIOTest implements Serializable {
     FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
         .withJobService(new FakeJobService()
             .startJobReturns("done", "done", "done", "done")
-            .pollJobReturns(Status.FAILED, Status.SUCCEEDED, Status.SUCCEEDED, Status.SUCCEEDED))
-        .withDatasetService(mockDatasetService);
+            .pollJobReturns(Status.FAILED, Status.SUCCEEDED, Status.SUCCEEDED, Status.SUCCEEDED));
 
     final long numPartitions = 3;
     final long numFilesPerPartition = 10;
@@ -1436,8 +1437,7 @@ public class BigQueryIOTest implements Serializable {
         tempTablesView);
 
     DoFnTester<String, Void> tester = DoFnTester.of(writeRename);
-    // tester.setSideInput(tempTablesView, GlobalWindow.INSTANCE, tempTables);
-    // tester.setSideInputInGlobalWindow(tempTablesView, tempTables);
+    tester.setSideInputInGlobalWindow(tempTablesView, tempTables);
     tester.processElement(null);
 
     logged.verifyInfo("Starting BigQuery copy job");
