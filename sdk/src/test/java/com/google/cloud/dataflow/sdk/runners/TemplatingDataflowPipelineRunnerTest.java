@@ -16,12 +16,10 @@ package com.google.cloud.dataflow.sdk.runners;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.isA;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
-import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.testing.ExpectedLogs;
 import com.google.cloud.dataflow.sdk.testing.TestDataflowPipelineOptions;
@@ -47,6 +45,7 @@ import java.io.File;
 public class TemplatingDataflowPipelineRunnerTest {
 
   @Mock private DataflowPipelineJob mockJob;
+  @Mock private DataflowPipelineRunner mockRunner;
 
   @Rule
   public ExpectedLogs expectedLogs = ExpectedLogs.none(TemplatingDataflowPipelineRunner.class);
@@ -62,33 +61,44 @@ public class TemplatingDataflowPipelineRunnerTest {
     MockitoAnnotations.initMocks(this);
     when(mockJob.getProjectId()).thenReturn("project");
     when(mockJob.getJobId()).thenReturn("job");
-  }
-
-  /**
-   * Returns a {@link TemplatingDataflowPipelineRunner} that will return the provided a job to
-   * return. Some {@link PipelineOptions} will be extracted from the job, such as the project ID.
-   */
-  private TemplatingDataflowPipelineRunner createMockRunner(
-      String filePath) throws Exception {
-    DataflowPipelineRunner mockRunner = mock(DataflowPipelineRunner.class);
-    TestDataflowPipelineOptions options =
-        PipelineOptionsFactory.as(TestDataflowPipelineOptions.class);
-    options.setProject(mockJob.getProjectId());
-    options.setDataflowJobFile(filePath);
     when(mockRunner.run(isA(Pipeline.class))).thenReturn(mockJob);
-
-    return new TemplatingDataflowPipelineRunner(mockRunner, options);
   }
 
   /**
-   * Tests that the {@link TemplatingDataflowPipelineRunner} returns normally when a template is
-   * successfully written.
+   * Tests that the {@link TemplatingDataflowPipelineRunner} returns normally when the runner is
+   * successfully run.
    */
   @Test
   public void testLoggedCompletion() throws Exception {
     File existingFile = tmpDir.newFile();
-    createMockRunner(existingFile.getPath()).run(DirectPipeline.createForTest());
+    TestDataflowPipelineOptions options =
+        PipelineOptionsFactory.as(TestDataflowPipelineOptions.class);
+    options.setProject(mockJob.getProjectId());
+    options.setDataflowJobFile(existingFile.getPath());
+    TemplatingDataflowPipelineRunner runner =
+        new TemplatingDataflowPipelineRunner(mockRunner, options);
+    runner.run(DirectPipeline.createForTest());
     expectedLogs.verifyInfo("Template successfully created");
+  }
+
+  
+  /**
+   * Tests that the {@link TemplatingDataflowPipelineRunner} returns normally when the runner is
+   * successfully run.
+   */
+  @Test
+  public void testFullCompletion() throws Exception {
+    File existingFile = tmpDir.newFile();
+    DataflowPipelineOptions options = PipelineOptionsFactory.as(DataflowPipelineOptions.class);
+    options.setJobName("TestJobName");
+    options.setGcpCredential(new TestCredential());
+    options.setPathValidatorClass(NoopPathValidator.class);
+    options.setProject("test-project");
+    options.setDataflowJobFile(existingFile.getPath());
+    options.setTempLocation(tmpDir.getRoot().getPath());
+    TemplatingDataflowPipelineRunner runner =
+        TemplatingDataflowPipelineRunner.fromOptions(options);
+    runner.run(DirectPipeline.createForTest());
   }
 
   /**
@@ -97,7 +107,6 @@ public class TemplatingDataflowPipelineRunnerTest {
    */
   @Test
   public void testLoggedErrorForFile() throws Exception {
-    expectedThrown.expect(RuntimeException.class);
     DataflowPipelineOptions options = PipelineOptionsFactory.as(DataflowPipelineOptions.class);
     options.setJobName("TestJobName");
     options.setDataflowJobFile("//bad/path");
@@ -105,7 +114,12 @@ public class TemplatingDataflowPipelineRunnerTest {
     options.setTempLocation(tmpDir.getRoot().getPath());
     options.setGcpCredential(new TestCredential());
     options.setPathValidatorClass(NoopPathValidator.class);
-    TemplatingDataflowPipelineRunner.fromOptions(options).run(DirectPipeline.createForTest());
+    TemplatingDataflowPipelineRunner runner =
+        TemplatingDataflowPipelineRunner.fromOptions(options);
+
+    expectedThrown.expectMessage("Cannot create output file at");
+    expectedThrown.expect(RuntimeException.class);
+    runner.run(DirectPipeline.createForTest());
   }
 
   @Test
