@@ -28,12 +28,15 @@ import com.google.cloud.dataflow.sdk.testing.TestDataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.util.NoopPathValidator;
 import com.google.cloud.dataflow.sdk.util.TestCredential;
 
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import java.io.File;
 
@@ -42,6 +45,8 @@ import java.io.File;
  */
 @RunWith(JUnit4.class)
 public class TemplatingDataflowPipelineRunnerTest {
+
+  @Mock private DataflowPipelineJob mockJob;
 
   @Rule
   public ExpectedLogs expectedLogs = ExpectedLogs.none(TemplatingDataflowPipelineRunner.class);
@@ -52,18 +57,11 @@ public class TemplatingDataflowPipelineRunnerTest {
   @Rule
   public final TemporaryFolder tmpDir = new TemporaryFolder();
 
-  /**
-   * Creates a mocked {@link DataflowPipelineJob} with the given {@code projectId} and {@code jobId}
-   * .
-   *
-   * <p>
-   * The return value may be further mocked.
-   */
-  private DataflowPipelineJob createMockJob(String projectId, String jobId) throws Exception {
-    DataflowPipelineJob mockJob = mock(DataflowPipelineJob.class);
-    when(mockJob.getProjectId()).thenReturn(projectId);
-    when(mockJob.getJobId()).thenReturn(jobId);
-    return mockJob;
+  @Before
+  public void setup() {
+    MockitoAnnotations.initMocks(this);
+    when(mockJob.getProjectId()).thenReturn("project");
+    when(mockJob.getJobId()).thenReturn("job");
   }
 
   /**
@@ -71,13 +69,13 @@ public class TemplatingDataflowPipelineRunnerTest {
    * return. Some {@link PipelineOptions} will be extracted from the job, such as the project ID.
    */
   private TemplatingDataflowPipelineRunner createMockRunner(
-      DataflowPipelineJob job, String filePath) throws Exception {
+      String filePath) throws Exception {
     DataflowPipelineRunner mockRunner = mock(DataflowPipelineRunner.class);
     TestDataflowPipelineOptions options =
         PipelineOptionsFactory.as(TestDataflowPipelineOptions.class);
-    options.setProject(job.getProjectId());
+    options.setProject(mockJob.getProjectId());
     options.setDataflowJobFile(filePath);
-    when(mockRunner.run(isA(Pipeline.class))).thenReturn(job);
+    when(mockRunner.run(isA(Pipeline.class))).thenReturn(mockJob);
 
     return new TemplatingDataflowPipelineRunner(mockRunner, options);
   }
@@ -89,8 +87,7 @@ public class TemplatingDataflowPipelineRunnerTest {
   @Test
   public void testLoggedCompletion() throws Exception {
     File existingFile = tmpDir.newFile();
-    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId"),
-        existingFile.getPath()).run(DirectPipeline.createForTest());
+    createMockRunner(existingFile.getPath()).run(DirectPipeline.createForTest());
     expectedLogs.verifyInfo("Template successfully created");
   }
 
@@ -100,10 +97,15 @@ public class TemplatingDataflowPipelineRunnerTest {
    */
   @Test
   public void testLoggedErrorForFile() throws Exception {
-    // TODO: Determine why this isn't failing.
-    // expectedThrown.expect(IOException.class);
-    createMockRunner(createMockJob("testJobDone-projectId", "testJobDone-jobId"), "/bad/path").run(
-        DirectPipeline.createForTest());
+    expectedThrown.expect(RuntimeException.class);
+    DataflowPipelineOptions options = PipelineOptionsFactory.as(DataflowPipelineOptions.class);
+    options.setJobName("TestJobName");
+    options.setDataflowJobFile("//bad/path");
+    options.setProject("test-project");
+    options.setTempLocation(tmpDir.getRoot().getPath());
+    options.setGcpCredential(new TestCredential());
+    options.setPathValidatorClass(NoopPathValidator.class);
+    TemplatingDataflowPipelineRunner.fromOptions(options).run(DirectPipeline.createForTest());
   }
 
   @Test
@@ -112,7 +114,6 @@ public class TemplatingDataflowPipelineRunnerTest {
     options.setJobName("TestJobName");
     options.setDataflowJobFile("foo");
     options.setProject("test-project");
-    options.setTempLocation("gs://test/temp/location");
     options.setTempLocation("gs://test/temp/location");
     options.setGcpCredential(new TestCredential());
     options.setPathValidatorClass(NoopPathValidator.class);

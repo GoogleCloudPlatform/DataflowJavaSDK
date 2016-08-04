@@ -14,6 +14,8 @@
 
 package com.google.cloud.dataflow.sdk.runners;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.auto.service.AutoService;
 import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineDebugOptions;
@@ -22,7 +24,7 @@ import com.google.cloud.dataflow.sdk.options.PipelineOptionsValidator;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.cloud.dataflow.sdk.values.POutput;
-import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,8 +33,7 @@ import org.slf4j.LoggerFactory;
  * A {@link PipelineRunner} that's like {@link DataflowPipelineRunner} but only stores a template of
  * a job.
  *
- * <p>
- * Requires that {@link getDataflowJobFile} is set.
+ * <p>Requires that {@link getDataflowJobFile} is set.
  */
 public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> {
   private static final Logger LOG = LoggerFactory.getLogger(TemplatingDataflowPipelineRunner.class);
@@ -64,12 +65,12 @@ public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPip
         PipelineOptionsValidator.validate(DataflowPipelineDebugOptions.class, options);
     DataflowPipelineRunner dataflowPipelineRunner =
         DataflowPipelineRunner.fromOptions(dataflowOptions);
-    Preconditions.checkNotNull(dataflowOptions.getDataflowJobFile());
+    checkArgument(!Strings.isNullOrEmpty(dataflowOptions.getDataflowJobFile()),
+                  "--dataflowJobFile must be present to create a template.");
 
     return new TemplatingDataflowPipelineRunner(dataflowPipelineRunner, options);
   }
 
-  /** {@inheritDoc} */
   @Override
   public DataflowPipelineJob run(Pipeline p) {
     dataflowPipelineRunner.setHooks(new TemplateHooks());
@@ -81,6 +82,7 @@ public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPip
   @Override
   public <OutputT extends POutput, InputT extends PInput> OutputT apply(
       PTransform<InputT, OutputT> transform, InputT input) {
+    // We delegate graph building to the inner runner.
     return dataflowPipelineRunner.apply(transform, input);
   }
 
