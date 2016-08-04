@@ -62,7 +62,6 @@ import com.google.common.base.Preconditions;
 import com.google.datastore.v1beta3.Entity;
 import com.google.datastore.v1beta3.Key;
 import com.google.datastore.v1beta3.Value;
-import com.google.datastore.v1beta3.client.DatastoreHelper;
 
 import org.joda.time.Duration;
 
