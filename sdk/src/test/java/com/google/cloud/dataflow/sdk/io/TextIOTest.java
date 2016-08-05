@@ -522,6 +522,31 @@ public class TextIOTest {
   }
 
   @Test
+  public void testGZIPReadWhenCompressed() throws Exception {
+    final int numLines = 1000;
+    File tmpFile = tmpFolder.newFile();
+    String filename = tmpFile.getPath();
+
+    List<String> expected = new ArrayList<>();
+    try (PrintStream writer = new PrintStream(
+        new GZIPOutputStream(new FileOutputStream(tmpFile)))) {
+      for (int i = 0; i < numLines; ++i) {
+        String line = "word" + i;
+        writer.println(line);
+        expected.add(line);
+      }
+    }
+
+    Pipeline p = TestPipeline.create();
+    TextIO.Read.Bound<String> read =
+        TextIO.Read.from(filename).withCompressionType(CompressionType.GZIP);
+    PCollection<String> output = p.apply(read);
+
+    DataflowAssert.that(output).containsInAnyOrder(expected);
+    p.run();
+  }
+
+  @Test
   public void testTextIOGetName() {
     assertEquals("TextIO.Read", TextIO.Read.from("somefile").getName());
     assertEquals("TextIO.Write", TextIO.Write.to("somefile").getName());
