@@ -81,7 +81,7 @@ public class TemplatingDataflowPipelineRunnerTest {
     expectedLogs.verifyInfo("Template successfully created");
   }
 
-  
+
   /**
    * Tests that the {@link TemplatingDataflowPipelineRunner} returns normally when the runner is
    * successfully run.
