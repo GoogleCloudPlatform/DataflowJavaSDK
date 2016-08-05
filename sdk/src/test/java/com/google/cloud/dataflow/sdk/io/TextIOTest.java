@@ -592,7 +592,7 @@ public class TextIOTest {
    */
   @Test
   public void testLargeCompressedBzipRead() throws Exception {
-    String[] lines = makeLines(10000);
+    String[] lines = makeLines(5000);
     File bz2File = tmpFolder.newFile("large_bzip2.bz2");
     String bz2Filename = bz2File.getPath();
 
@@ -616,7 +616,7 @@ public class TextIOTest {
    */
   @Test
   public void testLargeCompressedGzipRead() throws Exception {
-    String[] lines = makeLines(10000);
+    String[] lines = makeLines(5000);
     File gzFile = tmpFolder.newFile("large_gzip.gz");
     String gzFilename = gzFile.getPath();
 
@@ -630,6 +630,34 @@ public class TextIOTest {
     File txtFile = tmpFolder.newFile("large_gzip.txt");
     writeToStreamAndClose(lines, new FileOutputStream(txtFile));
     assertThat(Files.size(txtFile.toPath()), greaterThan(Files.size(gzFile.toPath())));
+  }
+
+  /**
+   * Tests reading from a large, uncompressed file.
+   */
+  @Test
+  public void testLargeUncompressedReadTxt() throws Exception {
+    String[] lines = makeLines(5000);
+    File txtFile = tmpFolder.newFile("large_file.txt");
+    String txtFilename = txtFile.getPath();
+
+    writeToStreamAndClose(lines, new FileOutputStream(txtFile));
+    // Should work in AUTO mode.
+    assertReadingCompressedFileMatchesExpected(txtFilename, CompressionType.AUTO, lines);
+  }
+
+  /**
+   * Tests reading from a large, uncompressed file with a weird file extension.
+   */
+  @Test
+  public void testLargeUncompressedReadWeirdExtension() throws Exception {
+    String[] lines = makeLines(5000);
+    File txtFile = tmpFolder.newFile("large_file.bin.data.foo");
+    String txtFilename = txtFile.getPath();
+
+    writeToStreamAndClose(lines, new FileOutputStream(txtFile));
+    // Should work in AUTO mode.
+    assertReadingCompressedFileMatchesExpected(txtFilename, CompressionType.AUTO, lines);
   }
 
   @Test
