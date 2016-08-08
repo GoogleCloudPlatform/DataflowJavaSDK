@@ -391,16 +391,17 @@ public class AutoComplete {
    */
   static class FormatForDatastore extends DoFn<KV<String, List<CompletionCandidate>>, Entity> {
     private String kind;
+    private String ancestorKey;
 
-    public FormatForDatastore(String kind) {
+    public FormatForDatastore(String kind, String ancestorKey) {
       this.kind = kind;
+      this.ancestorKey = ancestorKey;
     }
 
     @Override
     public void processElement(ProcessContext c) {
       Entity.Builder entityBuilder = Entity.newBuilder();
-      Key ancestoryKey = makeKey(kind, "root").build();
-      Key key = makeKey(ancestoryKey, kind, c.element().getKey()).build();
+      Key key = makeKey(makeKey(kind, ancestorKey).build(), kind, c.element().getKey()).build();
 
       entityBuilder.setKey(key);
       List<Value> candidates = new ArrayList<>();
@@ -451,6 +452,11 @@ public class AutoComplete {
     @Description("Datastore output dataset ID, defaults to project ID")
     String getOutputDataset();
     void setOutputDataset(String value);
+
+    @Description("Datastore ancestor key")
+    @Default.String("root")
+    String getDatastoreAncestorKey();
+    void setDatastoreAncestorKey(String value);
   }
 
   public static void main(String[] args) throws IOException {
@@ -491,7 +497,8 @@ public class AutoComplete {
 
     if (options.getOutputToDatastore()) {
       toWrite
-          .apply(ParDo.named("FormatForDatastore").of(new FormatForDatastore(options.getKind())))
+          .apply(ParDo.named("FormatForDatastore").of(new FormatForDatastore(options.getKind(),
+              options.getDatastoreAncestorKey())))
           .apply(DatastoreIO.v1beta3().write().withProjectId(MoreObjects.firstNonNull(
               options.getOutputDataset(), options.getProject())));
     }
