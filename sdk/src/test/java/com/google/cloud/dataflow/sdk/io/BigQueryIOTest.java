@@ -608,7 +608,7 @@ public class BigQueryIOTest implements Serializable {
   }
 
   @Test
-  public void testCustomWrite() throws Exception {
+  public void testWrite() throws Exception {
     BigQueryOptions bqOptions = PipelineOptionsFactory.as(BigQueryOptions.class);
     bqOptions.setProject("defaultProject");
     bqOptions.setTempLocation(testFolder.newFolder("BigQueryIOTest").getAbsolutePath());
@@ -641,15 +641,11 @@ public class BigQueryIOTest implements Serializable {
     logged.verifyInfo("try 2/" + BigQueryIO.Write.Bound.MAX_RETRY_JOBS);
     logged.verifyNotLogged("try 3/" + BigQueryIO.Write.Bound.MAX_RETRY_JOBS);
     File tempDir = new File(bqOptions.getTempLocation());
-    assertEquals(0, tempDir.listFiles(new FileFilter() {
-      @Override
-      public boolean accept(File pathname) {
-        return pathname.isFile();
-      }}).length);
+    testNumFiles(tempDir, 0);
   }
 
   @Test
-  public void testCustomWriteUnknown() throws Exception {
+  public void testWriteUnknown() throws Exception {
     BigQueryOptions bqOptions = PipelineOptionsFactory.as(BigQueryOptions.class);
     bqOptions.setProject("defaultProject");
     bqOptions.setTempLocation(testFolder.newFolder("BigQueryIOTest").getAbsolutePath());
@@ -675,11 +671,7 @@ public class BigQueryIOTest implements Serializable {
     p.run();
 
     File tempDir = new File(bqOptions.getTempLocation());
-    assertEquals(0, tempDir.listFiles(new FileFilter() {
-      @Override
-      public boolean accept(File pathname) {
-        return pathname.isFile();
-      }}).length);
+    testNumFiles(tempDir, 0);
   }
 
   @Test
@@ -1435,22 +1427,14 @@ public class BigQueryIOTest implements Serializable {
     fileNames.add(tempFilePrefix + String.format("files%05d", numFiles));
 
     File tempDir = new File(bqOptions.getTempLocation());
-    assertEquals(10, tempDir.listFiles(new FileFilter() {
-      @Override
-      public boolean accept(File pathname) {
-        return pathname.isFile();
-      }}).length);
+    testNumFiles(tempDir, 10);
 
     WriteTables.removeTemporaryFiles(bqOptions, tempFilePrefix, fileNames);
 
-    assertEquals(0, tempDir.listFiles(new FileFilter() {
-      @Override
-      public boolean accept(File pathname) {
-        return pathname.isFile();
-      }}).length);
+    testNumFiles(tempDir, 0);
 
-    for (int i = 0; i < numFiles; ++i) {
-      logged.verifyDebug("Removing file " + fileNames.get(i));
+    for (String fileName : fileNames) {
+      logged.verifyDebug("Removing file " + fileName);
     }
     logged.verifyDebug(fileNames.get(numFiles) + " does not exist.");
   }
@@ -1518,5 +1502,13 @@ public class BigQueryIOTest implements Serializable {
     logged.verifyWarn("Failed to delete the table " + toJsonString(tableRefs.get(0)));
     logged.verifyNotLogged("Failed to delete the table " + toJsonString(tableRefs.get(1)));
     logged.verifyNotLogged("Failed to delete the table " + toJsonString(tableRefs.get(2)));
+  }
+
+  private static void testNumFiles(File tempDir, int expectedNumFiles) {
+    assertEquals(expectedNumFiles, tempDir.listFiles(new FileFilter() {
+      @Override
+      public boolean accept(File pathname) {
+        return pathname.isFile();
+      }}).length);
   }
 }
