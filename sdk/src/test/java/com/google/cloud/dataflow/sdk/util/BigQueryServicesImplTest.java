@@ -309,7 +309,7 @@ public class BigQueryServicesImplTest {
         .setProjectId("projectId")
         .setJobId("jobId");
     thrown.expect(IOException.class);
-    thrown.expectMessage(String.format("Unable to find job: %s", jobRef));
+    thrown.expectMessage(String.format("Unable to find BigQuery job: %s", jobRef));
 
     jobService.getJob(jobRef, Sleeper.DEFAULT, BackOff.STOP_BACKOFF);
   }

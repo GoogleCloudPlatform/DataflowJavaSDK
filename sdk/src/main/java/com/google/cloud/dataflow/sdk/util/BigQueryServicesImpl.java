@@ -262,25 +262,30 @@ public class BigQueryServicesImpl implements BigQueryServices {
     @VisibleForTesting
     public Job getJob(JobReference jobRef, Sleeper sleeper, BackOff backoff)
         throws IOException, InterruptedException {
+      String jobId = jobRef.getJobId();
       Exception lastException;
       do {
         try {
-          return client.jobs().get(jobRef.getProjectId(), jobRef.getJobId()).execute();
+          return client.jobs().get(jobRef.getProjectId(), jobId).execute();
         } catch (GoogleJsonResponseException e) {
           if (errorExtractor.itemNotFound(e)) {
-            LOG.info("Job {} does not exists.", jobRef.getJobId());
+            LOG.info("No BigQuery job with job id {} found.", jobId);
             return null;
           }
-          LOG.warn("Ignore the error and retry getting the job.", e);
+          LOG.warn(
+              "Ignoring the error encountered while trying to query the BigQuery job {}",
+              jobId, e);
           lastException = e;
         } catch (IOException e) {
-          LOG.warn("Ignore the error and retry getting the job.", e);
+          LOG.warn(
+              "Ignoring the error encountered while trying to query the BigQuery job {}",
+              jobId, e);
           lastException = e;
         }
       } while (nextBackOff(sleeper, backoff));
       throw new IOException(
           String.format(
-              "Unable to find job: %s, aborting after %d retries.",
+              "Unable to find BigQuery job: %s, aborting after %d retries.",
               jobRef, MAX_RPC_ATTEMPTS),
           lastException);
     }
