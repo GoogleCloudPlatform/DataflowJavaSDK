@@ -209,14 +209,9 @@ import javax.annotation.Nullable;
  *
  * <p>See {@link BigQueryIO.Write} for details on how to specify if a write should
  * append to an existing table, replace the table, or verify that the table is
-<<<<<<< e5126d3f16a5fbdff94e4338caf4e269feab7c3d:sdk/src/main/java/com/google/cloud/dataflow/sdk/io/BigQueryIO.java
- * empty. Note that the dataset being written to must already exist. Write
- * dispositions are not supported in streaming mode.
-=======
  * empty. Note that the dataset being written to must already exist. Unbounded PCollections can only
  * be written using {@link Write.WriteDisposition#WRITE_EMPTY} or
  * {@link Write.WriteDisposition#WRITE_APPEND}.
->>>>>>> [BEAM-383] Modified BigQueryIO to write based on number of files and file sizes:sdks/java/io/google-cloud-platform/src/main/java/org/apache/beam/sdk/io/gcp/bigquery/BigQueryIO.java
  *
  * <h3>Sharding BigQuery output tables</h3>
  * <p>A common use case is to dynamically generate BigQuery table names based on
