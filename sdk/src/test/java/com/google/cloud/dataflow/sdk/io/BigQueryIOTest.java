@@ -394,7 +394,8 @@ public class BigQueryIOTest implements Serializable {
   @Rule public transient ExpectedException thrown = ExpectedException.none();
   @Rule public transient ExpectedLogs logged = ExpectedLogs.none(BigQueryIO.class);
   @Rule public transient TemporaryFolder testFolder = new TemporaryFolder();
-  @Mock(extraInterfaces = Serializable.class) public transient BigQueryServices.JobService mockJobService;
+  @Mock(extraInterfaces = Serializable.class)
+  public transient BigQueryServices.JobService mockJobService;
   @Mock private transient IOChannelFactory mockIOChannelFactory;
   @Mock(extraInterfaces = Serializable.class) private transient DatasetService mockDatasetService;
 
