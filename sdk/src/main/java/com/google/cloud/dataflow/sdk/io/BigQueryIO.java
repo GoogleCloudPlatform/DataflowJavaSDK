@@ -209,9 +209,8 @@ import javax.annotation.Nullable;
  *
  * <p>See {@link BigQueryIO.Write} for details on how to specify if a write should
  * append to an existing table, replace the table, or verify that the table is
- * empty. Note that the dataset being written to must already exist. Unbounded PCollections can only
- * be written using {@link Write.WriteDisposition#WRITE_EMPTY} or
- * {@link Write.WriteDisposition#WRITE_APPEND}.
+ * empty. Note that the dataset being written to must already exist. Write
+ * dispositions are not supported in streaming mode.
  *
  * <h3>Sharding BigQuery output tables</h3>
  * <p>A common use case is to dynamically generate BigQuery table names based on
