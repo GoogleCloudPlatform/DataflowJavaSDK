@@ -38,13 +38,20 @@ import com.google.pubsub.v1.PullResponse;
 import com.google.pubsub.v1.ReceivedMessage;
 import com.google.pubsub.v1.SubscriberGrpc;
 
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
+import io.grpc.Status;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.mockito.Matchers;
 import org.mockito.Mockito;
 
 import java.io.IOException;
@@ -59,6 +66,7 @@ public class PubsubGrpcClientTest {
   private GoogleCredentials mockCredentials;
   private PublisherGrpc.PublisherBlockingStub mockPublisherStub;
   private SubscriberGrpc.SubscriberBlockingStub mockSubscriberStub;
+  private Channel stubChannel;
 
   private PubsubClient client;
 
@@ -79,10 +87,9 @@ public class PubsubGrpcClientTest {
   public void setup() throws IOException {
     mockChannel = Mockito.mock(ManagedChannel.class);
     mockCredentials = Mockito.mock(GoogleCredentials.class);
-    mockPublisherStub =
-        Mockito.mock(PublisherGrpc.PublisherBlockingStub.class, Mockito.RETURNS_DEEP_STUBS);
-    mockSubscriberStub =
-        Mockito.mock(SubscriberGrpc.SubscriberBlockingStub.class, Mockito.RETURNS_DEEP_STUBS);
+    stubChannel = Mockito.mock(Channel.class);
+    mockPublisherStub = PublisherGrpc.newBlockingStub(stubChannel);
+    mockSubscriberStub = SubscriberGrpc.newBlockingStub(stubChannel);
     client = new PubsubGrpcClient(TIMESTAMP_LABEL, ID_LABEL, 0, mockChannel,
                                   mockCredentials, mockPublisherStub, mockSubscriberStub);
   }
@@ -130,8 +137,7 @@ public class PubsubGrpcClientTest {
         PullResponse.newBuilder()
                     .addAllReceivedMessages(ImmutableList.of(expectedReceivedMessage))
                     .build();
-    Mockito.when(mockSubscriberStub.pull(expectedRequest))
-           .thenReturn(expectedResponse);
+    stubClientCall(SubscriberGrpc.METHOD_PULL, expectedRequest, expectedResponse);
     List<IncomingMessage> acutalMessages = client.pull(REQ_TIME, SUBSCRIPTION, 10, true);
     assertEquals(1, acutalMessages.size());
     IncomingMessage actualMessage = acutalMessages.get(0);
@@ -162,10 +168,50 @@ public class PubsubGrpcClientTest {
         PublishResponse.newBuilder()
                        .addAllMessageIds(ImmutableList.of(MESSAGE_ID))
                        .build();
-    Mockito.when(mockPublisherStub.publish(expectedRequest))
-           .thenReturn(expectedResponse);
+    stubClientCall(PublisherGrpc.METHOD_PUBLISH, expectedRequest, expectedResponse);
     OutgoingMessage actualMessage = new OutgoingMessage(DATA.getBytes(), MESSAGE_TIME, RECORD_ID);
     int n = client.publish(TOPIC, ImmutableList.of(actualMessage));
     assertEquals(1, n);
+  }
+
+  private <ReqT, RespT> void stubClientCall(
+      MethodDescriptor<ReqT, RespT> method,
+      final ReqT expectedRequest,
+      final RespT expectedResponse) {
+    ClientCall<ReqT, RespT> clientCall =
+        new ClientCall<ReqT, RespT>() {
+          Listener<RespT> listenerHook;
+
+          @Override
+          public void start(Listener<RespT> listener, Metadata metadata) {
+            listenerHook = listener;
+          }
+
+          @Override
+          public void sendMessage(ReqT req) {
+            if (listenerHook == null) {
+              throw new IllegalStateException();
+            }
+            RespT resp = req.equals(expectedRequest) ? expectedResponse : null;
+            listenerHook.onMessage(resp);
+          }
+
+          @Override
+          public void request(int i) {}
+
+          @Override
+          public void cancel(String s, Throwable t) {}
+
+          @Override
+          public void halfClose() {
+            if (listenerHook == null) {
+              throw new IllegalStateException();
+            }
+            listenerHook.onClose(Status.OK, null);
+          }
+        };
+    Mockito.doReturn(clientCall)
+        .when(stubChannel)
+        .newCall(Matchers.eq(method), Mockito.any(CallOptions.class));
   }
 }
