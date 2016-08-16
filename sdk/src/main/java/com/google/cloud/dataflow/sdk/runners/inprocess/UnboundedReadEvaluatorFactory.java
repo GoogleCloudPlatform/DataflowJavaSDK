@@ -32,7 +32,6 @@ import com.google.common.annotations.VisibleForTesting;
 import org.joda.time.Instant;
 
 import java.io.IOException;
-import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
@@ -70,24 +69,17 @@ class UnboundedReadEvaluatorFactory implements TransformEvaluatorFactory {
     return getTransformEvaluator((AppliedPTransform) application, evaluationContext);
   }
 
-  private <OutputT> TransformEvaluator<?> getTransformEvaluator(
-      final AppliedPTransform<?, PCollection<OutputT>, Unbounded<OutputT>> transform,
-      final InProcessEvaluationContext evaluationContext) {
-    return getTransformEvaluatorQueue(transform, evaluationContext).poll();
-  }
-
   /**
-   * Get the queue of {@link TransformEvaluator TransformEvaluators} that produce elements for the
-   * provided application of {@link Unbounded Read.Unbounded}, initializing it if required.
+   * Get a {@link TransformEvaluator} that produce elements for the provided application of
+   * {@link Unbounded Read.Unbounded}, initializing the queue of evaluators if required.
    *
    * <p>This method is thread-safe, and will only produce new evaluators if no other invocation has
    * already done so.
    */
-  @SuppressWarnings("unchecked")
   private <OutputT, CheckpointMarkT extends CheckpointMark>
-  Queue<UnboundedReadEvaluator<OutputT, CheckpointMarkT>> getTransformEvaluatorQueue(
-      final AppliedPTransform<?, PCollection<OutputT>, Unbounded<OutputT>> transform,
-      final InProcessEvaluationContext evaluationContext) {
+      TransformEvaluator<?> getTransformEvaluator(
+          final AppliedPTransform<?, PCollection<OutputT>, Unbounded<OutputT>> transform,
+          final InProcessEvaluationContext evaluationContext) {
     // Key by the application and the context the evaluation is occurring in (which call to
     // Pipeline#run).
     EvaluatorKey key = new EvaluatorKey(transform, evaluationContext);
@@ -102,9 +94,15 @@ class UnboundedReadEvaluatorFactory implements TransformEvaluatorFactory {
         // factory for this transform
         UnboundedSource<OutputT, CheckpointMarkT> source =
             (UnboundedSource<OutputT, CheckpointMarkT>) transform.getTransform().getSource();
+        UnboundedReadDeduplicator deduplicator;
+        if (source.requiresDeduping()) {
+          deduplicator = UnboundedReadDeduplicator.CachedIdDeduplicator.create();
+        } else {
+          deduplicator = UnboundedReadDeduplicator.NeverDeduplicator.create();
+        }
         UnboundedReadEvaluator<OutputT, CheckpointMarkT> evaluator =
             new UnboundedReadEvaluator<>(
-                transform, evaluationContext, source, evaluatorQueue);
+                transform, evaluationContext, source, deduplicator, evaluatorQueue);
         evaluatorQueue.offer(evaluator);
       } else {
         // otherwise return the existing Queue that arrived before us
@@ -113,7 +111,7 @@ class UnboundedReadEvaluatorFactory implements TransformEvaluatorFactory {
                 sourceEvaluators.get(key);
       }
     }
-    return evaluatorQueue;
+    return evaluatorQueue.poll();
   }
 
   /**
@@ -139,6 +137,7 @@ class UnboundedReadEvaluatorFactory implements TransformEvaluatorFactory {
      * source as derived from {@link #transform} due to splitting.
      */
     private final UnboundedSource<OutputT, CheckpointMarkT> source;
+    private final UnboundedReadDeduplicator deduplicator;
     private UnboundedReader<OutputT> currentReader;
     private CheckpointMarkT checkpointMark;
 
@@ -152,12 +151,14 @@ class UnboundedReadEvaluatorFactory implements TransformEvaluatorFactory {
         AppliedPTransform<?, PCollection<OutputT>, Unbounded<OutputT>> transform,
         InProcessEvaluationContext evaluationContext,
         UnboundedSource<OutputT, CheckpointMarkT> source,
+        UnboundedReadDeduplicator deduplicator,
         ConcurrentLinkedQueue<UnboundedReadEvaluator<OutputT, CheckpointMarkT>> evaluatorQueue) {
       this.transform = transform;
       this.evaluationContext = evaluationContext;
       this.evaluatorQueue = evaluatorQueue;
       this.source = source;
       this.currentReader = null;
+      this.deduplicator = deduplicator;
       this.checkpointMark = null;
     }
 
@@ -174,8 +175,10 @@ class UnboundedReadEvaluatorFactory implements TransformEvaluatorFactory {
         if (elementAvailable) {
           int numElements = 0;
           do {
-            output.add(WindowedValue.timestampedValueInGlobalWindow(currentReader.getCurrent(),
-                currentReader.getCurrentTimestamp()));
+            if (deduplicator.shouldOutput(currentReader.getCurrentRecordId())) {
+              output.add(WindowedValue.timestampedValueInGlobalWindow(currentReader.getCurrent(),
+                  currentReader.getCurrentTimestamp()));
+            }
             numElements++;
           } while (numElements < ARBITRARY_MAX_ELEMENTS && currentReader.advance());
           watermark = currentReader.getWatermark();
