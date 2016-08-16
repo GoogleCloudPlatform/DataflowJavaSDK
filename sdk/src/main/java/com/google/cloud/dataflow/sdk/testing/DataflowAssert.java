@@ -725,32 +725,32 @@ public class DataflowAssert {
     @Override
     public IterableAssert<T> inWindow(BoundedWindow window) {
       throw new UnsupportedOperationException(
-          "IterableAssert of an PCollectionView does not support windowed assertions");
+          "IterableAssert of a PCollectionView does not support windowed assertions");
     }
 
     @Override
     public IterableAssert<T> inFinalPane(BoundedWindow window) {
       // TODO: Can maybe be supported?
       throw new UnsupportedOperationException(
-          "IterableAssert of an PCollectionView does not support windowed assertions");
+          "IterableAssert of a PCollectionView does not support windowed assertions");
     }
 
     @Override
     public IterableAssert<T> inOnTimePane(BoundedWindow window) {
       throw new UnsupportedOperationException(
-          "IterableAssert of an PCollectionView does not support windowed assertions");
+          "IterableAssert of a PCollectionView does not support windowed assertions");
     }
 
     @Override
     public IterableAssert<T> inCombinedNonLatePanes(BoundedWindow window) {
       throw new UnsupportedOperationException(
-          "IterableAssert of an PCollectionView does not support windowed assertions");
+          "IterableAssert of a PCollectionView does not support windowed assertions");
     }
 
     @Override
     public IterableAssert<T> inEarlyGlobalWindowPanes() {
       throw new UnsupportedOperationException(
-          "IterableAssert of an PCollectionView does not support windowed assertions");
+          "IterableAssert of a PCollectionView does not support windowed assertions");
     }
 
     @Override
