@@ -254,4 +254,16 @@ public interface DataflowPipelineWorkerPoolOptions extends PipelineOptions {
       + "https://cloud.google.com/compute/docs/reference/latest/diskTypes")
   String getWorkerDiskType();
   void setWorkerDiskType(String value);
+
+  /**
+   * Specifies whether worker pools should be started with public IP addresses.
+   *
+   * <p>WARNING: This feature is experimental.  You must be whitelisted to use it.
+   */
+  @Description("Specifies whether worker pools should be started with public IP addresses. WARNING:"
+    + "This feature is experimental. You must be whitelisted to use it.")
+  @Experimental
+  @JsonIgnore
+  Boolean getUsePublicIps();
+  void setUsePublicIps(Boolean value);
 }
