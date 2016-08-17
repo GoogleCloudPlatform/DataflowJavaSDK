@@ -23,6 +23,8 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.util.List;
 
+import javax.annotation.Nullable;
+
 /**
  * Options that are used to configure the Dataflow pipeline worker pool.
  */
@@ -264,6 +266,6 @@ public interface DataflowPipelineWorkerPoolOptions extends PipelineOptions {
     + "This feature is experimental. You must be whitelisted to use it.")
   @Experimental
   @JsonIgnore
-  Boolean getUsePublicIps();
-  void setUsePublicIps(Boolean value);
+  @Nullable Boolean getUsePublicIps();
+  void setUsePublicIps(@Nullable Boolean value);
 }
