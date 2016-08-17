@@ -399,6 +399,10 @@ public class BigQueryIO {
       // We expect the jobs have already DONE, and don't need a high max retires.
       private static final int CLEANUP_JOB_POLL_MAX_RETRIES = 10;
 
+      // The job should either exist on not, that said we could expect some hiccups on the service
+      // side.
+      private static final int CLEANUP_JOB_EXISTENCE_MAX_RETRIES = 3;
+
       private Bound() {
         this(
             null /* name */,
@@ -600,8 +604,10 @@ public class BigQueryIO {
                 JobReference jobRef = new JobReference()
                     .setProjectId(executingProject)
                     .setJobId(getExtractJobId(jobIdToken));
-                Job extractJob = bqServices.getJobService(bqOptions).pollJob(
-                    jobRef, CLEANUP_JOB_POLL_MAX_RETRIES);
+
+                JobService jobService = bqServices.getJobService(bqOptions);
+
+                Job extractJob = jobService.getJob(jobRef, CLEANUP_JOB_EXISTENCE_MAX_RETRIES);
 
                 Collection<String> extractFiles = null;
                 if (extractJob != null) {
