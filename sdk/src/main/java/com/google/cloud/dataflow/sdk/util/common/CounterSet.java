@@ -80,10 +80,11 @@ public class CounterSet extends AbstractSet<Counter<?>> {
         @SuppressWarnings("unchecked")
         Counter<T> compatibleCounter = (Counter<T>) oldCounter;
         return compatibleCounter;
+      } else {
+        throw new IllegalArgumentException(
+            "Counter " + counter + " duplicates incompatible counter "
+            + oldCounter + " in " + this);      
       }
-      throw new IllegalArgumentException(
-          "Counter " + counter + " duplicates incompatible counter "
-          + oldCounter + " in " + this);      
     }
     return counter;
   }
