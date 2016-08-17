@@ -30,8 +30,7 @@ import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
 /**
  * Gathers all panes of each window into exactly one output.
  *
- * <p>
- * Note that this will delay the output of a window until the garbage collection time (when the
+ * <p>Note that this will delay the output of a window until the garbage collection time (when the
  * watermark passes the end of the window plus allowed lateness) even if the upstream triggers
  * closed the window earlier.
  */
@@ -40,10 +39,9 @@ public class GatherAllPanes<T>
   /**
    * Gathers all panes of each window into a single output element.
    *
-   * <p>
-   * This will gather all output panes into a single element, which causes them to be colocated on a
-   * single worker. As a result, this is only suitable for {@link PCollection PCollections} where
-   * all of the output elements for each pane fit in memory, such as in tests.
+   * <p>This will gather all output panes into a single element, which causes them to be colocated
+   * on a single worker. As a result, this is only suitable for {@link PCollection PCollections}
+   * where all of the output elements for each pane fit in memory, such as in tests.
    */
   public static <T> GatherAllPanes<T> globally() {
     return new GatherAllPanes<>();
