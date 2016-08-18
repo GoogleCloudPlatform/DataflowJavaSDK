@@ -76,7 +76,7 @@ public class CounterSet extends AbstractSet<Counter<?>> {
     Counter<?> oldCounter = counters.putIfAbsent(counter.getName(), counter);
     if (oldCounter != null) {
       checkArgument(counter.isCompatibleWith(oldCounter),
-        "Counter %s duplicates incompatible counter %s", counter, oldCounter);
+        "Counter %s duplicates incompatible counter %s in %s", counter, oldCounter, this;
       // Return the counter to reuse.
       @SuppressWarnings("unchecked")
       Counter<T> compatibleCounter = (Counter<T>) oldCounter;
