@@ -75,16 +75,12 @@ public class CounterSet extends AbstractSet<Counter<?>> {
   public <T> Counter<T> addOrReuseCounter(Counter<T> counter) {
     Counter<?> oldCounter = counters.putIfAbsent(counter.getName(), counter);
     if (oldCounter != null) {
-      if (counter.isCompatibleWith(oldCounter)) {
-        // Return the counter to reuse.
-        @SuppressWarnings("unchecked")
-        Counter<T> compatibleCounter = (Counter<T>) oldCounter;
-        return compatibleCounter;
-      } else {
-        throw new IllegalArgumentException(
-            "Counter " + counter + " duplicates incompatible counter "
-            + oldCounter + " in " + this);      
-      }
+      checkArgument(counter.isCompatibleWith(oldCounter),
+        "Counter %s duplicates incompatible counter %s", counter, oldCounter);
+      // Return the counter to reuse.
+      @SuppressWarnings("unchecked")
+      Counter<T> compatibleCounter = (Counter<T>) oldCounter;
+      return compatibleCounter;
     }
     return counter;
   }
@@ -123,11 +119,7 @@ public class CounterSet extends AbstractSet<Counter<?>> {
     if (null == e) {
       return false;
     }
-    if (counters.putIfAbsent(e.getName(), e) != null) {
-      return false;
-    } else {
-      return true;
-    }
+    return counters.putIfAbsent(e.getName(), e) == null;
   }
 
   public void merge(CounterSet that) {
