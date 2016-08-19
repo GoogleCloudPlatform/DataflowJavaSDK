@@ -24,6 +24,8 @@ import org.joda.time.DateTimeZone;
 import org.joda.time.format.DateTimeFormat;
 import org.joda.time.format.DateTimeFormatter;
 
+import java.util.Map;
+
 /**
  * Options that can be used to configure the {@link DataflowPipeline}.
  */
