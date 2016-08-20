@@ -76,7 +76,7 @@ public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPip
   }
 
   private static class TemplateJob extends DataflowPipelineJob {
-    static String error =
+    private static final String ERROR =
       "The result of template creation should not be used.";
 
     TemplateJob() {
@@ -85,22 +85,22 @@ public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPip
 
     @Override
     public String getJobId() {
-      throw new UnsupportedOperationException(error);
+      throw new UnsupportedOperationException(ERROR);
     }
 
     @Override
     public String getProjectId() {
-      throw new UnsupportedOperationException(error);
+      throw new UnsupportedOperationException(ERROR);
     }
 
     @Override
     public DataflowPipelineJob getReplacedByJob() {
-      throw new UnsupportedOperationException(error);
+      throw new UnsupportedOperationException(ERROR);
     }
 
     @Override
     public Dataflow getDataflowClient() {
-      throw new UnsupportedOperationException(error);
+      throw new UnsupportedOperationException(ERROR);
     }
 
     @Override
@@ -108,17 +108,17 @@ public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPip
       long timeToWait,
       TimeUnit timeUnit,
       MonitoringUtil.JobMessagesHandler messageHandler) {
-      throw new UnsupportedOperationException(error);
+      throw new UnsupportedOperationException(ERROR);
     }
 
     @Override
     public void cancel() {
-      throw new UnsupportedOperationException(error);
+      throw new UnsupportedOperationException(ERROR);
     }
 
     @Override
     public State getState() {
-      throw new UnsupportedOperationException(error);
+      throw new UnsupportedOperationException(ERROR);
     }
   }
 
