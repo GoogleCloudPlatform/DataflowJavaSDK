@@ -116,7 +116,7 @@ public interface DataflowPipelineOptions extends
       return normalizedAppName + "-" + normalizedUserName + "-" + datePart;
     }
   }
-  
+
   /**
    * Labels that will be applied to the billing records for this job.
    */
