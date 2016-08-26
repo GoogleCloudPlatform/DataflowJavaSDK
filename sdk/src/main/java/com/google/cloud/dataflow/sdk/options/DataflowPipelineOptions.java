@@ -120,6 +120,7 @@ public interface DataflowPipelineOptions extends
   /**
    * Labels that will be applied to the billing records for this job.
    */
+  @Description("Labels that will be applied to the billing records for this job.")
   Map<String, String> getLabels();
   void setLabels(Map<String, String> labels);
 }
