@@ -88,6 +88,7 @@ import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -109,7 +110,7 @@ public class DatastoreV1Test {
     QUERY = q.build();
     v1Options = V1Options.from(PROJECT_ID, QUERY, NAMESPACE);
   }
-  private DatastoreV1.Read initialRead;
+  private Read initialRead;
 
   @Mock
   Datastore mockDatastore;
@@ -191,14 +192,14 @@ public class DatastoreV1Test {
 
   @Test
   public void testReadValidationSucceedsNamespace() throws Exception {
-    DatastoreV1.Read read = DatastoreIO.v1().read().withProjectId(PROJECT_ID).withQuery(QUERY);
+    Read read =  DatastoreIO.v1().read().withProjectId(PROJECT_ID).withQuery(QUERY);
     /* Should succeed, as a null namespace is fine. */
     read.validate(null);
   }
 
   @Test
   public void testReadDisplayData() {
-    DatastoreV1.Read read = DatastoreIO.v1().read()
+    Read read =  DatastoreIO.v1().read()
         .withProjectId(PROJECT_ID)
         .withQuery(QUERY)
         .withNamespace(NAMESPACE);
@@ -236,8 +237,7 @@ public class DatastoreV1Test {
 
   @Test
   public void testWriteDisplayData() {
-    Write write = DatastoreIO.v1().write()
-        .withProjectId(PROJECT_ID);
+    Write write = DatastoreIO.v1().write().withProjectId(PROJECT_ID);
 
     DisplayData displayData = DisplayData.from(write);
 
@@ -494,6 +494,7 @@ public class DatastoreV1Test {
       start = end;
     }
   }
+
   /**
    * Tests {@link DatastoreV1.Read#getEstimatedSizeBytes} to fetch and return estimated size for a
    * query.
@@ -501,14 +502,23 @@ public class DatastoreV1Test {
   @Test
   public void testEstimatedSizeBytes() throws Exception {
     long entityBytes = 100L;
+    // In seconds
+    long timestamp = 1234L;
+
+    RunQueryRequest latestTimestampRequest = makeRequest(makeLatestTimestampQuery(NAMESPACE),
+        NAMESPACE);
+    RunQueryResponse latestTimestampResponse = makeLatestTimestampResponse(timestamp);
     // Per Kind statistics request and response
-    RunQueryRequest statRequest = makeRequest(makeStatKindQuery(NAMESPACE), NAMESPACE);
+    RunQueryRequest statRequest = makeRequest(makeStatKindQuery(NAMESPACE, timestamp), NAMESPACE);
     RunQueryResponse statResponse = makeStatKindResponse(entityBytes);
 
+    when(mockDatastore.runQuery(latestTimestampRequest))
+        .thenReturn(latestTimestampResponse);
     when(mockDatastore.runQuery(statRequest))
         .thenReturn(statResponse);
 
     assertEquals(entityBytes, getEstimatedSizeBytes(mockDatastore, QUERY, NAMESPACE));
+    verify(mockDatastore, times(1)).runQuery(latestTimestampRequest);
     verify(mockDatastore, times(1)).runQuery(statRequest);
   }
 
@@ -549,11 +559,19 @@ public class DatastoreV1Test {
     int numSplits = 0;
     int expectedNumSplits = 20;
     long entityBytes = expectedNumSplits * DEFAULT_BUNDLE_SIZE_BYTES;
+    // In seconds
+    long timestamp = 1234L;
+
+    RunQueryRequest latestTimestampRequest = makeRequest(makeLatestTimestampQuery(NAMESPACE),
+        NAMESPACE);
+    RunQueryResponse latestTimestampResponse = makeLatestTimestampResponse(timestamp);
 
     // Per Kind statistics request and response
-    RunQueryRequest statRequest = makeRequest(makeStatKindQuery(NAMESPACE), NAMESPACE);
+    RunQueryRequest statRequest = makeRequest(makeStatKindQuery(NAMESPACE, timestamp), NAMESPACE);
     RunQueryResponse statResponse = makeStatKindResponse(entityBytes);
 
+    when(mockDatastore.runQuery(latestTimestampRequest))
+        .thenReturn(latestTimestampResponse);
     when(mockDatastore.runQuery(statRequest))
         .thenReturn(statResponse);
     when(mockQuerySplitter.getSplits(
@@ -569,6 +587,7 @@ public class DatastoreV1Test {
     verifyUniqueKeys(queries);
     verify(mockQuerySplitter, times(1)).getSplits(
         eq(QUERY), any(PartitionId.class), eq(expectedNumSplits), any(Datastore.class));
+    verify(mockDatastore, times(1)).runQuery(latestTimestampRequest);
     verify(mockDatastore, times(1)).runQuery(statRequest);
   }
 
@@ -692,10 +711,24 @@ public class DatastoreV1Test {
 
   /** Builds a per-kind statistics response with the given entity size. */
   private static RunQueryResponse makeStatKindResponse(long entitySizeInBytes) {
-    RunQueryResponse.Builder timestampResponse = RunQueryResponse.newBuilder();
+    RunQueryResponse.Builder statKindResponse = RunQueryResponse.newBuilder();
     Entity.Builder entity = Entity.newBuilder();
     entity.setKey(makeKey("dummyKind", "dummyId"));
     entity.getMutableProperties().put("entity_bytes", makeValue(entitySizeInBytes).build());
+    EntityResult.Builder entityResult = EntityResult.newBuilder();
+    entityResult.setEntity(entity);
+    QueryResultBatch.Builder batch = QueryResultBatch.newBuilder();
+    batch.addEntityResults(entityResult);
+    statKindResponse.setBatch(batch);
+    return statKindResponse.build();
+  }
+
+  /** Builds a response of the given timestamp. */
+  private static RunQueryResponse makeLatestTimestampResponse(long timestamp) {
+    RunQueryResponse.Builder timestampResponse = RunQueryResponse.newBuilder();
+    Entity.Builder entity = Entity.newBuilder();
+    entity.setKey(makeKey("dummyKind", "dummyId"));
+    entity.getMutableProperties().put("timestamp", makeValue(new Date(timestamp * 1000)).build());
     EntityResult.Builder entityResult = EntityResult.newBuilder();
     entityResult.setEntity(entity);
     QueryResultBatch.Builder batch = QueryResultBatch.newBuilder();
@@ -705,18 +738,31 @@ public class DatastoreV1Test {
   }
 
   /** Builds a per-kind statistics query for the given timestamp and namespace. */
-  private static Query makeStatKindQuery(String namespace) {
+  private static Query makeStatKindQuery(String namespace, long timestamp) {
     Query.Builder statQuery = Query.newBuilder();
     if (namespace == null) {
       statQuery.addKindBuilder().setName("__Stat_Kind__");
     } else {
-      statQuery.addKindBuilder().setName("__Ns_Stat_Kind__");
+      statQuery.addKindBuilder().setName("__Stat_Ns_Kind__");
     }
     statQuery.setFilter(makeFilter("kind_name", EQUAL, makeValue(KIND)).build());
-    statQuery.addOrder(makeOrder("timestamp", DESCENDING));
-    statQuery.setLimit(Int32Value.newBuilder().setValue(1));
+    statQuery.setFilter(makeFilter("timestamp", EQUAL, makeValue(timestamp * 1000000L)).build());
     return statQuery.build();
   }
+
+  /** Builds a latest timestamp statistics query. */
+  private static Query makeLatestTimestampQuery(String namespace) {
+    Query.Builder timestampQuery = Query.newBuilder();
+    if (namespace == null) {
+      timestampQuery.addKindBuilder().setName("__Stat_Total__");
+    } else {
+      timestampQuery.addKindBuilder().setName("__Stat_Ns_Total__");
+    }
+    timestampQuery.addOrder(makeOrder("timestamp", DESCENDING));
+    timestampQuery.setLimit(Int32Value.newBuilder().setValue(1));
+    return timestampQuery.build();
+  }
+
 
   /** Generate dummy query splits. */
   private List<Query> splitQuery(Query query, int numSplits) {
