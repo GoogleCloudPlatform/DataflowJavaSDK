@@ -38,56 +38,51 @@ import com.google.cloud.dataflow.sdk.values.PCollection.IsBounded;
 import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.cloud.dataflow.sdk.values.POutput;
 import com.google.cloud.dataflow.sdk.values.TimestampedValue;
-import com.google.common.base.Optional;
 import com.google.common.base.Supplier;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 
-/**
- * The {@link TransformEvaluatorFactory} for the {@link TestStream} primitive.
- */
+/** The {@link TransformEvaluatorFactory} for the {@link TestStream} primitive. */
 class TestStreamEvaluatorFactory implements TransformEvaluatorFactory {
-  /**
-   * At most one evaluator may be used for {@link TestStream} instances to ensure the appropriate
-   * sequence of outputs. Each evaluator is stateful and independently available.
-   */
-  private final ConcurrentMap<AppliedPTransform<?, ?, ?>, Optional<Evaluator<?>>> evaluators =
-      new ConcurrentHashMap<>();
+  private final KeyedResourcePool<AppliedPTransform<?, ?, ?>, Evaluator<?>> evaluators =
+      LockedKeyedResourcePool.create();
 
   @Nullable
   @Override
   public <InputT> TransformEvaluator<InputT> forApplication(
       AppliedPTransform<?, ?, ?> application,
       @Nullable CommittedBundle<?> inputBundle,
-      InProcessEvaluationContext evaluationContext) throws Exception {
+      InProcessEvaluationContext evaluationContext)
+      throws Exception {
     return createEvaluator((AppliedPTransform) application, evaluationContext);
   }
 
+  /**
+   * Returns the evaluator for the provided application of {@link TestStream}, or null if it is
+   * already in use.
+   *
+   * <p>The documented behavior of {@link TestStream} requires the output of one event to travel
+   * completely through the pipeline before any additional event, so additional instances that have
+   * a separate collection of events cannot be created.
+   */
   private <InputT, OutputT> TransformEvaluator<? super InputT> createEvaluator(
       AppliedPTransform<PBegin, PCollection<OutputT>, TestStream<OutputT>> application,
-      InProcessEvaluationContext evaluationContext) {
-    // Replaces any existing value with absent, and get the existing value (atomically); ensures
-    // only one thread can obtain the evaluator per-transform.
-    Optional<Evaluator<?>> evaluator =
-        evaluators.replace(application, Optional.<Evaluator<?>>absent());
-    if (evaluator != null) {
-      return evaluator.orNull();
-    }
-    Evaluator<OutputT> createdEvaluator =
-        new Evaluator<>(application, evaluationContext, evaluators);
-    evaluators.putIfAbsent(application, Optional.<Evaluator<?>>of(createdEvaluator));
-    return evaluators.replace(application, Optional.<Evaluator<?>>absent()).orNull();
+      InProcessEvaluationContext evaluationContext)
+      throws ExecutionException {
+    return evaluators
+        .tryAcquire(application, new CreateEvaluator<>(application, evaluationContext, evaluators))
+        .orNull();
   }
 
   private static class Evaluator<T> implements TransformEvaluator<Object> {
     private final AppliedPTransform<PBegin, PCollection<T>, TestStream<T>> application;
     private final InProcessEvaluationContext context;
-    private final ConcurrentMap<AppliedPTransform<?, ?, ?>, Optional<Evaluator<?>>> evaluators;
+    private final KeyedResourcePool<AppliedPTransform<?, ?, ?>, Evaluator<?>> cache;
     private final List<Event<T>> events;
     private int index;
     private Instant currentWatermark;
@@ -95,50 +90,47 @@ class TestStreamEvaluatorFactory implements TransformEvaluatorFactory {
     private Evaluator(
         AppliedPTransform<PBegin, PCollection<T>, TestStream<T>> application,
         InProcessEvaluationContext context,
-        ConcurrentMap<AppliedPTransform<?, ?, ?>, Optional<Evaluator<?>>> evaluators) {
+        KeyedResourcePool<AppliedPTransform<?, ?, ?>, Evaluator<?>> cache) {
       this.application = application;
       this.context = context;
+      this.cache = cache;
       this.events = application.getTransform().getEvents();
-      this.evaluators = evaluators;
       index = 0;
       currentWatermark = BoundedWindow.TIMESTAMP_MIN_VALUE;
     }
 
     @Override
-    public void processElement(WindowedValue<Object> element) throws Exception {
-    }
+    public void processElement(WindowedValue<Object> element) throws Exception {}
 
     @Override
     public InProcessTransformResult finishBundle() throws Exception {
-      if (index >= events.size()) {
-        return StepTransformResult.withHold(application, BoundedWindow.TIMESTAMP_MAX_VALUE).build();
-      }
-      Event<T> event = events.get(index);
-      if (event.getType().equals(EventType.WATERMARK)) {
-        currentWatermark = ((WatermarkEvent<T>) event).getWatermark();
-      }
-      StepTransformResult.Builder result =
-          StepTransformResult.withHold(application, currentWatermark);
-      if (event.getType().equals(EventType.ELEMENT)) {
-        UncommittedBundle<T> bundle = context.createRootBundle(application.getOutput());
-        for (TimestampedValue<T> elem : ((ElementEvent<T>) event).getElements()) {
-          bundle.add(WindowedValue.timestampedValueInGlobalWindow(elem.getValue(),
-              elem.getTimestamp()));
+      try {
+        if (index >= events.size()) {
+          return StepTransformResult.withoutHold(application).build();
         }
-        result.addOutput(bundle);
+        Event<T> event = events.get(index);
+        if (event.getType().equals(EventType.WATERMARK)) {
+          currentWatermark = ((WatermarkEvent<T>) event).getWatermark();
+        }
+        StepTransformResult.Builder result =
+            StepTransformResult.withHold(application, currentWatermark);
+        if (event.getType().equals(EventType.ELEMENT)) {
+          UncommittedBundle<T> bundle = context.createRootBundle(application.getOutput());
+          for (TimestampedValue<T> elem : ((ElementEvent<T>) event).getElements()) {
+            bundle.add(
+                WindowedValue.timestampedValueInGlobalWindow(elem.getValue(), elem.getTimestamp()));
+          }
+          result.addOutput(bundle);
+        }
+        if (event.getType().equals(EventType.PROCESSING_TIME)) {
+          ((TestClock) context.getClock())
+              .advance(((ProcessingTimeEvent<T>) event).getProcessingTimeAdvance());
+        }
+        index++;
+        return result.build();
+      } finally {
+        cache.release(application, this);
       }
-      if (event.getType().equals(EventType.PROCESSING_TIME)) {
-        ((TestClock) context.getClock())
-            .advance(((ProcessingTimeEvent<T>) event).getProcessingTimeAdvance());
-      }
-      index++;
-      checkState(
-          !evaluators.replace(application, Optional.<Evaluator<?>>of(this)).isPresent(),
-          "The evaluator for a %s was changed while the source evaluator was executing. "
-              + "%s cannot be split or evaluated in parallel.",
-          TestStream.class.getSimpleName(),
-          TestStream.class.getSimpleName());
-      return result.build();
     }
   }
 
@@ -170,31 +162,56 @@ class TestStreamEvaluatorFactory implements TransformEvaluatorFactory {
         PTransform<InputT, OutputT> transform) {
       if (transform instanceof TestStream) {
         return (PTransform<InputT, OutputT>)
-            new InProcessTestStream<OutputT>((TestStream<OutputT>) transform);
+            new DirectTestStream<OutputT>((TestStream<OutputT>) transform);
       }
       return transform;
     }
 
-    private static class InProcessTestStream<T> extends PTransform<PBegin, PCollection<T>> {
+    private static class DirectTestStream<T> extends PTransform<PBegin, PCollection<T>> {
       private final TestStream<T> original;
 
-      private InProcessTestStream(TestStream transform) {
+      private DirectTestStream(TestStream transform) {
         this.original = transform;
       }
 
       @Override
       public PCollection<T> apply(PBegin input) {
         PipelineRunner runner = input.getPipeline().getRunner();
-        checkState(runner instanceof InProcessPipelineRunner,
+        checkState(
+            runner instanceof InProcessPipelineRunner,
             "%s can only be used when running with the %s",
             getClass().getSimpleName(),
             InProcessPipelineRunner.class.getSimpleName());
+        input.getPipeline()
+            .getOptions()
+            .as(InProcessPipelineOptions.class)
+            .setShutdownUnboundedProducersWithMaxWatermark(true);
         ((InProcessPipelineRunner) runner).setClockSupplier(new TestClockSupplier());
         return PCollection.<T>createPrimitiveOutputInternal(
             input.getPipeline(), WindowingStrategy.globalDefault(), IsBounded.UNBOUNDED)
             .setCoder(original.getValueCoder());
       }
+    }
+  }
 
+  private static class CreateEvaluator<OutputT> implements Callable<Evaluator<?>> {
+    private final AppliedPTransform<PBegin, PCollection<OutputT>, TestStream<OutputT>> application;
+    private final InProcessEvaluationContext evaluationContext;
+    private final KeyedResourcePool<AppliedPTransform<?, ?, ?>, Evaluator<?>> evaluators;
+
+    public CreateEvaluator(
+        AppliedPTransform<PBegin, PCollection<OutputT>, TestStream<OutputT>> application,
+        InProcessEvaluationContext evaluationContext,
+        KeyedResourcePool<AppliedPTransform<?, ?, ?>, Evaluator<?>> evaluators) {
+      this.application = application;
+      this.evaluationContext = evaluationContext;
+      this.evaluators = evaluators;
+    }
+
+    @Override
+    public Evaluator<?> call() throws Exception {
+      return new Evaluator<>(application, evaluationContext, evaluators);
     }
   }
 }
+

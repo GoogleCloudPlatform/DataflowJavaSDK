@@ -333,7 +333,8 @@ public class TestStreamTest implements Serializable {
     Pipeline p = Pipeline.create(opts);
 
     thrown.expect(IllegalStateException.class);
-    thrown.expectMessage("does not provide a required override");
+    thrown.expectMessage("DirectPipelineRunner");
+    thrown.expectMessage("does not support TestStream");
     thrown.expectMessage(TestStream.class.getSimpleName());
     thrown.expectMessage(DirectPipelineRunner.class.getSimpleName());
     p.apply(TestStream.create(VarIntCoder.of()).advanceWatermarkToInfinity());
