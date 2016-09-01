@@ -97,7 +97,7 @@ public final class TestStream<T> extends PTransform<PBegin, PCollection<T>> {
     /**
      * Adds the specified elements to the source with timestamp equal to the current watermark.
      *
-     * @return A {@link TestStream.Builder} like this one that will add the provided elements
+     * @return A {@link TestStream.Builder} like this one that will emit the provided elements
      *         after all earlier events have completed.
      */
     @SafeVarargs
@@ -114,7 +114,7 @@ public final class TestStream<T> extends PTransform<PBegin, PCollection<T>> {
     /**
      * Adds the specified elements to the source with the provided timestamps.
      *
-     * @return A {@link TestStream.Builder} like this one that will add the provided elements
+     * @return A {@link TestStream.Builder} like this one that will emit the provided elements
      *         after all earlier events have completed.
      */
     @SafeVarargs

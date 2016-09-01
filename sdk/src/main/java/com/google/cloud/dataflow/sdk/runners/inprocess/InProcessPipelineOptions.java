@@ -35,6 +35,8 @@ public interface InProcessPipelineOptions extends PipelineOptions, ApplicationNa
    *
    * <p>Defaults to a {@link FixedThreadPoolExecutorServiceFactory}, which produces instances of
    * {@link Executors#newCachedThreadPool()}.
+   *
+   * @deprecated the runner manages its own {@link ExecutorService} as an implementation detail
    */
   @Deprecated
   @JsonIgnore
@@ -46,6 +48,8 @@ public interface InProcessPipelineOptions extends PipelineOptions, ApplicationNa
   /**
    * Gets the {@link Clock} used by this pipeline. The clock is used in place of accessing the
    * system time when time values are required by the evaluator.
+   *
+   * @deprecated the runner manages its own {@link Clock} as an implementation detail
    */
   @Deprecated
   @JsonIgnore
