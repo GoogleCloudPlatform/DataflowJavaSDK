@@ -22,6 +22,7 @@ import static com.google.common.base.Verify.verify;
 import static com.google.datastore.v1.PropertyFilter.Operator.EQUAL;
 import static com.google.datastore.v1.PropertyOrder.Direction.DESCENDING;
 import static com.google.datastore.v1.QueryResultBatch.MoreResultsType.NOT_FINISHED;
+import static com.google.datastore.v1.client.DatastoreHelper.makeAndFilter;
 import static com.google.datastore.v1.client.DatastoreHelper.makeDelete;
 import static com.google.datastore.v1.client.DatastoreHelper.makeFilter;
 import static com.google.datastore.v1.client.DatastoreHelper.makeOrder;
@@ -299,8 +300,9 @@ public class DatastoreV1 {
       } else {
         queryBuilder.addKindBuilder().setName("__Stat_Ns_Kind__");
       }
-      queryBuilder.setFilter(makeFilter("kind_name", EQUAL, makeValue(ourKind).build()));
-      queryBuilder.setFilter(makeFilter("timestamp", EQUAL, makeValue(latestTimestamp).build()));
+      queryBuilder.setFilter(makeAndFilter(
+          makeFilter("kind_name", EQUAL, makeValue(ourKind).build()).build(),
+          makeFilter("timestamp", EQUAL, makeValue(latestTimestamp).build()).build()));
 
       RunQueryRequest request = makeRequest(queryBuilder.build(), namespace);
 

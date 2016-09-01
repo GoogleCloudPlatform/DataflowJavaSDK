@@ -25,6 +25,7 @@ import static com.google.cloud.dataflow.sdk.io.datastore.DatastoreV1.isValidKey;
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
 import static com.google.datastore.v1.PropertyFilter.Operator.EQUAL;
 import static com.google.datastore.v1.PropertyOrder.Direction.DESCENDING;
+import static com.google.datastore.v1.client.DatastoreHelper.makeAndFilter;
 import static com.google.datastore.v1.client.DatastoreHelper.makeDelete;
 import static com.google.datastore.v1.client.DatastoreHelper.makeFilter;
 import static com.google.datastore.v1.client.DatastoreHelper.makeKey;
@@ -745,8 +746,9 @@ public class DatastoreV1Test {
     } else {
       statQuery.addKindBuilder().setName("__Stat_Ns_Kind__");
     }
-    statQuery.setFilter(makeFilter("kind_name", EQUAL, makeValue(KIND)).build());
-    statQuery.setFilter(makeFilter("timestamp", EQUAL, makeValue(timestamp * 1000000L)).build());
+    statQuery.setFilter(makeAndFilter(
+        makeFilter("kind_name", EQUAL, makeValue(KIND)).build(),
+        makeFilter("timestamp", EQUAL, makeValue(timestamp * 1000000L)).build()));
     return statQuery.build();
   }
 
