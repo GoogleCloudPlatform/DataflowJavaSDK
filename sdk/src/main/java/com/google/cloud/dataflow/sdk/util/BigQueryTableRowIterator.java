@@ -447,6 +447,17 @@ public class BigQueryTableRowIterator implements AutoCloseable {
     }
   }
 
+  /**
+   * Execute a BQ request with exponential backoff and return the result.
+   *
+   * @deprecated use {@link #executeWithBackOff(AbstractGoogleClientRequest, String)}.
+   */
+  @Deprecated
+  public static <T> T executeWithBackOff(AbstractGoogleClientRequest<T> client, String error,
+      Object... errorArgs) throws IOException, InterruptedException {
+    return executeWithBackOff(client, String.format(error, errorArgs));
+  }
+
   // Execute a BQ request with exponential backoff and return the result.
   // client - BQ request to be executed
   // error - Formatted message to log if when a request fails. Takes exception message as a
@@ -463,10 +474,11 @@ public class BigQueryTableRowIterator implements AutoCloseable {
         result = client.execute();
         break;
       } catch (IOException e) {
-        String errorMessage = error + String.format(" Cause: %s", e.getMessage());
-        LOG.error(errorMessage);
+        LOG.error("{}", error, e);
         if (!BackOffUtils.next(sleeper, backOff)) {
-          LOG.error(error + String.format(" Failing after retrying %d times.", MAX_RETRIES));
+          String errorMessage = String.format(
+              "%s. Failing to execute job after %d attempts.", error, MAX_RETRIES + 1);
+          LOG.error(errorMessage);
           throw new IOException(errorMessage, e);
         }
       }
