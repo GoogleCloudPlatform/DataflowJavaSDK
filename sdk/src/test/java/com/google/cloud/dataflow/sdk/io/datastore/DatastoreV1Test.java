@@ -149,7 +149,7 @@ public class DatastoreV1Test {
    */
   @Test
   public void testBuildReadAlt() throws Exception {
-    Read read =  DatastoreIO.v1().read()
+    Read read = DatastoreIO.v1().read()
         .withProjectId(PROJECT_ID).withNamespace(NAMESPACE).withQuery(QUERY);
     assertEquals(QUERY, read.getQuery());
     assertEquals(PROJECT_ID, read.getProjectId());
@@ -158,7 +158,7 @@ public class DatastoreV1Test {
 
   @Test
   public void testReadValidationFailsProject() throws Exception {
-    Read read =  DatastoreIO.v1().read().withQuery(QUERY);
+    Read read = DatastoreIO.v1().read().withQuery(QUERY);
     thrown.expect(NullPointerException.class);
     thrown.expectMessage("project");
     read.validate(null);
@@ -166,7 +166,7 @@ public class DatastoreV1Test {
 
   @Test
   public void testReadValidationFailsQuery() throws Exception {
-    Read read =  DatastoreIO.v1().read().withProjectId(PROJECT_ID);
+    Read read = DatastoreIO.v1().read().withProjectId(PROJECT_ID);
     thrown.expect(NullPointerException.class);
     thrown.expectMessage("query");
     read.validate(null);
@@ -192,14 +192,14 @@ public class DatastoreV1Test {
 
   @Test
   public void testReadValidationSucceedsNamespace() throws Exception {
-    Read read =  DatastoreIO.v1().read().withProjectId(PROJECT_ID).withQuery(QUERY);
+    Read read = DatastoreIO.v1().read().withProjectId(PROJECT_ID).withQuery(QUERY);
     /* Should succeed, as a null namespace is fine. */
     read.validate(null);
   }
 
   @Test
   public void testReadDisplayData() {
-    Read read =  DatastoreIO.v1().read()
+    Read read = DatastoreIO.v1().read()
         .withProjectId(PROJECT_ID)
         .withQuery(QUERY)
         .withNamespace(NAMESPACE);
@@ -271,7 +271,7 @@ public class DatastoreV1Test {
 
   @Test
   public void testDeleteEntityDisplayData() {
-    DeleteEntity deleteEntity =  DatastoreIO.v1().deleteEntity().withProjectId(PROJECT_ID);
+    DeleteEntity deleteEntity = DatastoreIO.v1().deleteEntity().withProjectId(PROJECT_ID);
 
     DisplayData displayData = DisplayData.from(deleteEntity);
 
@@ -305,7 +305,7 @@ public class DatastoreV1Test {
 
   @Test
   public void testDeleteKeyDisplayData() {
-    DeleteKey deleteKey =  DatastoreIO.v1().deleteKey().withProjectId(PROJECT_ID);
+    DeleteKey deleteKey = DatastoreIO.v1().deleteKey().withProjectId(PROJECT_ID);
 
     DisplayData displayData = DisplayData.from(deleteKey);
 
@@ -318,7 +318,7 @@ public class DatastoreV1Test {
    */
   @Test
   public void testBuildWrite() throws Exception {
-    DatastoreV1.Write write =  DatastoreIO.v1().write().withProjectId(PROJECT_ID);
+    DatastoreV1.Write write = DatastoreIO.v1().write().withProjectId(PROJECT_ID);
     assertEquals(PROJECT_ID, write.getProjectId());
   }
 
@@ -762,7 +762,6 @@ public class DatastoreV1Test {
     timestampQuery.setLimit(Int32Value.newBuilder().setValue(1));
     return timestampQuery.build();
   }
-
 
   /** Generate dummy query splits. */
   private List<Query> splitQuery(Query query, int numSplits) {
