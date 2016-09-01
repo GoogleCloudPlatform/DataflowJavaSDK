@@ -1,3 +1,18 @@
+/*
+ * Copyright (C) 2016 Google Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ */
 package com.google.cloud.dataflow.sdk.runners.inprocess;
 
 import static org.hamcrest.Matchers.equalTo;
@@ -7,9 +22,11 @@ import static org.junit.Assert.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.cloud.dataflow.sdk.Pipeline;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.VarIntCoder;
-import com.google.cloud.dataflow.sdk.testing.TestPipeline;
+import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
 import com.google.cloud.dataflow.sdk.testing.TestStream;
 import com.google.cloud.dataflow.sdk.transforms.windowing.BoundedWindow;
 import com.google.cloud.dataflow.sdk.util.WindowedValue;
@@ -30,7 +47,7 @@ public class TestStreamEvaluatorFactoryTest {
   /** Demonstrates that returned evaluators produce elements in sequence. */
   @Test
   public void producesElementsInSequence() throws Exception {
-    TestPipeline p = TestPipeline.create();
+    Pipeline p = getPipeline();
     PCollection<Integer> streamVals =
         p.apply(
             TestStream.create(VarIntCoder.of())
@@ -82,7 +99,7 @@ public class TestStreamEvaluatorFactoryTest {
   /** Demonstrates that at most one evaluator for an application is available at a time. */
   @Test
   public void onlyOneEvaluatorAtATime() throws Exception {
-    TestPipeline p = TestPipeline.create();
+    Pipeline p = getPipeline();
     PCollection<Integer> streamVals =
         p.apply(
             TestStream.create(VarIntCoder.of()).addElements(4, 5, 6).advanceWatermarkToInfinity());
@@ -103,7 +120,7 @@ public class TestStreamEvaluatorFactoryTest {
    */
   @Test
   public void multipleApplicationsMultipleEvaluators() throws Exception {
-    TestPipeline p = TestPipeline.create();
+    Pipeline p = getPipeline();
     TestStream<Integer> stream =
         TestStream.create(VarIntCoder.of()).addElements(2).advanceWatermarkToInfinity();
     PCollection<Integer> firstVals = p.apply("Stream One", stream);
@@ -145,7 +162,7 @@ public class TestStreamEvaluatorFactoryTest {
    */
   @Test
   public void multipleStreamsMultipleEvaluators() throws Exception {
-    TestPipeline p = TestPipeline.create();
+    Pipeline p = getPipeline();
     PCollection<Integer> firstVals =
         p.apply(
             "Stream One",
@@ -185,5 +202,12 @@ public class TestStreamEvaluatorFactoryTest {
         Matchers.<WindowedValue<?>>containsInAnyOrder(WindowedValue.valueInGlobalWindow("Two")));
     assertThat(secondResult.getWatermarkHold(), equalTo(BoundedWindow.TIMESTAMP_MIN_VALUE));
   }
+
+  private Pipeline getPipeline() {
+    PipelineOptions options = PipelineOptionsFactory.create();
+    options.setRunner(InProcessPipelineRunner.class);
+    return Pipeline.create(options);
+  }
+
 }
 
