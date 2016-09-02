@@ -477,8 +477,8 @@ public class BigQueryTableRowIterator implements AutoCloseable {
         LOG.error("{}", error, e);
         if (!BackOffUtils.next(sleeper, backOff)) {
           String errorMessage = String.format(
-              "%s. Failing to execute job after %d attempts.", error, MAX_RETRIES + 1);
-          LOG.error(errorMessage);
+              "%s Failing to execute job after %d attempts.", error, MAX_RETRIES + 1);
+          LOG.error("{}", errorMessage, e);
           throw new IOException(errorMessage, e);
         }
       }
