@@ -238,8 +238,8 @@ public class BigQueryTableRowIteratorTest {
       } catch (Exception expected) {
         // Verify message explains cause and reports the query.
         assertThat(expected.getMessage(), containsString("Error"));
-        assertThat(expected.getMessage(), containsString(errorReason));
         assertThat(expected.getMessage(), containsString(query));
+        assertThat(expected.getCause().getMessage(), containsString(errorReason));
       }
     }
 
