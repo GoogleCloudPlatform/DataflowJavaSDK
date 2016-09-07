@@ -246,7 +246,7 @@ public class BigQueryTableRowIteratorTest {
     when(mockTabledataList.execute()).thenReturn(rawDataList(rawRow("Arthur", 42)));
 
     // Run query and verify
-    String query = "SELECT \"Arthur\" as name, 42 as count from table";
+    String query = "SELECT \"Arthur\" as name, 42 as count";
     try (BigQueryTableRowIterator iterator =
         BigQueryTableRowIterator.fromQuery(query, "project", mockClient, null)) {
       iterator.open();
