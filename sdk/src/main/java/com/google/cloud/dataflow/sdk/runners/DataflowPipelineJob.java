@@ -273,6 +273,7 @@ public class DataflowPipelineJob implements PipelineResult {
           if (remaining.isLongerThan(Duration.ZERO)) {
             backoff = MESSAGES_BACKOFF_FACTORY.withMaxCumulativeBackoff(remaining).backoff();
           } else {
+            // If there is no time remaining, don't bother backing off.
             backoff = BackOff.STOP_BACKOFF;
           }
         }
