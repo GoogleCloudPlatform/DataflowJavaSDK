@@ -181,7 +181,8 @@ public class BigQueryIOTest implements Serializable {
 
     @Override
     public BigQueryJsonReader getReaderFromQuery(
-        BigQueryOptions bqOptions, String query, String projectId, @Nullable Boolean flatten) {
+        BigQueryOptions bqOptions, String query, String projectId, @Nullable Boolean flatten,
+        @Nullable Boolean useLegacySql) {
       return new FakeBigQueryReader(jsonTableRowReturns);
     }
 
@@ -575,6 +576,25 @@ public class BigQueryIOTest implements Serializable {
   }
 
   @Test
+  @Category(RunnableOnService.class)
+  public void testBuildSourceWithTableAndSqlDialect() {
+    BigQueryOptions bqOptions = PipelineOptionsFactory.as(BigQueryOptions.class);
+    bqOptions.setProject("defaultProject");
+    bqOptions.setTempLocation("gs://testbucket/testdir");
+
+    Pipeline p = TestPipeline.create(bqOptions);
+    thrown.expect(IllegalStateException.class);
+    thrown.expectMessage(
+        "Invalid BigQuery read operation. Specifies a"
+              + " table with a SQL dialect preference, which is not configurable");
+    p.apply(
+        BigQueryIO.Read.named("ReadMyTable")
+            .from("foo.com:project:somedataset.sometable")
+            .usingStandardSql());
+    p.run();
+  }
+
+  @Test
   public void testReadFromTable() throws IOException {
     BigQueryOptions bqOptions = PipelineOptionsFactory.as(BigQueryOptions.class);
     bqOptions.setProject("defaultProject");
@@ -683,6 +703,7 @@ public class BigQueryIOTest implements Serializable {
         .from(tableSpec)
         .fromQuery("myQuery")
         .withoutResultFlattening()
+        .usingStandardSql()
         .withoutValidation();
 
     DisplayData displayData = DisplayData.from(read);
@@ -690,6 +711,7 @@ public class BigQueryIOTest implements Serializable {
     assertThat(displayData, hasDisplayItem("table", tableSpec));
     assertThat(displayData, hasDisplayItem("query", "myQuery"));
     assertThat(displayData, hasDisplayItem("flattenResults", false));
+    assertThat(displayData, hasDisplayItem("usingStandardSql", true));
     assertThat(displayData, hasDisplayItem("validation", false));
   }
 
@@ -1138,7 +1160,7 @@ public class BigQueryIOTest implements Serializable {
     String extractDestinationDir = "mock://tempLocation";
     TableReference destinationTable = BigQueryIO.parseTableSpec("project:data_set.table_name");
     BoundedSource<TableRow> bqSource = BigQueryQuerySource.create(
-        jobIdToken, "query", destinationTable, true /* flattenResults */,
+        jobIdToken, "query", destinationTable, true /* flattenResults */, true /* useLegacySql */,
         extractDestinationDir, fakeBqServices);
 
     List<TableRow> expected = ImmutableList.of(
