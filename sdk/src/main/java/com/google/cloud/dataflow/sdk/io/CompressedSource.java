@@ -250,11 +250,11 @@ public class CompressedSource<T> extends FileBasedSource<T> {
       DecompressingChannelFactory channelFactory, String filePatternOrSpec, long minBundleSize,
       long startOffset, long endOffset) {
     super(filePatternOrSpec, minBundleSize, startOffset, endOffset);
-    Preconditions.checkArgument(
-        startOffset == 0,
-        "CompressedSources must start reading at offset 0. Requested offset: " + startOffset);
     this.sourceDelegate = sourceDelegate;
     this.channelFactory = channelFactory;
+    Preconditions.checkArgument(
+        isSplittable() || startOffset == 0,
+        "CompressedSources must start reading at offset 0. Requested offset: " + startOffset);
   }
 
   /**
@@ -275,7 +275,7 @@ public class CompressedSource<T> extends FileBasedSource<T> {
   @Override
   protected FileBasedSource<T> createForSubrangeOfFile(String fileName, long start, long end) {
     return new CompressedSource<>(sourceDelegate.createForSubrangeOfFile(fileName, start, end),
-        channelFactory, fileName, Long.MAX_VALUE, start, end);
+        channelFactory, fileName, sourceDelegate.getMinBundleSize(), start, end);
   }
 
   /**
@@ -284,7 +284,7 @@ public class CompressedSource<T> extends FileBasedSource<T> {
    * from the requested file name that the file is not compressed.
    */
   @Override
-  protected final boolean isSplittable() throws Exception {
+  protected final boolean isSplittable() {
     if (channelFactory instanceof FileNameBasedDecompressingChannelFactory) {
       FileNameBasedDecompressingChannelFactory fileNameBasedChannelFactory =
           (FileNameBasedDecompressingChannelFactory) channelFactory;
