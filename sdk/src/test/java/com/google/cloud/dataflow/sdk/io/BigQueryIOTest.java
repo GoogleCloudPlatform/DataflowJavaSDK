@@ -532,7 +532,7 @@ public class BigQueryIOTest implements Serializable {
     Pipeline p = TestPipeline.create(bqOptions);
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(
-        "Invalid BigQuery read operation, either table reference or query has to be set");
+        "Invalid BigQueryIO.Read: one of table reference and query must be set");
     p.apply(BigQueryIO.Read.named("ReadMyTable"));
     p.run();
   }
@@ -547,8 +547,7 @@ public class BigQueryIOTest implements Serializable {
     Pipeline p = TestPipeline.create(bqOptions);
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(
-        "Invalid BigQuery read operation. Specifies both a query and a table, only one of these"
-        + " should be provided");
+        "Invalid BigQueryIO.Read: table reference and query may not both be set");
     p.apply(
         BigQueryIO.Read.named("ReadMyTable")
             .from("foo.com:project:somedataset.sometable")
@@ -566,8 +565,8 @@ public class BigQueryIOTest implements Serializable {
     Pipeline p = TestPipeline.create(bqOptions);
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(
-        "Invalid BigQuery read operation. Specifies a"
-              + " table with a result flattening preference, which is not configurable");
+        "Invalid BigQueryIO.Read: Specifies a table with a result flattening preference,"
+            + " which only applies to queries");
     p.apply(
         BigQueryIO.Read.named("ReadMyTable")
             .from("foo.com:project:somedataset.sometable")
@@ -585,8 +584,8 @@ public class BigQueryIOTest implements Serializable {
     Pipeline p = TestPipeline.create(bqOptions);
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(
-        "Invalid BigQuery read operation. Specifies a"
-              + " table with a SQL dialect preference, which is not configurable");
+        "Invalid BigQueryIO.Read: Specifies a table with a SQL dialect preference,"
+            + " which only applies to queries");
     p.apply(
         BigQueryIO.Read.named("ReadMyTable")
             .from("foo.com:project:somedataset.sometable")

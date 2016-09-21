@@ -520,69 +520,68 @@ public class BigQueryIO {
 
       @Override
       public void validate(PInput input) {
-        if (validate) {
-          BigQueryOptions bqOptions = input.getPipeline().getOptions().as(BigQueryOptions.class);
+        if (!validate) {
+          // Note that a table or query check can fail if the table or dataset are created by
+          // earlier stages of the pipeline or if a query depends on earlier stages of a pipeline.
+          // For these cases the withoutValidation method can be used to disable the check.
+          return;
+        }
 
-          String tempLocation = bqOptions.getTempLocation();
-          checkArgument(
-              !Strings.isNullOrEmpty(tempLocation),
-              "BigQueryIO.Read needs a GCS temp location to store temp files.");
-          if (testBigQueryServices == null) {
-            try {
-              GcsPath.fromUri(tempLocation);
-            } catch (IllegalArgumentException e) {
-              throw new IllegalArgumentException(
-                  String.format(
-                      "BigQuery temp location expected a valid 'gs://' path, but was given '%s'",
-                      tempLocation),
-                  e);
-            }
-          }
+        BigQueryOptions bqOptions = input.getPipeline().getOptions().as(BigQueryOptions.class);
 
-          TableReference table = getTableWithDefaultProject(bqOptions);
-          if (table == null && query == null) {
-            throw new IllegalStateException(
-                "Invalid BigQuery read operation, either table reference or query has to be set");
-          } else if (table != null && query != null) {
-            throw new IllegalStateException("Invalid BigQuery read operation. Specifies both a"
-                + " query and a table, only one of these should be provided");
-          } else if (table != null && flattenResults != null) {
-            throw new IllegalStateException("Invalid BigQuery read operation. Specifies a"
-                + " table with a result flattening preference, which is not configurable");
-          } else if (query != null && flattenResults == null) {
-            throw new IllegalStateException("Invalid BigQuery read operation. Specifies a"
-                + " query without a result flattening preference");
-          } else if (table != null && useLegacySql != null) {
-            throw new IllegalStateException("Invalid BigQuery read operation. Specifies a"
-                + " table with a SQL dialect preference, which is not configurable");
-          } else if (query != null && useLegacySql == null) {
-            throw new IllegalStateException("Invalid BigQuery read operation. Specifies a"
-                + " query without a SQL dialect preference");
+        String tempLocation = bqOptions.getTempLocation();
+        checkArgument(
+            !Strings.isNullOrEmpty(tempLocation),
+            "BigQueryIO.Read needs a GCS temp location to store temp files.");
+        if (testBigQueryServices == null) {
+          try {
+            GcsPath.fromUri(tempLocation);
+          } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "BigQuery temp location expected a valid 'gs://' path, but was given '%s'",
+                    tempLocation),
+                e);
           }
+        }
 
-          // Check for source table/query presence for early failure notification.
-          // Note that a presence check can fail if the table or dataset are created by earlier
-          // stages of the pipeline or if a query depends on earlier stages of a pipeline. For these
-          // cases the withoutValidation method can be used to disable the check.
-          if (table != null) {
-            verifyDatasetPresence(bqOptions, table);
-            verifyTablePresence(bqOptions, table);
-          }
-          if (query != null) {
-            dryRunQuery(bqOptions, query, useLegacySql);
-          }
+        TableReference table = getTableWithDefaultProject(bqOptions);
+
+        checkState(
+            table == null || query == null,
+            "Invalid BigQueryIO.Read: table reference and query may not both be set");
+        checkState(
+            table != null || query != null,
+            "Invalid BigQueryIO.Read: one of table reference and query must be set");
+
+        if (table != null) {
+          checkState(
+              flattenResults == null,
+              "Invalid BigQueryIO.Read: Specifies a table with a result flattening"
+                  + " preference, which only applies to queries");
+          checkState(
+              useLegacySql == null,
+              "Invalid BigQueryIO.Read: Specifies a table with a SQL dialect"
+                  + " preference, which only applies to queries");
+
+          // Check for source table presence for early failure notification.
+
+          verifyDatasetPresence(bqOptions, table);
+          verifyTablePresence(bqOptions, table);
+        } else /* query != null */ {
+          checkState(flattenResults != null, "flattenResults should not be null if query is set");
+          checkState(useLegacySql != null, "useLegacySql should not be null if query is set");
+          dryRunQuery(bqOptions, query, useLegacySql);
         }
       }
 
       private static void dryRunQuery(
-          BigQueryOptions options, String query, @Nullable Boolean useLegacySql) {
+          BigQueryOptions options, String query, boolean useLegacySql) {
         Bigquery client = Transport.newBigQueryClient(options).build();
         QueryRequest request = new QueryRequest();
         request.setQuery(query);
         request.setDryRun(true);
-        if (useLegacySql != null) {
-          request.setUseLegacySql(useLegacySql);
-        }
+        request.setUseLegacySql(useLegacySql);
 
         String queryValidationErrorMsg = String.format(QUERY_VALIDATION_FAILURE_ERROR, query);
         try {
