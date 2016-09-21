@@ -433,7 +433,8 @@ public class BigQueryIO {
        */
       public Bound named(String name) {
         return new Bound(
-            name, query, jsonTableRef, validate, flattenResults, useLegacySql, testBigQueryServices);
+            name, query, jsonTableRef, validate, flattenResults, useLegacySql,
+            testBigQueryServices);
       }
 
       /**
