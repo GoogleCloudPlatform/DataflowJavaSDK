@@ -482,7 +482,8 @@ public class BigQueryIO {
        */
       public Bound withoutValidation() {
         return new Bound(
-            name, query, jsonTableRef, false, flattenResults, useLegacySql, testBigQueryServices);
+            name, query, jsonTableRef, false /* validate */, flattenResults, useLegacySql,
+            testBigQueryServices);
       }
 
       /**
@@ -494,7 +495,8 @@ public class BigQueryIO {
        */
       public Bound withoutResultFlattening() {
         return new Bound(
-            name, query, jsonTableRef, validate, false, useLegacySql, testBigQueryServices);
+            name, query, jsonTableRef, validate, false /* flattenResults */, useLegacySql,
+            testBigQueryServices);
       }
 
       /**
@@ -505,7 +507,8 @@ public class BigQueryIO {
        */
       public Bound usingStandardSql() {
         return new Bound(
-            name, query, jsonTableRef, validate, flattenResults, false, testBigQueryServices);
+            name, query, jsonTableRef, validate, flattenResults, false /* useLegacySql */,
+            testBigQueryServices);
       }
 
       @VisibleForTesting
