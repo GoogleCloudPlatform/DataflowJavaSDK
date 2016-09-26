@@ -128,7 +128,7 @@ public class BigQueryTableRowIterator implements AutoCloseable {
   @Deprecated
   public static BigQueryTableRowIterator fromQuery(
       String query, String projectId, Bigquery client, @Nullable Boolean flattenResults) {
-    return fromQuery(query, projectId, client, flattenResults, Boolean.TRUE);
+    return fromQuery(query, projectId, client, flattenResults, null /* useLegacySql */);
   }
 
   /**
