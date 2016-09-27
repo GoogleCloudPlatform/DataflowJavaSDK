@@ -177,7 +177,8 @@ public class BigQueryTableInserter {
         Sleeper.DEFAULT);
   }
 
-  public void insertAll(TableReference ref, List<TableRow> rowList,
+  @VisibleForTesting
+  void insertAll(TableReference ref, List<TableRow> rowList,
       @Nullable List<String> insertIdList, Aggregator<Long, Long> byteCountAggregator,
       BackOff backoff, final Sleeper sleeper) throws IOException {
     checkNotNull(ref, "ref");
