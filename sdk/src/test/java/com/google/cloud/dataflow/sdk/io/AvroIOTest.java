@@ -17,6 +17,8 @@
 package com.google.cloud.dataflow.sdk.io;
 
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
+import static org.apache.avro.file.DataFileConstants.NULL_CODEC;
+import static org.apache.avro.file.DataFileConstants.SNAPPY_CODEC;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.Assert.assertEquals;
@@ -35,13 +37,17 @@ import com.google.cloud.dataflow.sdk.transforms.display.DataflowDisplayDataEvalu
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayDataEvaluator;
 import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
+import com.google.cloud.dataflow.sdk.util.SerializableUtils;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
 
 import org.apache.avro.Schema;
+import org.apache.avro.file.CodecFactory;
 import org.apache.avro.file.DataFileReader;
+import org.apache.avro.file.DataFileStream;
+import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.reflect.Nullable;
 import org.junit.Rule;
@@ -51,6 +57,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -140,6 +147,62 @@ public class AvroIOTest {
     p.run();
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testAvroIOCompressedWriteAndReadASingleFile() throws Throwable {
+    DirectPipeline p = DirectPipeline.createForTest();
+    List<GenericClass> values = ImmutableList.of(new GenericClass(3, "hi"),
+        new GenericClass(5, "bar"));
+    File outputFile = tmpFolder.newFile("output.avro");
+
+    p.apply(Create.of(values))
+        .apply(AvroIO.Write.to(outputFile.getAbsolutePath())
+            .withoutSharding()
+            .withCodec(CodecFactory.deflateCodec(9))
+            .withSchema(GenericClass.class));
+    p.run();
+
+    p = DirectPipeline.createForTest();
+    PCollection<GenericClass> input = p
+        .apply(AvroIO.Read
+            .from(outputFile.getAbsolutePath())
+            .withSchema(GenericClass.class));
+
+    DataflowAssert.that(input).containsInAnyOrder(values);
+    p.run();
+    DataFileStream dataFileStream = new DataFileStream(new FileInputStream(outputFile),
+        new GenericDatumReader());
+    assertTrue(dataFileStream.getMetaString("avro.codec").equals("deflate"));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testAvroIONullCodecWriteAndReadASingleFile() throws Throwable {
+    DirectPipeline p = DirectPipeline.createForTest();
+    List<GenericClass> values = ImmutableList.of(new GenericClass(3, "hi"),
+        new GenericClass(5, "bar"));
+    File outputFile = tmpFolder.newFile("output.avro");
+
+    p.apply(Create.of(values))
+        .apply(AvroIO.Write.to(outputFile.getAbsolutePath())
+            .withoutSharding()
+            .withSchema(GenericClass.class)
+            .withCodec(CodecFactory.nullCodec()));
+    p.run();
+
+    p = DirectPipeline.createForTest();
+    PCollection<GenericClass> input = p
+        .apply(AvroIO.Read
+            .from(outputFile.getAbsolutePath())
+            .withSchema(GenericClass.class));
+
+    DataflowAssert.that(input).containsInAnyOrder(values);
+    p.run();
+    DataFileStream dataFileStream = new DataFileStream(new FileInputStream(outputFile),
+        new GenericDatumReader());
+    assertTrue(dataFileStream.getMetaString("avro.codec").equals("null"));
+  }
+
   @DefaultCoder(AvroCoder.class)
   static class GenericClassV2 {
     int intField;
@@ -203,6 +266,45 @@ public class AvroIOTest {
 
     DataflowAssert.that(input).containsInAnyOrder(expected);
     p.run();
+  }
+
+  @Test
+  public void testWriteWithDefaultCodec() throws Exception {
+    AvroIO.Write.Bound<GenericRecord> write = AvroIO.Write
+        .to("gs://bucket/foo/baz");
+    assertTrue(write.getCodec().toString().equals(CodecFactory.deflateCodec(6).toString()));
+  }
+
+  @Test
+  public void testWriteWithCustomCodec() throws Exception {
+    AvroIO.Write.Bound<GenericRecord> write = AvroIO.Write
+        .to("gs://bucket/foo/baz")
+        .withCodec(CodecFactory.snappyCodec());
+    assertTrue(write.getCodec().toString().equals(SNAPPY_CODEC));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testWriteWithSerDeCustomDeflateCodec() throws Exception {
+    AvroIO.Write.Bound<GenericRecord> write = AvroIO.Write
+        .to("gs://bucket/foo/baz")
+        .withCodec(CodecFactory.deflateCodec(9));
+
+    AvroIO.Write.Bound<GenericRecord> serdeWrite = SerializableUtils.clone(write);
+
+    assertTrue(serdeWrite.getCodec().toString().equals(CodecFactory.deflateCodec(9).toString()));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testWriteWithSerDeCustomXZCodec() throws Exception {
+    AvroIO.Write.Bound<GenericRecord> write = AvroIO.Write
+        .to("gs://bucket/foo/baz")
+        .withCodec(CodecFactory.xzCodec(9));
+
+    AvroIO.Write.Bound<GenericRecord> serdeWrite = SerializableUtils.clone(write);
+
+    assertTrue(serdeWrite.getCodec().toString().equals(CodecFactory.xzCodec(9).toString()));
   }
 
   @SuppressWarnings("deprecation") // using AvroCoder#createDatumReader for tests.
