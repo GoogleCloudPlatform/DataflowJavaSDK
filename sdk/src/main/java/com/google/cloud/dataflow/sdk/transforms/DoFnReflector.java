@@ -652,7 +652,7 @@ public abstract class DoFnReflector {
 
     @Override
     public void populateDisplayData(DisplayData.Builder builder) {
-      builder.include(fn);
+      builder.delegate(fn);
     }
 
     private void readObject(java.io.ObjectInputStream in)

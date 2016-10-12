@@ -118,7 +118,7 @@ public class DataflowUnboundedReadFromBoundedSource<T> extends PTransform<PInput
     // We explicitly do not register base-class data, instead we use the delegate inner source.
     builder
         .add(DisplayData.item("source", source.getClass()))
-        .include(source);
+        .include("source", source);
   }
 
   /**
@@ -186,13 +186,6 @@ public class DataflowUnboundedReadFromBoundedSource<T> extends PTransform<PInput
     @Override
     public Coder<Checkpoint<T>> getCheckpointMarkCoder() {
       return new CheckpointCoder<>(boundedSource.getDefaultOutputCoder());
-    }
-
-    @Override
-    public void populateDisplayData(DisplayData.Builder builder) {
-      super.populateDisplayData(builder);
-      builder.add(DisplayData.item("source", boundedSource.getClass()));
-      builder.include(boundedSource);
     }
 
     @VisibleForTesting

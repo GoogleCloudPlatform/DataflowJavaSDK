@@ -596,7 +596,7 @@ public class DatastoreV1 {
       }
 
       @Override
-      public void populateDisplayData(Builder builder) {
+      public void populateDisplayData(DisplayData.Builder builder) {
         super.populateDisplayData(builder);
         builder
             .addIfNotNull(DisplayData.item("projectId", options.getProjectId())

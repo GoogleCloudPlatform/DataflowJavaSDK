@@ -752,6 +752,12 @@ public class ProxyInvocationHandlerTest {
     void setObject(Object value);
   }
 
+  /** {@link PipelineOptions} to inject bad object implementations. */
+  public interface ObjectPipelineOptions extends PipelineOptions {
+    Object getValue();
+    void setValue(Object value);
+  }
+
   @Test
   public void testDisplayDataInheritanceNamespace() {
     ExtendsBaseOptions options = PipelineOptionsFactory.as(ExtendsBaseOptions.class);

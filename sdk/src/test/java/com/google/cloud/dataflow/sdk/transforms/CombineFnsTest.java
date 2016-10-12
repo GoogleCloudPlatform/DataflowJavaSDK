@@ -16,7 +16,7 @@
 package com.google.cloud.dataflow.sdk.transforms;
 
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
-import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.includesDisplayDataFrom;
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.includesDisplayDataFor;
 
 import static org.junit.Assert.assertThat;
 
@@ -299,9 +299,8 @@ public class  CombineFnsTest {
     assertThat(displayData, hasDisplayItem("combineFn1", combineFn1.getClass()));
     assertThat(displayData, hasDisplayItem("combineFn2", combineFn2.getClass()));
 
-    String nsBase = DisplayDataCombineFn.class.getName();
-    assertThat(displayData, includesDisplayDataFrom(combineFn1, nsBase + "#1"));
-    assertThat(displayData, includesDisplayDataFrom(combineFn2, nsBase + "#2"));
+    assertThat(displayData, includesDisplayDataFor("combineFn1", combineFn1));
+    assertThat(displayData, includesDisplayDataFor("combineFn2", combineFn2));
   }
 
   private static class DisplayDataCombineFn extends Combine.CombineFn<String, String, String> {
