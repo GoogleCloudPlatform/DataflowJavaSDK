@@ -2524,10 +2524,7 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
 
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
-        super.populateDisplayData(builder);
-        builder
-            .add(DisplayData.item("source", source.getClass()))
-            .include("source", source);
+        builder.delegate(source);
       }
 
       public UnboundedSource<T, ?> getSource() {
