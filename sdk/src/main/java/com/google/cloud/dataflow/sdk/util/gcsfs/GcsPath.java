@@ -263,7 +263,12 @@ public class GcsPath implements Path {
 
   @Override
   public GcsPath getFileName() {
-    throw new UnsupportedOperationException();
+    int nameCount = getNameCount();
+    if (nameCount < 2) {
+      throw new UnsupportedOperationException(
+          "Can't get filename from root path in the bucket: " + this);
+    }
+    return getName(nameCount - 1);
   }
 
   /**
@@ -438,7 +443,11 @@ public class GcsPath implements Path {
 
   @Override
   public Path resolveSibling(String other) {
-    throw new UnsupportedOperationException();
+    if (getNameCount() < 2) {
+      throw new UnsupportedOperationException("Can't resolve the sibling of a root path: " + this);
+    }
+    GcsPath parent = getParent();
+    return (parent == null) ? fromUri(other) : parent.resolve(other);
   }
 
   @Override
