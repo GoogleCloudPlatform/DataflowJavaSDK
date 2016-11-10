@@ -81,6 +81,11 @@ public class GcsIOChannelFactory implements IOChannelFactory {
 
   @Override
   public String resolve(String path, String other) throws IOException {
-    return GcsPath.fromUri(path).resolve(other).toString();
+    return toPath(path).resolve(other).toString();
+  }
+
+  @Override
+  public GcsPath toPath(String path) {
+    return GcsPath.fromUri(path);
   }
 }

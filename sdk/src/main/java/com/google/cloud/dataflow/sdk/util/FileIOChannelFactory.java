@@ -35,8 +35,8 @@ import java.nio.channels.WritableByteChannel;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.nio.file.PathMatcher;
-import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
@@ -56,7 +56,8 @@ public class FileIOChannelFactory implements IOChannelFactory {
 
     File parent = file.getAbsoluteFile().getParentFile();
     if (!parent.exists()) {
-      throw new IOException("Unable to find parent directory of " + spec);
+      throw new FileNotFoundException(
+          "Parent directory " + parent + " of " + spec + " does not exist");
     }
 
     // Method getAbsolutePath() on Windows platform may return something like
@@ -131,6 +132,11 @@ public class FileIOChannelFactory implements IOChannelFactory {
 
   @Override
   public String resolve(String path, String other) throws IOException {
-    return Paths.get(path).resolve(other).toString();
+    return toPath(path).resolve(other).toString();
+  }
+
+  @Override
+  public Path toPath(String path) {
+    return new File(path).toPath();
   }
 }
