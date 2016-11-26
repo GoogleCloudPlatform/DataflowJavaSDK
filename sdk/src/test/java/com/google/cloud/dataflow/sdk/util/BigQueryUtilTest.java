@@ -418,7 +418,7 @@ public class BigQueryUtilTest {
   }
 
   @Test
-  public void testInsertAll() throws Exception, IOException {
+  public void testInsertAllMaxRows() throws Exception {
     // Build up a list of indices to fail on each invocation. This should result in
     // 5 calls to insertAll.
     List<List<Long>> errorsIndices = new ArrayList<>();
@@ -436,6 +436,40 @@ public class BigQueryUtilTest {
     List<String> ids = new ArrayList<>();
     for (int i = 0; i < 25; ++i) {
       rows.add(rawRow("foo", 1234));
+      ids.add(new String());
+    }
+
+    InMemoryLongSumAggregator byteCountAggregator = new InMemoryLongSumAggregator("ByteCount");
+    try {
+      inserter.insertAll(ref, rows, ids, byteCountAggregator);
+    } finally {
+      verifyInsertAll(5);
+      // Each of the 25 rows is 23 bytes: "{f=[{v=foo}, {v=1234}]}"
+      assertEquals("Incorrect byte count", 25L * 23L, byteCountAggregator.getSum());
+    }
+  }
+
+  @Test
+  public void testInsertAllMaxBytes() throws Exception {
+    // Build up a list of indices to fail on each invocation. This should result in
+    // 5 calls to insertAll.
+    List<List<Long>> errorsIndices = new ArrayList<>();
+    errorsIndices.add(Arrays.asList(0L, 5L, 10L, 15L, 20L));
+    errorsIndices.add(Arrays.asList(0L, 2L, 4L));
+    errorsIndices.add(Arrays.asList(0L, 2L));
+    errorsIndices.add(new ArrayList<Long>());
+    onInsertAll(errorsIndices);
+
+    TableReference ref = BigQueryIO
+            .parseTableSpec("project:dataset.table");
+    TableRow rowToInsert = rawRow("foo", 1234);
+    // Each row is 23 bytes: "{f=[{v=foo}, {v=1234}]}", we want 5 of them to go in at a time
+    BigQueryTableInserter inserter = new BigQueryTableInserter(mockClient, 50, 5 * 23);
+
+    List<TableRow> rows = new ArrayList<>();
+    List<String> ids = new ArrayList<>();
+    for (int i = 0; i < 25; ++i) {
+      rows.add(rowToInsert);
       ids.add(new String());
     }
 

@@ -63,7 +63,7 @@ public class BigQueryTableInserter {
   private static final Logger LOG = LoggerFactory.getLogger(BigQueryTableInserter.class);
 
   // Approximate amount of table data to upload per InsertAll request.
-  private static final long UPLOAD_BATCH_SIZE_BYTES = 64 * 1024;
+  private static final long DEFAULT_BATCH_SIZE_BYTES = 64 * 1024;
 
   // The maximum number of rows to upload per InsertAll request.
   private static final long MAX_ROWS_PER_BATCH = 500;
@@ -79,6 +79,7 @@ public class BigQueryTableInserter {
   private final Bigquery client;
   private final TableReference defaultRef;
   private final long maxRowsPerBatch;
+  private final long maxBatchSizeBytes;
 
   private static final ExecutorService executor;
   static {
@@ -96,6 +97,7 @@ public class BigQueryTableInserter {
     this.client = client;
     this.defaultRef = null;
     this.maxRowsPerBatch = MAX_ROWS_PER_BATCH;
+    this.maxBatchSizeBytes = DEFAULT_BATCH_SIZE_BYTES;
   }
 
   /**
@@ -110,17 +112,34 @@ public class BigQueryTableInserter {
     this.client = client;
     this.defaultRef = defaultRef;
     this.maxRowsPerBatch = MAX_ROWS_PER_BATCH;
+    this.maxBatchSizeBytes = DEFAULT_BATCH_SIZE_BYTES;
   }
 
   /**
    * Constructs a new row inserter.
    *
    * @param client a BigQuery client
+   * @param maxRowsPerBatch maximum number of rows to insert in a batch
    */
   public BigQueryTableInserter(Bigquery client, int maxRowsPerBatch) {
     this.client = client;
     this.defaultRef = null;
     this.maxRowsPerBatch = maxRowsPerBatch;
+    this.maxBatchSizeBytes = DEFAULT_BATCH_SIZE_BYTES;
+  }
+
+  /**
+   * Constructs a new row inserter.
+   *
+   * @param client a BigQuery client
+   * @param maxRowsPerBatch maximum number of rows to insert in a batch
+   * @param maxBatchSizeBytes maximum batch size in bytes
+   */
+  public BigQueryTableInserter(Bigquery client, int maxRowsPerBatch, int maxBatchSizeBytes) {
+    this.client = client;
+    this.defaultRef = null;
+    this.maxRowsPerBatch = maxRowsPerBatch;
+    this.maxBatchSizeBytes = maxBatchSizeBytes;
   }
 
   /**
@@ -128,13 +147,14 @@ public class BigQueryTableInserter {
    *
    * @param client a BigQuery client
    * @param defaultRef identifies the default table to insert into
-   * @deprecated replaced by {@link #BigQueryTableInserter(Bigquery, int)}
+   * @deprecated replaced by {@link #BigQueryTableInserter(Bigquery, int, int)}
    */
   @Deprecated
   public BigQueryTableInserter(Bigquery client, TableReference defaultRef, int maxRowsPerBatch) {
     this.client = client;
     this.defaultRef = defaultRef;
     this.maxRowsPerBatch = maxRowsPerBatch;
+    this.maxBatchSizeBytes = DEFAULT_BATCH_SIZE_BYTES;
   }
 
   /**
@@ -214,7 +234,7 @@ public class BigQueryTableInserter {
         rows.add(out);
 
         dataSize += row.toString().length();
-        if (dataSize >= UPLOAD_BATCH_SIZE_BYTES || rows.size() >= maxRowsPerBatch
+        if (dataSize >= maxBatchSizeBytes || rows.size() >= maxRowsPerBatch
             || i == rowsToPublish.size() - 1) {
           TableDataInsertAllRequest content = new TableDataInsertAllRequest();
           content.setRows(rows);
