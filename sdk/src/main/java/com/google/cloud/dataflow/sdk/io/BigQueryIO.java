@@ -2106,11 +2106,6 @@ public class BigQueryIO {
           c.sideOutput(multiPartitionsTag, KV.of(++partitionId, currResults));
         }
       }
-
-      @Override
-      public void populateDisplayData(DisplayData.Builder builder) {
-        super.populateDisplayData(builder);
-      }
     }
 
     /**

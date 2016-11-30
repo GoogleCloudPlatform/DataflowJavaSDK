@@ -18,9 +18,10 @@ package com.google.cloud.dataflow.sdk.transforms.display;
 
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasNamespace;
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasPath;
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasType;
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasValue;
-import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.includesDisplayDataFrom;
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.includesDisplayDataFor;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -96,6 +97,32 @@ public class DisplayDataMatchersTest {
   }
 
   @Test
+  public void testHasPath() {
+    Matcher<DisplayData> matcher = hasDisplayItem(hasPath("a", "b"));
+
+    final HasDisplayData subComponent = new HasDisplayData() {
+      @Override
+      public void populateDisplayData(Builder builder) {
+        builder.include("b", new HasDisplayData() {
+          @Override
+          public void populateDisplayData(Builder builder) {
+            builder.add(DisplayData.item("foo", "bar"));
+          }
+        });
+      }
+    };
+
+    assertFalse(matcher.matches(DisplayData.from(subComponent)));
+
+    assertThat(DisplayData.from(new HasDisplayData() {
+      @Override
+      public void populateDisplayData(Builder builder) {
+        builder.include("a", subComponent);
+      }
+    }), matcher);
+  }
+
+  @Test
   public void testHasNamespace() {
     Matcher<DisplayData> matcher = hasDisplayItem(hasNamespace(SampleTransform.class));
 
@@ -115,24 +142,46 @@ public class DisplayDataMatchersTest {
     HasDisplayData hasSubcomponent = new HasDisplayData() {
       @Override
       public void populateDisplayData(Builder builder) {
-        builder
-          .include(subComponent)
-          .add(DisplayData.item("foo2", "bar2"));
+        builder.include("p", subComponent);
       }
     };
-    HasDisplayData sameKeyDifferentNamespace = new HasDisplayData() {
+
+    HasDisplayData wrongPath = new HasDisplayData() {
+      @Override
+      public void populateDisplayData(Builder builder) {
+        builder.include("q", subComponent);
+      }
+    };
+
+    HasDisplayData deeplyNested = new HasDisplayData() {
+      @Override
+      public void populateDisplayData(Builder builder) {
+        builder.include("p", new HasDisplayData() {
+          @Override
+          public void populateDisplayData(Builder builder) {
+            builder.include("p", subComponent);
+          }
+        });
+      }
+    };
+
+    HasDisplayData sameDisplayItemDifferentComponent = new HasDisplayData() {
       @Override
       public void populateDisplayData(Builder builder) {
         builder.add(DisplayData.item("foo", "bar"));
       }
     };
-    Matcher<DisplayData> matcher = includesDisplayDataFrom(subComponent);
 
-    assertFalse(matcher.matches(DisplayData.from(sameKeyDifferentNamespace)));
+    Matcher<DisplayData> matcher = includesDisplayDataFor("p", subComponent);
+
+    assertFalse("should not match sub-component at different path",
+        matcher.matches(DisplayData.from(wrongPath)));
+    assertFalse("should not match deeply nested sub-component",
+        matcher.matches(DisplayData.from(deeplyNested)));
+    assertFalse("should not match identical display data from different component",
+        matcher.matches(DisplayData.from(sameDisplayItemDifferentComponent)));
     assertThat(DisplayData.from(hasSubcomponent), matcher);
-    assertThat(DisplayData.from(subComponent), matcher);
   }
-
 
   private DisplayData createDisplayDataWithItem(final String key, final String value) {
     return DisplayData.from(new SampleTransform(key, value));

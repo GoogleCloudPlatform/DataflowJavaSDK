@@ -223,7 +223,7 @@ public class InProcessPipelineRunnerTest implements Serializable {
 
     p.apply(Create.of(1, 2, 3));
 
-    thrown.expectMessage(PipelineOptions.class.getName());
+    thrown.expectMessage("PipelineOptionsDisplayData");
     thrown.expectCause(ThrowableMessageMatcher.hasMessage(is("oh noes!!")));
     p.run();
   }

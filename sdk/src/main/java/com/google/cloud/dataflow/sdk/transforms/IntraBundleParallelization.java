@@ -181,7 +181,7 @@ public class IntraBundleParallelization {
             .withLabel("Maximum Parallelism"))
           .add(DisplayData.item("fn", doFn.getClass())
             .withLabel("Function"))
-          .include(doFn);
+          .include("fn", doFn);
     }
   }
 

@@ -111,7 +111,7 @@ extends PTransform<PCollection<InputT>, PCollection<OutputT>> {
 
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
-        MapElements.this.populateDisplayData(builder);
+        builder.delegate(MapElements.this);
       }
     })).setTypeDescriptorInternal(outputType);
   }
@@ -120,6 +120,6 @@ extends PTransform<PCollection<InputT>, PCollection<OutputT>> {
   public void populateDisplayData(DisplayData.Builder builder) {
     super.populateDisplayData(builder);
     builder.add(DisplayData.item("mapFn", fn.getClass())
-      .withLabel("Map Function"));
+        .withLabel("Map Function"));
   }
 }

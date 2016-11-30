@@ -17,7 +17,7 @@
 package com.google.cloud.dataflow.sdk.io;
 
 import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.hasDisplayItem;
-import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.includesDisplayDataFrom;
+import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatchers.includesDisplayDataFor;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
@@ -98,11 +98,11 @@ public class ReadTest implements Serializable{
 
     DisplayData boundedDisplayData = DisplayData.from(bounded);
     assertThat(boundedDisplayData, hasDisplayItem("source", boundedSource.getClass()));
-    assertThat(boundedDisplayData, includesDisplayDataFrom(boundedSource));
+    assertThat(boundedDisplayData, includesDisplayDataFor("source", boundedSource));
 
     DisplayData unboundedDisplayData = DisplayData.from(unbounded);
     assertThat(unboundedDisplayData, hasDisplayItem("source", unboundedSource.getClass()));
-    assertThat(unboundedDisplayData, includesDisplayDataFrom(unboundedSource));
+    assertThat(unboundedDisplayData, includesDisplayDataFor("source", unboundedSource));
     assertThat(unboundedDisplayData, hasDisplayItem("maxRecords", 1234));
     assertThat(unboundedDisplayData, hasDisplayItem("maxReadTime", maxReadTime));
   }
@@ -144,12 +144,12 @@ public class ReadTest implements Serializable{
     Set<DisplayData> boundedDisplayData = evaluator
         .displayDataForPrimitiveSourceTransforms(bounded);
     assertThat(boundedDisplayData, hasItem(hasDisplayItem("source", boundedSource.getClass())));
-    assertThat(boundedDisplayData, hasItem(includesDisplayDataFrom(boundedSource)));
+    assertThat(boundedDisplayData, hasItem(includesDisplayDataFor("source", boundedSource)));
 
     Set<DisplayData> unboundedDisplayData = evaluator
         .displayDataForPrimitiveSourceTransforms(unbounded);
     assertThat(unboundedDisplayData, hasItem(hasDisplayItem("source")));
-    assertThat(unboundedDisplayData, hasItem(includesDisplayDataFrom(unboundedSource)));
+    assertThat(unboundedDisplayData, hasItem(includesDisplayDataFor("source", unboundedSource)));
   }
 
   private abstract static class CustomBoundedSource extends BoundedSource<String> {

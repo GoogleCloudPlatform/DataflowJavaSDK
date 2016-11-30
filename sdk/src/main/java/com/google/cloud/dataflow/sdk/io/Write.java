@@ -117,7 +117,7 @@ public class Write {
       super.populateDisplayData(builder);
       builder
           .add(DisplayData.item("sink", sink.getClass()).withLabel("Write Sink"))
-          .include(sink)
+          .include("sink", sink)
           .addIfNotDefault(
               DisplayData.item("numShards", getNumShards()).withLabel("Fixed Number of Shards"),
               0);
@@ -208,7 +208,7 @@ public class Write {
 
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
-        Write.Bound.this.populateDisplayData(builder);
+        builder.delegate(Write.Bound.this);
       }
     }
 
@@ -260,7 +260,7 @@ public class Write {
 
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
-        Write.Bound.this.populateDisplayData(builder);
+        builder.delegate(Write.Bound.this);
       }
     }
 
