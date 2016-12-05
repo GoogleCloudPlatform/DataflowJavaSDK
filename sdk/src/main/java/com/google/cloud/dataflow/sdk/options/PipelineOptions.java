@@ -33,10 +33,8 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.lang.reflect.Proxy;
-
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicLong;
-
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
