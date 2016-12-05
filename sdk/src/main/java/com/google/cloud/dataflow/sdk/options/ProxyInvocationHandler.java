@@ -21,6 +21,8 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory.JsonIgnorePredicate;
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory.Registration;
+import com.google.cloud.dataflow.sdk.options.ValueProvider.RuntimeValueProvider;
+import com.google.cloud.dataflow.sdk.options.ValueProvider.StaticValueProvider;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.display.HasDisplayData;
 import com.google.cloud.dataflow.sdk.util.InstanceBuilder;
@@ -241,7 +243,7 @@ class ProxyInvocationHandler implements InvocationHandler, HasDisplayData {
    */
   synchronized <T extends PipelineOptions> T as(Class<T> iface) {
     checkNotNull(iface);
-    checkArgument(iface.isInterface());
+    checkArgument(iface.isInterface(), "Not an interface: %s", iface);
     if (!interfaceToProxyCache.containsKey(iface)) {
       Registration<T> registration =
           PipelineOptionsFactory.validateWellFormed(iface, knownInterfaces);
@@ -495,6 +497,43 @@ class ProxyInvocationHandler implements InvocationHandler, HasDisplayData {
   }
 
   /**
+   * Helper method to return standard Default cases.
+   */
+  @Nullable
+  private Object returnDefaultHelper(
+      Annotation annotation, PipelineOptions proxy, Method method) {
+    if (annotation instanceof Default.Class) {
+      return ((Default.Class) annotation).value();
+    } else if (annotation instanceof Default.String) {
+      return ((Default.String) annotation).value();
+    } else if (annotation instanceof Default.Boolean) {
+      return ((Default.Boolean) annotation).value();
+    } else if (annotation instanceof Default.Character) {
+      return ((Default.Character) annotation).value();
+    } else if (annotation instanceof Default.Byte) {
+      return ((Default.Byte) annotation).value();
+    } else if (annotation instanceof Default.Short) {
+      return ((Default.Short) annotation).value();
+    } else if (annotation instanceof Default.Integer) {
+      return ((Default.Integer) annotation).value();
+    } else if (annotation instanceof Default.Long) {
+      return ((Default.Long) annotation).value();
+    } else if (annotation instanceof Default.Float) {
+      return ((Default.Float) annotation).value();
+    } else if (annotation instanceof Default.Double) {
+      return ((Default.Double) annotation).value();
+    } else if (annotation instanceof Default.Enum) {
+      return Enum.valueOf((Class<Enum>) method.getReturnType(),
+          ((Default.Enum) annotation).value());
+    } else if (annotation instanceof Default.InstanceFactory) {
+      return InstanceBuilder.ofType(((Default.InstanceFactory) annotation).value())
+          .build()
+          .create(proxy);
+    }
+    return null;
+  }
+
+  /**
    * Returns a default value for the method based upon {@code @Default} metadata on the getter
    * to return values. If there is no {@code @Default} annotation on the getter, then a <a
    * href="https://docs.oracle.com/javase/tutorial/java/nutsandbolts/datatypes.html">default</a> as
@@ -507,35 +546,36 @@ class ProxyInvocationHandler implements InvocationHandler, HasDisplayData {
    */
   @SuppressWarnings({"unchecked", "rawtypes"})
   private Object getDefault(PipelineOptions proxy, Method method) {
+    if (method.getReturnType().equals(RuntimeValueProvider.class)) {
+      throw new RuntimeException(String.format(
+          "Method %s should not have return type "
+          + "RuntimeValueProvider, use ValueProvider instead.", method.getName()));
+    }
+    if (method.getReturnType().equals(StaticValueProvider.class)) {
+      throw new RuntimeException(String.format(
+          "Method %s should not have return type "
+          + "StaticValueProvider, use ValueProvider instead.", method.getName()));
+    }
+    @Nullable Object defaultObject = null;
     for (Annotation annotation : method.getAnnotations()) {
-      if (annotation instanceof Default.Class) {
-        return ((Default.Class) annotation).value();
-      } else if (annotation instanceof Default.String) {
-        return ((Default.String) annotation).value();
-      } else if (annotation instanceof Default.Boolean) {
-        return ((Default.Boolean) annotation).value();
-      } else if (annotation instanceof Default.Character) {
-        return ((Default.Character) annotation).value();
-      } else if (annotation instanceof Default.Byte) {
-        return ((Default.Byte) annotation).value();
-      } else if (annotation instanceof Default.Short) {
-        return ((Default.Short) annotation).value();
-      } else if (annotation instanceof Default.Integer) {
-        return ((Default.Integer) annotation).value();
-      } else if (annotation instanceof Default.Long) {
-        return ((Default.Long) annotation).value();
-      } else if (annotation instanceof Default.Float) {
-        return ((Default.Float) annotation).value();
-      } else if (annotation instanceof Default.Double) {
-        return ((Default.Double) annotation).value();
-      } else if (annotation instanceof Default.Enum) {
-        return Enum.valueOf((Class<Enum>) method.getReturnType(),
-            ((Default.Enum) annotation).value());
-      } else if (annotation instanceof Default.InstanceFactory) {
-        return InstanceBuilder.ofType(((Default.InstanceFactory) annotation).value())
-            .build()
-            .create(proxy);
+      defaultObject = returnDefaultHelper(annotation, proxy, method);
+      if (defaultObject != null) {
+        break;
       }
+    }
+    if (method.getReturnType().equals(ValueProvider.class)) {
+      String propertyName = gettersToPropertyNames.get(method.getName());
+      return defaultObject == null
+          ? new RuntimeValueProvider(
+              method.getName(), propertyName,
+              (Class<? extends PipelineOptions>) method.getDeclaringClass(),
+              proxy.getOptionsId())
+          : new RuntimeValueProvider(
+                method.getName(), propertyName,
+                (Class<? extends PipelineOptions>) method.getDeclaringClass(),
+                defaultObject, proxy.getOptionsId());
+    } else if (defaultObject != null) {
+      return defaultObject;
     }
 
     /*
@@ -695,7 +735,8 @@ class ProxyInvocationHandler implements InvocationHandler, HasDisplayData {
       }
       PipelineOptions options =
           new ProxyInvocationHandler(Maps.<String, BoundValue>newHashMap(), fields)
-              .as(PipelineOptions.class);
+          .as(PipelineOptions.class);
+      ValueProvider.RuntimeValueProvider.setRuntimeOptions(options);
       return options;
     }
   }
