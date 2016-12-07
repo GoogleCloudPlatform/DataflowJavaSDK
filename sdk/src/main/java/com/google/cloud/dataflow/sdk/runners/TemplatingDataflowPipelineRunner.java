@@ -69,8 +69,8 @@ public class TemplatingDataflowPipelineRunner extends PipelineRunner<DataflowPip
   public static TemplatingDataflowPipelineRunner fromOptions(PipelineOptions options) {
     DataflowPipelineDebugOptions dataflowOptions =
         PipelineOptionsValidator.validate(DataflowPipelineDebugOptions.class, options);
-    List<String> experiments = null;
-    if (dataflowOptions.getExperiments() == null) {
+    List<String> experiments = dataflowOptions.getExperiments();
+    if (experiments == null) {
       experiments = new ArrayList<>();
       dataflowOptions.setExperiments(experiments);
     }
