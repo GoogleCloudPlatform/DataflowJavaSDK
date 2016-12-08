@@ -280,7 +280,7 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     }
     if (dataflowOptions.getEnableProfilingAgent()) {
       LOG.error("--enableProfilingAgent is no longer supported, and will be ignored. "
-          + "Use --saveProfilesToGcs instead");
+          + "Use --saveProfilesToGcs instead.");
     }
 
     if (Strings.isNullOrEmpty(dataflowOptions.getTempLocation())) {
