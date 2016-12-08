@@ -275,6 +275,9 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
     if (dataflowOptions.getTempLocation() != null) {
       validator.validateOutputFilePrefixSupported(dataflowOptions.getTempLocation());
     }
+    if (!Strings.isNullOrEmpty(dataflowOptions.getSaveProfilesToGcs())) {
+      validator.validateOutputFilePrefixSupported(dataflowOptions.getSaveProfilesToGcs());
+    }
     if (Strings.isNullOrEmpty(dataflowOptions.getTempLocation())) {
       dataflowOptions.setTempLocation(dataflowOptions.getStagingLocation());
     } else if (Strings.isNullOrEmpty(dataflowOptions.getStagingLocation())) {

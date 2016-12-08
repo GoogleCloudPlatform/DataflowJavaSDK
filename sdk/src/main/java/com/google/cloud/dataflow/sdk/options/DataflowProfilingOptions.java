@@ -28,9 +28,16 @@ import java.util.HashMap;
 public interface DataflowProfilingOptions {
 
   @Description("Whether to periodically dump profiling information to local disk.\n"
-      + "WARNING: Enabling this option may fill local disk with profiling information.")
+      + "WARNING: Enabling this option may fill local disk with profiling information.\n"
+      + "This option is deprecated. Using --saveProfilesToGcs=<GCS path> is preferred.")
   boolean getEnableProfilingAgent();
   void setEnableProfilingAgent(boolean enabled);
+
+  @Description(
+      "When set to a non-empty value, enables recording profiles and saving them to GCS.\n"
+      + "Profiles will continue until the pipeline is stopped or updated without this option.\n")
+  String getSaveProfilesToGcs();
+  void setSaveProfilesToGcs(String gcsPath);
 
   @Description(
       "[INTERNAL] Additional configuration for the profiling agent. Not typically necessary.")

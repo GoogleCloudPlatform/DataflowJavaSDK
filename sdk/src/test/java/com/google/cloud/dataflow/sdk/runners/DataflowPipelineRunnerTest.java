@@ -535,6 +535,26 @@ public class DataflowPipelineRunnerTest {
   }
 
   @Test
+  public void testInvalidProfileLocation() throws IOException {
+    DataflowPipelineOptions options = buildPipelineOptions();
+    options.setSaveProfilesToGcs("file://my/staging/location");
+    try {
+      DataflowPipelineRunner.fromOptions(options);
+      fail("fromOptions should have failed");
+    } catch (IllegalArgumentException e) {
+      assertThat(e.getMessage(), containsString("expected a valid 'gs://' path but was given"));
+    }
+
+    options.setSaveProfilesToGcs("my/staging/location");
+    try {
+      DataflowPipelineRunner.fromOptions(options);
+      fail("fromOptions should have failed");
+    } catch (IllegalArgumentException e) {
+      assertThat(e.getMessage(), containsString("expected a valid 'gs://' path but was given"));
+    }
+  }
+
+  @Test
   public void testNonExistentTempLocation() throws IOException {
     ArgumentCaptor<Job> jobCaptor = ArgumentCaptor.forClass(Job.class);
 
