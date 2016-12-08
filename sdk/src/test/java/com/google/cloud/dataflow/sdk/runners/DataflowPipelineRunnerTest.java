@@ -587,6 +587,22 @@ public class DataflowPipelineRunnerTest {
   }
 
   @Test
+  public void testNonExistentProfileLocation() throws IOException {
+    ArgumentCaptor<Job> jobCaptor = ArgumentCaptor.forClass(Job.class);
+
+    GcsUtil mockGcsUtil = buildMockGcsUtil(false /* bucket exists */);
+    DataflowPipelineOptions options = buildPipelineOptions(jobCaptor);
+    options.setGcsUtil(mockGcsUtil);
+    options.setSaveProfilesToGcs("gs://non-existent-bucket/location");
+
+    thrown.expect(IllegalArgumentException.class);
+    thrown.expectMessage(containsString(
+        "Output path does not exist or is not writeable: gs://non-existent-bucket/location"));
+    DataflowPipelineRunner.fromOptions(options);
+    assertValidJob(jobCaptor.getValue());
+  }
+
+  @Test
   public void testNoProjectFails() {
     DataflowPipelineOptions options = PipelineOptionsFactory.as(DataflowPipelineOptions.class);
 
