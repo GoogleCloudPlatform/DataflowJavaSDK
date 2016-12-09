@@ -76,13 +76,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import java.io.IOException;
-import java.io.Serializable;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -93,6 +87,14 @@ import org.junit.runners.JUnit4;
 import org.mockito.ArgumentMatcher;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
+
+import java.io.IOException;
+import java.io.Serializable;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Tests for DataflowPipelineTranslator.
@@ -188,13 +190,14 @@ public class DataflowPipelineTranslatorTest implements Serializable {
 
     assertThat(optionsMap, hasEntry("appName", (Object) "DataflowPipelineTranslatorTest"));
     assertThat(optionsMap, hasEntry("project", (Object) "some-project"));
-    assertThat(optionsMap, hasEntry(
-        "pathValidatorClass", (Object) DataflowPathValidator.class.getName()));
-    assertThat(optionsMap, hasEntry(
-        "runner", (Object) DataflowPipelineRunner.class.getName()));
+    assertThat(optionsMap,
+        hasEntry("pathValidatorClass", (Object) DataflowPathValidator.class.getName()));
+    assertThat(optionsMap,
+        hasEntry("runner", (Object) DataflowPipelineRunner.class.getName()));
     assertThat(optionsMap, hasEntry("jobName", (Object) "some-job-name"));
     assertThat(optionsMap, hasEntry("tempLocation", (Object) "gs://somebucket/some/path"));
-    assertThat(optionsMap, hasEntry("stagingLocation", (Object) "gs://somebucket/some/path/staging"));
+    assertThat(optionsMap,
+        hasEntry("stagingLocation", (Object) "gs://somebucket/some/path/staging"));
     assertThat(optionsMap, hasEntry("stableUniqueNames", (Object) "WARNING"));
     assertThat(optionsMap, hasEntry("streaming", (Object) false));
     assertThat(optionsMap, hasEntry("numberOfWorkerHarnessThreads", (Object) 0));
