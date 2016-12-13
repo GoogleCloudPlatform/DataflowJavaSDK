@@ -20,8 +20,11 @@ import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatche
 
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 
+import com.google.cloud.dataflow.sdk.options.ValueProvider.StaticValueProvider;
 import com.google.cloud.dataflow.sdk.transforms.display.DataflowDisplayDataEvaluator;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayDataEvaluator;
@@ -70,29 +73,13 @@ public class PubsubIOTest {
   }
 
   @Test
-  public void testTopicValidationBadCharacter() throws Exception {
-    thrown.expect(IllegalArgumentException.class);
-    PubsubIO.Read.topic("projects/my-project/topics/abc-*-abc");
-  }
-
-  @Test
-  public void testTopicValidationTooLong() throws Exception {
-    thrown.expect(IllegalArgumentException.class);
-    PubsubIO.Read.topic(new StringBuilder().append("projects/my-project/topics/A-really-long-one-")
-        .append("111111111111111111111111111111111111111111111111111111111111111111111111111111111")
-        .append("111111111111111111111111111111111111111111111111111111111111111111111111111111111")
-        .append("1111111111111111111111111111111111111111111111111111111111111111111111111111")
-        .toString());
-  }
-
-  @Test
   public void testReadDisplayData() {
     String topic = "projects/project/topics/topic";
     String subscription = "projects/project/subscriptions/subscription";
     Duration maxReadTime = Duration.standardMinutes(5);
     PubsubIO.Read.Bound<String> read = PubsubIO.Read
-        .topic(topic)
-        .subscription(subscription)
+        .topic(StaticValueProvider.of(topic))
+        .subscription(StaticValueProvider.of(subscription))
         .timestampLabel("myTimestamp")
         .idLabel("myId")
         .maxNumRecords(1234)
@@ -132,6 +119,26 @@ public class PubsubIOTest {
     Set<DisplayData> displayData = evaluator.displayDataForPrimitiveTransforms(write);
     assertThat("PubsubIO.Write should include the topic in its primitive display data",
         displayData, hasItem(hasDisplayItem("topic")));
+  }
+
+  @Test
+  public void testNullTopic() {
+    String subscription = "projects/project/subscriptions/subscription";
+    PubsubIO.Read.Bound<String> read = PubsubIO.Read
+        .subscription(StaticValueProvider.of(subscription));
+    assertNull(read.getTopic());
+    assertNotNull(read.getSubscription());
+    assertNotNull(DisplayData.from(read));
+  }
+
+  @Test
+  public void testNullSubscription() {
+    String topic = "projects/project/topics/topic";
+    PubsubIO.Read.Bound<String> read = PubsubIO.Read
+        .topic(StaticValueProvider.of(topic));
+    assertNotNull(read.getTopic());
+    assertNull(read.getSubscription());
+    assertNotNull(DisplayData.from(read));
   }
 
   @Test
