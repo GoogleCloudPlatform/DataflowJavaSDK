@@ -250,6 +250,25 @@ public class DataflowPipelineRunnerTest {
     assertValidJob(jobCaptor.getValue());
   }
 
+  /** Options for testing. */
+  public interface RuntimeTestOptions extends PipelineOptions {
+    ValueProvider<String> getInput();
+    void setInput(ValueProvider<String> value);
+
+    ValueProvider<String> getOutput();
+    void setOutput(ValueProvider<String> value);
+  }
+
+  @Test
+  public void testTextIOWithRuntimeParameters() throws IOException {
+    DataflowPipelineOptions dataflowOptions = buildPipelineOptions();
+    RuntimeTestOptions options = dataflowOptions.as(RuntimeTestOptions.class);
+    Pipeline p = buildDataflowPipeline(dataflowOptions);
+    p
+        .apply(TextIO.Read.from(options.getInput()).withoutValidation())
+        .apply(TextIO.Write.to(options.getOutput()).withoutValidation());
+  }
+
   @Test
   public void testRunReturnDifferentRequestId() throws IOException {
     DataflowPipelineOptions options = buildPipelineOptions();
@@ -333,25 +352,6 @@ public class DataflowPipelineRunnerTest {
     thrown.expectMessage("The job named oldjobname with id: oldJobId has already been updated "
         + "into job id: newid and cannot be updated again.");
     p.run();
-  }
-
-  /** Options for testing. */
-  public interface RuntimeTestOptions extends PipelineOptions {
-    ValueProvider<String> getInput();
-    void setInput(ValueProvider<String> value);
-
-    ValueProvider<String> getOutput();
-    void setOutput(ValueProvider<String> value);
-  }
-
-  @Test
-  public void testTextIOWithRuntimeParameters() throws IOException {
-    DataflowPipelineOptions dataflowOptions = buildPipelineOptions();
-    RuntimeTestOptions options = dataflowOptions.as(RuntimeTestOptions.class);
-    Pipeline p = buildDataflowPipeline(dataflowOptions);
-    p
-        .apply(TextIO.Read.from(options.getInput()).withoutValidation())
-        .apply(TextIO.Write.to(options.getOutput()).withoutValidation());
   }
 
   @Test
