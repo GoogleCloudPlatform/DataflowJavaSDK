@@ -23,7 +23,6 @@ import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.ValueProvider;
-import com.google.cloud.dataflow.sdk.options.ValueProvider.NestedValueProvider;
 import com.google.cloud.dataflow.sdk.options.ValueProvider.StaticValueProvider;
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
@@ -35,11 +34,8 @@ import com.google.cloud.dataflow.sdk.util.IOChannelFactory;
 import com.google.cloud.dataflow.sdk.util.IOChannelUtils;
 import com.google.cloud.dataflow.sdk.util.MimeTypes;
 
-import org.joda.time.Instant;
-import org.joda.time.format.DateTimeFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.joda.time.Instant;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -288,32 +284,11 @@ public abstract class FileBasedSink<T> extends Sink<T> {
       this(sink, StaticValueProvider.of(baseTemporaryFilename), TemporaryFileRetention.REMOVE);
     }
 
-    private static class TemporaryDirectoryBuilder
-        implements SerializableFunction<String, String> {
-      // The intent of the code is to have a consistent value of tempDirectory across
-      // all workers, which wouldn't happen if now() was called inline.
-      Instant now = Instant.now();
-
-      @Override
-      public String apply(String baseOutputFilename) {
-        try {
-          IOChannelFactory factory = IOChannelUtils.getFactory(baseOutputFilename);
-          return factory.resolve(baseOutputFilename,
-              "-temp-"
-              + now.toString(DateTimeFormat.forPattern("yyyy-MM-DD_HH-mm-ss")))
-              .toString();
-        } catch (IOException e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-
     private FileBasedWriteOperation(FileBasedSink<T> sink,
         ValueProvider<String> baseTemporaryFilename,
         TemporaryFileRetention temporaryFileRetention) {
       this.sink = sink;
-      this.baseTemporaryFilename = NestedValueProvider.of(
-          baseTemporaryFilename, new TemporaryDirectoryBuilder());
+      this.baseTemporaryFilename = baseTemporaryFilename;
       this.temporaryFileRetention = temporaryFileRetention;
     }
 
@@ -442,17 +417,17 @@ public abstract class FileBasedSink<T> extends Sink<T> {
      */
     protected final void removeTemporaryFiles(
         Collection<String> knownFiles, PipelineOptions options) throws IOException {
-      String tempDir = baseTemporaryFilename.get();
-      LOG.debug("Removing temporary bundle output files in {}.", tempDir);
-      IOChannelFactory factory = IOChannelUtils.getFactory(tempDir);
-      FileOperations fileOperations = FileOperationsFactory.getFileOperations(tempDir, options);
-      Collection<String> matches = factory.match(tempDir);
+      String pattern = buildTemporaryFilename(baseTemporaryFilename.get(), "*");
+      LOG.debug("Finding temporary bundle output files matching {}.", pattern);
+      FileOperations fileOperations = FileOperationsFactory.getFileOperations(pattern, options);
+      IOChannelFactory factory = IOChannelUtils.getFactory(pattern);
+      Collection<String> matches = factory.match(pattern);
       Set<String> allMatches = new HashSet<>(matches);
       allMatches.addAll(knownFiles);
       LOG.debug(
           "Removing {} temporary files matching {} ({} matched glob, {} additional known files)",
           allMatches.size(),
-          tempDir,
+          pattern,
           matches.size(),
           allMatches.size() - matches.size());
       fileOperations.remove(allMatches);
