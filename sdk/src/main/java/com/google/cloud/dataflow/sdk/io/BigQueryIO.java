@@ -814,6 +814,7 @@ public class BigQueryIO {
       /**
        * Returns the query to be read, or {@code null} if reading from a table instead.
        */
+      @Nullable
       public String getQuery() {
         return query == null ? null : query.get();
       }
@@ -821,7 +822,8 @@ public class BigQueryIO {
       /**
        * Returns the query to be read, or {@code null} if reading from a table instead.
        */
-      public ValueProvider<String> getQueryProivder() {
+      @Nullable
+      public ValueProvider<String> getQueryProvider() {
         return query;
       }
 
