@@ -125,7 +125,7 @@ public class PipelineOptionsTest {
     options.cloneAs(ConflictedTestOptions.class);
   }
 
-  private static interface ValueProviderOptions extends PipelineOptions {
+  private interface ValueProviderOptions extends PipelineOptions {
     ValueProvider<Boolean> getBool();
     void setBool(ValueProvider<Boolean> value);
 
