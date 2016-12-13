@@ -31,6 +31,7 @@ import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.AfterWatermark;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
@@ -432,14 +433,14 @@ public class PubsubIO {
      * name.
      */
     public static Bound<String> named(String name) {
-      return new Bound<>(DEFAULT_PUBSUB_CODER).topic(StaticValueProvider.of(topic));
+      return new Bound<>(DEFAULT_PUBSUB_CODER).named(name);
     }
 
     /**
      * Like {@code topic()} but with a {@link ValueProvider}.
      */
     public static Bound<String> topic(ValueProvider<String> topic) {
-      return new Bound<>(DEFAULT_PUBSUB_CODER).named(name);
+      return new Bound<>(DEFAULT_PUBSUB_CODER).topic(topic);
     }
 
     /**
@@ -454,7 +455,7 @@ public class PubsubIO {
      * Dataflow.
      */
     public static Bound<String> topic(String topic) {
-      return new Bound<>(DEFAULT_PUBSUB_CODER).topic(topic);
+      return new Bound<>(DEFAULT_PUBSUB_CODER).topic(StaticValueProvider.of(topic));
     }
 
     /**

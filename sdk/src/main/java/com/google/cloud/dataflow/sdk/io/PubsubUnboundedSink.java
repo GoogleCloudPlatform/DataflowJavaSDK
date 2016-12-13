@@ -394,7 +394,7 @@ public class PubsubUnboundedSink<T> extends PTransform<PCollection<T>, PDone> {
 
   public PubsubUnboundedSink(
       PubsubClientFactory pubsubFactory,
-      TopicPath topic,
+      ValueProvider<TopicPath> topic,
       Coder<T> elementCoder,
       String timestampLabel,
       String idLabel,

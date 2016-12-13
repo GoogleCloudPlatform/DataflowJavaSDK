@@ -609,7 +609,7 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
      * CAUTION: Retains {@code ackIds}.
      */
     void ackBatch(List<String> ackIds) throws IOException {
-      pubsubClient.acknowledge(outer.outer.subscription, ackIds);
+      pubsubClient.acknowledge(outer.outer.subscription.get(), ackIds);
       ackedIds.add(ackIds);
     }
 
@@ -619,7 +619,7 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
      * with the given {@code ockIds}. Does not retain {@code ackIds}.
      */
     public void nackBatch(long nowMsSinceEpoch, List<String> ackIds) throws IOException {
-      pubsubClient.modifyAckDeadline(outer.outer.subscription, ackIds, 0);
+      pubsubClient.modifyAckDeadline(outer.outer.subscription.get(), ackIds, 0);
       numNacked.add(nowMsSinceEpoch, ackIds.size());
     }
 
@@ -630,7 +630,7 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
      */
     private void extendBatch(long nowMsSinceEpoch, List<String> ackIds) throws IOException {
       int extensionSec = (ackTimeoutMs * ACK_EXTENSION_PCT) / (100 * 1000);
-      pubsubClient.modifyAckDeadline(outer.outer.subscription, ackIds, extensionSec);
+      pubsubClient.modifyAckDeadline(outer.outer.subscription.get(), ackIds, extensionSec);
       numExtendedDeadlines.add(nowMsSinceEpoch, ackIds.size());
     }
 
@@ -766,7 +766,7 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
       // BLOCKs until received.
       Collection<PubsubClient.IncomingMessage> receivedMessages =
           pubsubClient.pull(requestTimeMsSinceEpoch,
-                            outer.outer.subscription,
+              outer.outer.subscription.get(),
                             PULL_BATCH_SIZE, true);
       if (receivedMessages.isEmpty()) {
         // Nothing available yet. Try again later.
@@ -872,7 +872,7 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
     @Override
     public boolean start() throws IOException {
       // Determine the ack timeout.
-      ackTimeoutMs = pubsubClient.ackDeadlineSeconds(outer.outer.subscription) * 1000;
+      ackTimeoutMs = pubsubClient.ackDeadlineSeconds(outer.outer.subscription.get()) * 1000;
       return advance();
     }
 
