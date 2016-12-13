@@ -315,7 +315,8 @@ public class TextIO {
         }
 
         if (validate) {
-          checkState(filepattern.isAccessible(), "Cannot validate with a RVP.");
+          checkState(filepattern.isAccessible(),
+              "Cannot validate with a filepattern provided at runtime.");
           try {
             checkState(
                 !IOChannelUtils.getFactory(filepattern.get()).match(filepattern.get()).isEmpty(),
