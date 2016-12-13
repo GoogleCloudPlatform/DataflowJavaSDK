@@ -15,7 +15,6 @@
  */
 package com.google.cloud.dataflow.sdk.options;
 
-import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
@@ -223,8 +222,16 @@ public interface ValueProvider<T> extends Serializable {
         Method method = klass.getMethod(methodName);
         PipelineOptions methodOptions = options.as(klass);
         InvocationHandler handler = Proxy.getInvocationHandler(methodOptions);
-        T value = ((ValueProvider<T>) handler.invoke(methodOptions, method, null)).get();
-        return firstNonNull(value, defaultValue);
+        ValueProvider<T> result =
+            (ValueProvider<T>) handler.invoke(methodOptions, method, null);
+        // Two cases: If we have deserialized a new value from JSON, it will
+        // be wrapped in a StaticValueProvider, which we can provide here.  If
+        // not, there was no JSON value, and we return the default, whether or
+        // not it is null.
+        if (result instanceof StaticValueProvider) {
+          return result.get();
+        }
+        return defaultValue;
       } catch (Throwable e) {
         throw new RuntimeException("Unable to load runtime value.", e);
       }

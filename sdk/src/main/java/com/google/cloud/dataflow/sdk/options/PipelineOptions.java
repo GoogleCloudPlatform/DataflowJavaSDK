@@ -33,6 +33,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.lang.reflect.Proxy;
+import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.concurrent.ThreadSafe;
@@ -261,6 +262,13 @@ public interface PipelineOptions extends HasDisplayData {
   @Description("A pipeline level default location for storing temporary files.")
   String getTempLocation();
   void setTempLocation(String value);
+
+  /**
+   * Returns a map of properties which correspond to {@link RuntimeValueProvider},
+   * keyed by the property name.  The value is a map containing type and default
+   * information.
+   */
+  Map<String, Map<String, Object>> outputRuntimeOptions();
 
   /**
    * Provides a unique ID for this {@link PipelineOptions} object, assigned at graph
