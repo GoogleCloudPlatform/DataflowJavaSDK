@@ -523,43 +523,6 @@ class ProxyInvocationHandler implements InvocationHandler, HasDisplayData {
   }
 
   /**
-   * Helper method to return standard Default cases.
-   */
-  @Nullable
-  private Object returnDefaultHelper(
-      Annotation annotation, PipelineOptions proxy, Method method) {
-    if (annotation instanceof Default.Class) {
-      return ((Default.Class) annotation).value();
-    } else if (annotation instanceof Default.String) {
-      return ((Default.String) annotation).value();
-    } else if (annotation instanceof Default.Boolean) {
-      return ((Default.Boolean) annotation).value();
-    } else if (annotation instanceof Default.Character) {
-      return ((Default.Character) annotation).value();
-    } else if (annotation instanceof Default.Byte) {
-      return ((Default.Byte) annotation).value();
-    } else if (annotation instanceof Default.Short) {
-      return ((Default.Short) annotation).value();
-    } else if (annotation instanceof Default.Integer) {
-      return ((Default.Integer) annotation).value();
-    } else if (annotation instanceof Default.Long) {
-      return ((Default.Long) annotation).value();
-    } else if (annotation instanceof Default.Float) {
-      return ((Default.Float) annotation).value();
-    } else if (annotation instanceof Default.Double) {
-      return ((Default.Double) annotation).value();
-    } else if (annotation instanceof Default.Enum) {
-      return Enum.valueOf((Class<Enum>) method.getReturnType(),
-          ((Default.Enum) annotation).value());
-    } else if (annotation instanceof Default.InstanceFactory) {
-      return InstanceBuilder.ofType(((Default.InstanceFactory) annotation).value())
-          .build()
-          .create(proxy);
-    }
-    return null;
-  }
-
-  /**
    * Returns a default value for the method based upon {@code @Default} metadata on the getter
    * to return values. If there is no {@code @Default} annotation on the getter, then a <a
    * href="https://docs.oracle.com/javase/tutorial/java/nutsandbolts/datatypes.html">default</a> as
@@ -609,6 +572,43 @@ class ProxyInvocationHandler implements InvocationHandler, HasDisplayData {
      * a default value as defined by the JLS.
      */
     return Defaults.defaultValue(method.getReturnType());
+  }
+
+  /**
+   * Helper method to return standard Default cases.
+   */
+  @Nullable
+  private Object returnDefaultHelper(
+      Annotation annotation, PipelineOptions proxy, Method method) {
+    if (annotation instanceof Default.Class) {
+      return ((Default.Class) annotation).value();
+    } else if (annotation instanceof Default.String) {
+      return ((Default.String) annotation).value();
+    } else if (annotation instanceof Default.Boolean) {
+      return ((Default.Boolean) annotation).value();
+    } else if (annotation instanceof Default.Character) {
+      return ((Default.Character) annotation).value();
+    } else if (annotation instanceof Default.Byte) {
+      return ((Default.Byte) annotation).value();
+    } else if (annotation instanceof Default.Short) {
+      return ((Default.Short) annotation).value();
+    } else if (annotation instanceof Default.Integer) {
+      return ((Default.Integer) annotation).value();
+    } else if (annotation instanceof Default.Long) {
+      return ((Default.Long) annotation).value();
+    } else if (annotation instanceof Default.Float) {
+      return ((Default.Float) annotation).value();
+    } else if (annotation instanceof Default.Double) {
+      return ((Default.Double) annotation).value();
+    } else if (annotation instanceof Default.Enum) {
+      return Enum.valueOf((Class<Enum>) method.getReturnType(),
+          ((Default.Enum) annotation).value());
+    } else if (annotation instanceof Default.InstanceFactory) {
+      return InstanceBuilder.ofType(((Default.InstanceFactory) annotation).value())
+          .build()
+          .create(proxy);
+    }
+    return null;
   }
 
   /**
