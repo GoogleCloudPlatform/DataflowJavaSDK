@@ -408,6 +408,10 @@ public class PubsubUnboundedSink<T> extends PTransform<PCollection<T>, PDone> {
     return topic.get();
   }
 
+  public ValueProvider<TopicPath> getTopicProvider() {
+    return topic;
+  }
+
   @Nullable
   public String getTimestampLabel() {
     return timestampLabel;
