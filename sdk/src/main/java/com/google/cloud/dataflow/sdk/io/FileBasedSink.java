@@ -24,7 +24,6 @@ import com.google.cloud.dataflow.sdk.coders.SerializableCoder;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.ValueProvider;
 import com.google.cloud.dataflow.sdk.options.ValueProvider.StaticValueProvider;
-import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.util.FileIOChannelFactory;
 import com.google.cloud.dataflow.sdk.util.GcsIOChannelFactory;
@@ -281,7 +280,7 @@ public abstract class FileBasedSink<T> extends Sink<T> {
      */
     public FileBasedWriteOperation(FileBasedSink<T> sink, String baseTemporaryFilename,
         TemporaryFileRetention temporaryFileRetention) {
-      this(sink, StaticValueProvider.of(baseTemporaryFilename), TemporaryFileRetention.REMOVE);
+      this(sink, StaticValueProvider.of(baseTemporaryFilename), temporaryFileRetention);
     }
 
     private FileBasedWriteOperation(FileBasedSink<T> sink,

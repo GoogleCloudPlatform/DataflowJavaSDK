@@ -219,6 +219,7 @@ public class DataflowPipelineTranslatorTest implements Serializable {
   @Test
   public void testInaccessibleProvider() throws Exception {
     DataflowPipelineOptions options = buildPipelineOptions();
+    options.setRunner(DataflowPipelineRunner.class);
     Pipeline pipeline = Pipeline.create(options);
     DataflowPipelineTranslator t = DataflowPipelineTranslator.fromOptions(options);
 

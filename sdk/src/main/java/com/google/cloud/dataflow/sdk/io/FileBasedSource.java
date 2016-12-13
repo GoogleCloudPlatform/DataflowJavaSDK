@@ -281,7 +281,7 @@ public abstract class FileBasedSource<T> extends OffsetBasedSource<T> {
   @Override
   public void populateDisplayData(DisplayData.Builder builder) {
     super.populateDisplayData(builder);
-    builder.add(DisplayData.item("filePattern", getFileOrPatternSpec())
+    builder.add(DisplayData.item("filePattern", getFileOrPatternSpecProvider())
       .withLabel("File Pattern"));
   }
 
