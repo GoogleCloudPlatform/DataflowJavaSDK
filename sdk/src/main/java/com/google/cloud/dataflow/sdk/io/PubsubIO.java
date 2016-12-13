@@ -22,12 +22,16 @@ import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
+import com.google.cloud.dataflow.sdk.options.ValueProvider;
+import com.google.cloud.dataflow.sdk.options.ValueProvider.NestedValueProvider;
+import com.google.cloud.dataflow.sdk.options.ValueProvider.StaticValueProvider;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.Create;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
 import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.cloud.dataflow.sdk.transforms.SerializableFunction;
 import com.google.cloud.dataflow.sdk.transforms.display.DisplayData;
 import com.google.cloud.dataflow.sdk.transforms.windowing.AfterWatermark;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
@@ -136,7 +140,7 @@ public class PubsubIO {
    * Populate common {@link DisplayData} between Pubsub source and sink.
    */
   private static void populateCommonDisplayData(DisplayData.Builder builder,
-      String timestampLabel, String idLabel, PubsubTopic topic) {
+      String timestampLabel, String idLabel, String topic) {
     builder
         .addIfNotNull(DisplayData.item("timestampLabel", timestampLabel)
             .withLabel("Timestamp Label Attribute"))
@@ -144,7 +148,7 @@ public class PubsubIO {
             .withLabel("ID Label Attribute"));
 
     if (topic != null) {
-      builder.add(DisplayData.item("topic", topic.asPath())
+      builder.add(DisplayData.item("topic", topic)
           .withLabel("Pubsub Topic"));
     }
   }
@@ -251,6 +255,61 @@ public class PubsubIO {
       } else {
         return subscription;
       }
+    }
+  }
+
+  /**
+   * Used to build a {@link ValueProvider} for {@link PubsubSubscription}.
+   */
+  private static class SubscriptionTranslator
+      implements SerializableFunction<String, PubsubSubscription> {
+    @Override
+    public PubsubSubscription apply(String from) {
+      return PubsubSubscription.fromPath(from);
+    }
+  }
+
+  /**
+   * Used to build a {@link ValueProvider} for {@link SubscriptionPath}.
+   */
+  private static class SubscriptionPathTranslator
+      implements SerializableFunction<PubsubSubscription, SubscriptionPath> {
+    @Override
+    public SubscriptionPath apply(PubsubSubscription from) {
+      return PubsubClient.subscriptionPathFromName(from.project, from.subscription);
+    }
+  }
+
+  /**
+   * Used to build a {@link ValueProvider} for {@link PubsubTopic}.
+   */
+  private static class TopicTranslator
+      implements SerializableFunction<String, PubsubTopic> {
+    @Override
+    public PubsubTopic apply(String from) {
+      return PubsubTopic.fromPath(from);
+    }
+  }
+
+  /**
+   * Used to build a {@link ValueProvider} for {@link TopicPath}.
+   */
+  private static class TopicPathTranslator
+      implements SerializableFunction<PubsubTopic, TopicPath> {
+    @Override
+    public TopicPath apply(PubsubTopic from) {
+      return PubsubClient.topicPathFromName(from.project, from.topic);
+    }
+  }
+
+  /**
+   * Used to build a {@link ValueProvider} for {@link ProjectPath}.
+   */
+  private static class ProjectPathTranslator
+      implements SerializableFunction<PubsubTopic, ProjectPath> {
+    @Override
+    public ProjectPath apply(PubsubTopic from) {
+      return PubsubClient.projectPathFromId(from.project);
     }
   }
 
@@ -378,6 +437,13 @@ public class PubsubIO {
     }
 
     /**
+     * Like {@code topic()} but with a {@link ValueProvider}.
+     */
+    public static Bound<String> topic(ValueProvider<String> topic) {
+      return new Bound<>(DEFAULT_PUBSUB_CODER).topic(topic);
+    }
+
+    /**
      * Creates and returns a transform for reading from a Cloud Pub/Sub topic. Mutually exclusive
      * with {@link #subscription(String)}.
      *
@@ -389,7 +455,7 @@ public class PubsubIO {
      * Dataflow.
      */
     public static Bound<String> topic(String topic) {
-      return new Bound<>(DEFAULT_PUBSUB_CODER).topic(topic);
+      return new Bound<>(DEFAULT_PUBSUB_CODER).topic(StaticValueProvider.of(topic));
     }
 
     /**
@@ -400,6 +466,13 @@ public class PubsubIO {
      * of the {@code subscription} string.
      */
     public static Bound<String> subscription(String subscription) {
+      return new Bound<>(DEFAULT_PUBSUB_CODER).subscription(StaticValueProvider.of(subscription));
+    }
+
+    /**
+     * Like {@code topic()} but with a {@link ValueProvider}.
+     */
+    public static Bound<String> subscription(ValueProvider<String> subscription) {
       return new Bound<>(DEFAULT_PUBSUB_CODER).subscription(subscription);
     }
 
@@ -493,10 +566,10 @@ public class PubsubIO {
      */
     public static class Bound<T> extends PTransform<PInput, PCollection<T>> {
       /** The Cloud Pub/Sub topic to read from. */
-      @Nullable private final PubsubTopic topic;
+      @Nullable private final ValueProvider<PubsubTopic> topic;
 
       /** The Cloud Pub/Sub subscription to read from. */
-      @Nullable private final PubsubSubscription subscription;
+      @Nullable private final ValueProvider<PubsubSubscription> subscription;
 
       /** The name of the message attribute to read timestamps from. */
       @Nullable private final String timestampLabel;
@@ -517,9 +590,9 @@ public class PubsubIO {
         this(null, null, null, null, coder, null, 0, null);
       }
 
-      private Bound(String name, PubsubSubscription subscription, PubsubTopic topic,
-          String timestampLabel, Coder<T> coder, String idLabel, int maxNumRecords,
-          Duration maxReadTime) {
+      private Bound(String name, ValueProvider<PubsubSubscription> subscription,
+          ValueProvider<PubsubTopic> topic, String timestampLabel, Coder<T> coder,
+          String idLabel, int maxNumRecords, Duration maxReadTime) {
         super(name);
         this.subscription = subscription;
         this.topic = topic;
@@ -554,8 +627,16 @@ public class PubsubIO {
        * <p>Does not modify this object.
        */
       public Bound<T> subscription(String subscription) {
-        return new Bound<>(name, PubsubSubscription.fromPath(subscription), topic, timestampLabel,
-            coder, idLabel, maxNumRecords, maxReadTime);
+        return subscription(StaticValueProvider.of(subscription));
+      }
+
+      /**
+       * Like {@code subscription()} but with a {@link ValueProvider}.
+       */
+      public Bound<T> subscription(ValueProvider<String> subscription) {
+        return new Bound<>(name,
+            NestedValueProvider.of(subscription, new SubscriptionTranslator()),
+            topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
       }
 
       /**
@@ -567,8 +648,16 @@ public class PubsubIO {
        * <p>Does not modify this object.
        */
       public Bound<T> topic(String topic) {
-        return new Bound<>(name, subscription, PubsubTopic.fromPath(topic), timestampLabel, coder,
-            idLabel, maxNumRecords, maxReadTime);
+        return topic(StaticValueProvider.of(topic));
+      }
+
+      /**
+       * Like {@code topic()} but with a {@link ValueProvider}.
+       */
+      public Bound<T> topic(ValueProvider<String> topic) {
+        return new Bound<>(name, subscription,
+            NestedValueProvider.of(topic, new TopicTranslator()),
+            timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
       }
 
       /**
@@ -648,15 +737,14 @@ public class PubsubIO {
                       .apply(ParDo.of(new PubsubReader()))
                       .setCoder(coder);
         } else {
-          @Nullable ProjectPath projectPath =
-              topic == null ? null : PubsubClient.projectPathFromId(topic.project);
-          @Nullable TopicPath topicPath =
-              topic == null ? null : PubsubClient.topicPathFromName(topic.project, topic.topic);
-          @Nullable SubscriptionPath subscriptionPath =
+          @Nullable ValueProvider<ProjectPath> projectPath =
+              topic == null ? null : NestedValueProvider.of(topic, new ProjectPathTranslator());
+          @Nullable ValueProvider<TopicPath> topicPath =
+              topic == null ? null : NestedValueProvider.of(topic, new TopicPathTranslator());
+          @Nullable ValueProvider<SubscriptionPath> subscriptionPath =
               subscription == null
                   ? null
-                  : PubsubClient.subscriptionPathFromName(
-                      subscription.project, subscription.subscription);
+                  : NestedValueProvider.of(subscription, new SubscriptionPathTranslator());
           return input.getPipeline().begin()
                       .apply(new PubsubUnboundedSource<T>(
                           FACTORY, projectPath, topicPath, subscriptionPath,
@@ -666,8 +754,11 @@ public class PubsubIO {
 
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
-        super.populateDisplayData(builder);
-        populateCommonDisplayData(builder, timestampLabel, idLabel, topic);
+        String topicString =
+            topic == null ? null
+            : topic.isAccessible() ? topic.get().asPath()
+            : topic.toString();
+        populateCommonDisplayData(builder, timestampLabel, idLabel, topicString);
 
         builder
             .addIfNotNull(DisplayData.item("maxReadTime", maxReadTime)
@@ -676,8 +767,10 @@ public class PubsubIO {
               .withLabel("Maximum Read Records"), 0);
 
         if (subscription != null) {
-          builder.add(DisplayData.item("subscription", subscription.asPath())
-            .withLabel("Pubsub Subscription"));
+          String subscriptionString = subscription.isAccessible()
+              ? subscription.get().asPath() : subscription.toString();
+          builder.add(DisplayData.item("subscription", subscriptionString)
+              .withLabel("Pubsub Subscription"));
         }
       }
 
@@ -687,10 +780,18 @@ public class PubsubIO {
       }
 
       public PubsubTopic getTopic() {
+        return topic == null ? null : topic.get();
+      }
+
+      public ValueProvider<PubsubTopic> getTopicProvider() {
         return topic;
       }
 
       public PubsubSubscription getSubscription() {
+        return subscription == null ? null : subscription.get();
+      }
+
+      public ValueProvider<PubsubSubscription> getSubscriptionProvider() {
         return subscription;
       }
 
@@ -847,6 +948,13 @@ public class PubsubIO {
      * {@code topic} string.
      */
     public static Bound<String> topic(String topic) {
+      return new Bound<>(DEFAULT_PUBSUB_CODER).topic(StaticValueProvider.of(topic));
+    }
+
+    /**
+     * Like {@code topic()} but with a {@link ValueProvider}.
+     */
+    public static Bound<String> topic(ValueProvider<String> topic) {
       return new Bound<>(DEFAULT_PUBSUB_CODER).topic(topic);
     }
 
@@ -896,7 +1004,7 @@ public class PubsubIO {
      */
     public static class Bound<T> extends PTransform<PCollection<T>, PDone> {
       /** The Cloud Pub/Sub topic to publish to. */
-      @Nullable private final PubsubTopic topic;
+      @Nullable private final ValueProvider<PubsubTopic> topic;
       /** The name of the message attribute to publish message timestamps in. */
       @Nullable private final String timestampLabel;
       /** The name of the message attribute to publish unique message IDs in. */
@@ -908,7 +1016,8 @@ public class PubsubIO {
       }
 
       private Bound(
-          String name, PubsubTopic topic, String timestampLabel, String idLabel, Coder<T> coder) {
+          String name, ValueProvider<PubsubTopic> topic, String timestampLabel,
+          String idLabel, Coder<T> coder) {
         super(name);
         this.topic = topic;
         this.timestampLabel = timestampLabel;
@@ -936,7 +1045,15 @@ public class PubsubIO {
        * <p>Does not modify this object.
        */
       public Bound<T> topic(String topic) {
-        return new Bound<>(name, PubsubTopic.fromPath(topic), timestampLabel, idLabel, coder);
+        return topic(StaticValueProvider.of(topic));
+      }
+
+      /**
+       * Like {@code topic()} but with a {@link ValueProvider}.
+       */
+      public Bound<T> topic(ValueProvider<String> topic) {
+        return new Bound<>(name, NestedValueProvider.of(topic, new TopicTranslator()),
+            timestampLabel, idLabel, coder);
       }
 
       /**
@@ -987,7 +1104,7 @@ public class PubsubIO {
           case UNBOUNDED:
             return input.apply(new PubsubUnboundedSink<T>(
                 FACTORY,
-                PubsubClient.topicPathFromName(topic.project, topic.topic),
+                NestedValueProvider.of(topic, new TopicPathTranslator()),
                 coder,
                 timestampLabel,
                 idLabel,
@@ -999,7 +1116,9 @@ public class PubsubIO {
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
         super.populateDisplayData(builder);
-        populateCommonDisplayData(builder, timestampLabel, idLabel, topic);
+        String topicString = topic.isAccessible()
+            ? topic.get().asPath() : topic.toString();
+        populateCommonDisplayData(builder, timestampLabel, idLabel, topicString);
       }
 
       @Override
@@ -1008,6 +1127,10 @@ public class PubsubIO {
       }
 
       public PubsubTopic getTopic() {
+        return topic.get();
+      }
+
+      public ValueProvider<PubsubTopic> getTopicProvider() {
         return topic;
       }
 
