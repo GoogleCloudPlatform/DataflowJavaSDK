@@ -1693,7 +1693,7 @@ public class BigQueryIO {
       @Nullable final SerializableFunction<BoundedWindow, TableReference> tableRefFunction;
 
       // Table schema. The schema is required only if the table does not exist.
-      @Nullable final String ValueProvider<jsonSchema>;
+      @Nullable final ValueProvider<String> jsonSchema;
 
       // Options for creating the table. Valid values are CREATE_IF_NEEDED and
       // CREATE_NEVER.
@@ -1742,7 +1742,7 @@ public class BigQueryIO {
 
       private Bound(String name, @Nullable ValueProvider<String> jsonTableRef,
           @Nullable SerializableFunction<BoundedWindow, TableReference> tableRefFunction,
-          @Nullable String ValueProvider<jsonSchema>,
+          @Nullable ValueProvider<String> jsonSchema,
           CreateDisposition createDisposition, WriteDisposition writeDisposition, boolean validate,
           @Nullable BigQueryServices bigQueryServices) {
         super(name);
@@ -1991,7 +1991,7 @@ public class BigQueryIO {
         // and BigQuery's streaming import API.
         if (options.isStreaming() || tableRefFunction != null) {
           return input.apply(new StreamWithDeDup(getTable(), tableRefFunction,
-                  NestedValueProvider.of(jsonSchema, new JsonSchemaToTableSchema()), bqServices));
+                  NestedValueProvider.of(jsonSchema, new JsonSchemaToTableSchema())));
 
         }
 

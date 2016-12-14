@@ -2292,7 +2292,7 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
             "BigQueryIO is specified to use streaming write in batch mode.");
       }
 
-      TableReference table = originalTransform.getTable();
+      TableReference table = originalTransform.getTable().get();
 
       // Actual translation.
       context.addStep(transform, "ParallelWrite");
