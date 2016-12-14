@@ -733,11 +733,11 @@ public class BigQueryIO {
               .setProjectId(executingProject)
               .setDatasetId(queryTempDatasetId)
               .setTableId(queryTempTableId);
+          String jsonTableRef = toJsonString(queryTempTableRef);
 
           source = BigQueryQuerySource.create(
               jobIdToken, query, NestedValueProvider.of(
-                  StaticValueProvider.of(
-                      toJsonString(queryTempTableRef)), new JsonTableRefToTableRef()),
+                  StaticValueProvider.of(jsonTableRef), new JsonTableRefToTableRef()),
               flattenResults, useLegacySql, extractDestinationDir, bqServices);
         } else {
           ValueProvider<TableReference> inputTable = getTableWithDefaultProject(bqOptions);
@@ -788,12 +788,9 @@ public class BigQueryIO {
         super.populateDisplayData(builder);
         TableReference table = getTable();
 
-        if (table != null) {
-          builder.add(DisplayData.item("table", toTableSpec(table))
-            .withLabel("Table"));
-        }
-
         builder
+            .addIfNotNull(DisplayData.item("table", displayTable(getTableProvider()))
+              .withLabel("Table"))
             .addIfNotNull(DisplayData.item("query", query)
               .withLabel("Query"))
             .addIfNotNull(DisplayData.item("flattenResults", flattenResults)
@@ -824,10 +821,10 @@ public class BigQueryIO {
         if (Strings.isNullOrEmpty(table.get().getProjectId())) {
           // If user does not specify a project we assume the table to be located in
           // the default project.
-          TableReference ref = table.get();
-          ref.setProjectId(bqOptions.getProject());
+          TableReference tableRef = table.get();
+          tableRef.setProjectId(bqOptions.getProject());
           return NestedValueProvider.of(StaticValueProvider.of(
-              toJsonString(ref)), new JsonTableRefToTableRef());
+              toJsonString(tableRef)), new JsonTableRefToTableRef());
         }
         return table;
       }
@@ -1602,6 +1599,11 @@ public class BigQueryIO {
     }
 
     /** Creates a write transformation for the given table. */
+    public static Bound to(ValueProvider<String> tableSpec) {
+      return new Bound().to(tableSpec);
+    }
+
+    /** Creates a write transformation for the given table. */
     public static Bound to(TableReference table) {
       return new Bound().to(table);
     }
@@ -1644,6 +1646,13 @@ public class BigQueryIO {
       return new Bound().withSchema(schema);
     }
 
+    /**
+     * Like {@link #withSchema(TableSchema)}, but with a {@link ValueProvider}.
+     */
+    public static Bound withSchema(ValueProvider<TableSchema> schema) {
+      return new Bound().withSchema(schema);
+    }
+
     /** Creates a write transformation with the specified options for creating the table. */
     public static Bound withCreateDisposition(CreateDisposition disposition) {
       return new Bound().withCreateDisposition(disposition);
@@ -1679,12 +1688,12 @@ public class BigQueryIO {
       // It sets to {@code Integer.MAX_VALUE} to block until the BigQuery job finishes.
       static final int LOAD_JOB_POLL_MAX_RETRIES = Integer.MAX_VALUE;
 
-      @Nullable final String jsonTableRef;
+      @Nullable final ValueProvider<String> jsonTableRef;
 
       @Nullable final SerializableFunction<BoundedWindow, TableReference> tableRefFunction;
 
       // Table schema. The schema is required only if the table does not exist.
-      @Nullable final String jsonSchema;
+      @Nullable final String ValueProvider<jsonSchema>;
 
       // Options for creating the table. Valid values are CREATE_IF_NEEDED and
       // CREATE_NEVER.
