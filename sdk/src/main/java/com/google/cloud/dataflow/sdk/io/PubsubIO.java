@@ -66,6 +66,7 @@ import javax.annotation.Nullable;
  * and consume unbounded {@link PCollection PCollections}.
  *
  * <h3>Permissions</h3>
+ *
  * <p>Permission requirements depend on the {@link PipelineRunner} that is used to execute the
  * Dataflow job. Please refer to the documentation of corresponding
  * {@link PipelineRunner PipelineRunners} for more details.
@@ -140,7 +141,7 @@ public class PubsubIO {
    * Populate common {@link DisplayData} between Pubsub source and sink.
    */
   private static void populateCommonDisplayData(DisplayData.Builder builder,
-      String timestampLabel, String idLabel, String topic) {
+      String timestampLabel, String idLabel, ValueProvider<PubsubTopic> topic) {
     builder
         .addIfNotNull(DisplayData.item("timestampLabel", timestampLabel)
             .withLabel("Timestamp Label Attribute"))
@@ -148,7 +149,9 @@ public class PubsubIO {
             .withLabel("ID Label Attribute"));
 
     if (topic != null) {
-      builder.add(DisplayData.item("topic", topic)
+      String topicString = topic.isAccessible() ? topic.get().asPath()
+          : topic.toString();
+      builder.add(DisplayData.item("topic", topicString)
           .withLabel("Pubsub Topic"));
     }
   }
@@ -634,6 +637,10 @@ public class PubsubIO {
        * Like {@code subscription()} but with a {@link ValueProvider}.
        */
       public Bound<T> subscription(ValueProvider<String> subscription) {
+        if (subscription.isAccessible()) {
+          // Validate.
+          PubsubSubscription.fromPath(subscription.get());
+        }
         return new Bound<>(name,
             NestedValueProvider.of(subscription, new SubscriptionTranslator()),
             topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
@@ -655,6 +662,10 @@ public class PubsubIO {
        * Like {@code topic()} but with a {@link ValueProvider}.
        */
       public Bound<T> topic(ValueProvider<String> topic) {
+        if (topic.isAccessible()) {
+          // Validate.
+          PubsubTopic.fromPath(topic.get());
+        }
         return new Bound<>(name, subscription,
             NestedValueProvider.of(topic, new TopicTranslator()),
             timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
@@ -754,11 +765,7 @@ public class PubsubIO {
 
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
-        String topicString =
-            topic == null ? null
-            : topic.isAccessible() ? topic.get().asPath()
-            : topic.toString();
-        populateCommonDisplayData(builder, timestampLabel, idLabel, topicString);
+        populateCommonDisplayData(builder, timestampLabel, idLabel, topic);
 
         builder
             .addIfNotNull(DisplayData.item("maxReadTime", maxReadTime)

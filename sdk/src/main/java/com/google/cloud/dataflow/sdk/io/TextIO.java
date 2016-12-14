@@ -17,6 +17,7 @@
 package com.google.cloud.dataflow.sdk.io;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.cloud.dataflow.sdk.coders.Coder;
@@ -25,6 +26,8 @@ import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
 import com.google.cloud.dataflow.sdk.io.Read.Bounded;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.options.ValueProvider;
+import com.google.cloud.dataflow.sdk.options.ValueProvider.StaticValueProvider;
 import com.google.cloud.dataflow.sdk.runners.DataflowPipelineRunner;
 import com.google.cloud.dataflow.sdk.runners.DirectPipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
@@ -109,6 +112,7 @@ import javax.annotation.Nullable;
  * }</pre>
  *
  * <h3>Permissions</h3>
+ *
  * <p>When run using the {@link DirectPipelineRunner}, your pipeline can read and write text files
  * on your local drive and remote text files on Google Cloud Storage that you have access to using
  * your {@code gcloud} credentials. When running in the Dataflow service using
@@ -145,6 +149,13 @@ public class TextIO {
      * >Java Filesystem glob patterns</a> ("*", "?", "[..]") are supported.
      */
     public static Bound<String> from(String filepattern) {
+      return new Bound<>(DEFAULT_TEXT_CODER).from(filepattern);
+    }
+
+    /**
+     * Same as {@code from(filepattern)}, but accepting a {@link ValueProvider}.
+     */
+    public static Bound<String> from(ValueProvider<String> filepattern) {
       return new Bound<>(DEFAULT_TEXT_CODER).from(filepattern);
     }
 
@@ -201,7 +212,7 @@ public class TextIO {
      */
     public static class Bound<T> extends PTransform<PInput, PCollection<T>> {
       /** The filepattern to read from. */
-      @Nullable private final String filepattern;
+      @Nullable private final ValueProvider<String> filepattern;
 
       /** The Coder to use to decode each line. */
       private final Coder<T> coder;
@@ -216,8 +227,8 @@ public class TextIO {
         this(null, null, coder, true, TextIO.CompressionType.AUTO);
       }
 
-      private Bound(String name, String filepattern, Coder<T> coder, boolean validate,
-          TextIO.CompressionType compressionType) {
+      private Bound(@Nullable String name, @Nullable ValueProvider<String> filepattern,
+          Coder<T> coder, boolean validate, TextIO.CompressionType compressionType) {
         super(name);
         this.coder = coder;
         this.filepattern = filepattern;
@@ -244,12 +255,22 @@ public class TextIO {
 
        */
       public Bound<T> from(String filepattern) {
+        checkNotNull(filepattern, "Filepattern cannot be empty.");
+        return new Bound<>(name, StaticValueProvider.of(filepattern), coder, validate,
+            compressionType);
+      }
+
+      /**
+       * Same as {@code from(filepattern)}, but accepting a {@link ValueProvider}.
+       */
+      public Bound<T> from(ValueProvider<String> filepattern) {
+        checkNotNull(filepattern, "Filepattern cannot be empty.");
         return new Bound<>(name, filepattern, coder, validate, compressionType);
       }
 
       /**
        * Returns a new transform for reading from text files that's like this one but
-       * that uses the given {@link Coder Coder<X>} to decode each of the
+       * that uses the given {@link Coder} to decode each of the
        * lines of the file into a value of type {@code X}.
        *
        * <p>Does not modify this object.
@@ -295,14 +316,16 @@ public class TextIO {
         }
 
         if (validate) {
+          checkState(filepattern.isAccessible(),
+              "Cannot validate with a filepattern provided at runtime.");
           try {
             checkState(
-                !IOChannelUtils.getFactory(filepattern).match(filepattern).isEmpty(),
+                !IOChannelUtils.getFactory(filepattern.get()).match(filepattern.get()).isEmpty(),
                 "Unable to find any files matching %s",
                 filepattern);
           } catch (IOException e) {
             throw new IllegalStateException(
-                String.format("Failed to validate %s", filepattern), e);
+                String.format("Failed to validate %s", filepattern.get()), e);
           }
         }
 
@@ -352,7 +375,7 @@ public class TextIO {
       }
 
       public String getFilepattern() {
-        return filepattern;
+        return filepattern.get();
       }
 
       public boolean needsValidation() {
@@ -396,6 +419,13 @@ public class TextIO {
      * in a common extension, if given by {@link Bound#withSuffix(String)}.
      */
     public static Bound<String> to(String prefix) {
+      return new Bound<>(DEFAULT_TEXT_CODER).to(prefix);
+    }
+
+    /**
+     * Like {@link #to(String)}, but with a {@link ValueProvider}.
+     */
+    public static Bound<String> to(ValueProvider<String> prefix) {
       return new Bound<>(DEFAULT_TEXT_CODER).to(prefix);
     }
 
@@ -502,7 +532,7 @@ public class TextIO {
       private static final String DEFAULT_SHARD_TEMPLATE = ShardNameTemplate.INDEX_OF_MAX;
 
       /** The prefix of each file written, combined with suffix and shardTemplate. */
-      @Nullable private final String filenamePrefix;
+      @Nullable private final ValueProvider<String> filenamePrefix;
       /** The suffix of each file written, combined with prefix and shardTemplate. */
       private final String filenameSuffix;
 
@@ -528,7 +558,7 @@ public class TextIO {
         this(null, null, "", null, null, coder, 0, DEFAULT_SHARD_TEMPLATE, true);
       }
 
-      private Bound(String name, String filenamePrefix, String filenameSuffix,
+      private Bound(String name, ValueProvider<String> filenamePrefix, String filenameSuffix,
           @Nullable String header, @Nullable String footer, Coder<T> coder, int numShards,
           String shardTemplate, boolean validate) {
         super(name);
@@ -563,7 +593,15 @@ public class TextIO {
        */
       public Bound<T> to(String filenamePrefix) {
         validateOutputComponent(filenamePrefix);
-        return new Bound<>(name, filenamePrefix, filenameSuffix, header, footer, coder, numShards,
+        return new Bound<>(name, StaticValueProvider.of(filenamePrefix), filenameSuffix,
+            header, footer, coder, numShards, shardTemplate, validate);
+      }
+
+      /**
+       * Like {@link #to(String)}, but with a {@link ValueProvider}.
+       */
+      public Bound<T> to(ValueProvider<String> filenamePrefix) {
+          return new Bound<>(name, filenamePrefix, filenameSuffix, header, footer, coder, numShards,
             shardTemplate, validate);
       }
 
@@ -634,8 +672,8 @@ public class TextIO {
 
       /**
        * Returns a transform for writing to text files that's like this one
-       * but that uses the given {@link Coder Coder<X>} to encode each of
-       * the elements of the input {@link PCollection PCollection<X>} into an
+       * but that uses the given {@link Coder} to encode each of
+       * the elements of the input {@link PCollection} into an
        * output text line. Does not modify this object.
        *
        * @param <X> the type of the elements of the input {@link PCollection}
@@ -742,7 +780,7 @@ public class TextIO {
       }
 
       public String getFilenamePrefix() {
-        return filenamePrefix;
+        return filenamePrefix.get();
       }
 
       public String getShardTemplate() {
@@ -852,6 +890,12 @@ public class TextIO {
       this.coder = coder;
     }
 
+    @VisibleForTesting
+    TextSource(ValueProvider<String> fileSpec, Coder<T> coder) {
+      super(fileSpec, 1L);
+      this.coder = coder;
+    }
+
     private TextSource(String fileName, long start, long end, Coder<T> coder) {
       super(fileName, 1L, start, end);
       this.coder = coder;
@@ -881,7 +925,7 @@ public class TextIO {
      * A {@link com.google.cloud.dataflow.sdk.io.FileBasedSource.FileBasedReader FileBasedReader}
      * which can decode records delimited by newline characters.
      *
-     * See {@link TextSource} for further details.
+     * <p>See {@link TextSource} for further details.
      */
     @VisibleForTesting
     static class TextBasedReader<T> extends FileBasedReader<T> {
@@ -1013,7 +1057,7 @@ public class TextIO {
       /**
        * Decodes the current element updating the buffer to only contain the unconsumed bytes.
        *
-       * This invalidates the currently stored {@code startOfSeparatorInBuffer} and
+       * <p>This invalidates the currently stored {@code startOfSeparatorInBuffer} and
        * {@code endOfSeparatorInBuffer}.
        */
       private void decodeCurrentElement() throws IOException {
@@ -1054,7 +1098,7 @@ public class TextIO {
 
     @VisibleForTesting
     TextSink(
-        String baseOutputFilename, String extension,
+        ValueProvider<String> baseOutputFilename, String extension,
         @Nullable String header, @Nullable String footer,
         String fileNameTemplate, Coder<T> coder) {
       super(baseOutputFilename, extension, fileNameTemplate);
