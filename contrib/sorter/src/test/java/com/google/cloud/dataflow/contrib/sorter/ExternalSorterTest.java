@@ -19,12 +19,6 @@ package com.google.cloud.dataflow.contrib.sorter;
 import static org.junit.Assert.fail;
 
 import com.google.cloud.dataflow.contrib.sorter.SorterTestUtils.SorterGenerator;
-import java.io.IOException;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -33,6 +27,13 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 
 /** Tests for Sorter. */
 @RunWith(JUnit4.class)
