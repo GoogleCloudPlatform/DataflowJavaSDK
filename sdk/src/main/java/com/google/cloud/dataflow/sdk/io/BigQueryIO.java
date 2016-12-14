@@ -786,8 +786,6 @@ public class BigQueryIO {
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
         super.populateDisplayData(builder);
-        TableReference table = getTable();
-
         builder
             .addIfNotNull(DisplayData.item("table", displayTable(getTableProvider()))
               .withLabel("Table"))
