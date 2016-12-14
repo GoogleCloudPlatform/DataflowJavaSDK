@@ -1123,9 +1123,7 @@ public class PubsubIO {
       @Override
       public void populateDisplayData(DisplayData.Builder builder) {
         super.populateDisplayData(builder);
-        String topicString = topic.isAccessible()
-            ? topic.get().asPath() : topic.toString();
-        populateCommonDisplayData(builder, timestampLabel, idLabel, topicString);
+        populateCommonDisplayData(builder, timestampLabel, idLabel, topic);
       }
 
       @Override
