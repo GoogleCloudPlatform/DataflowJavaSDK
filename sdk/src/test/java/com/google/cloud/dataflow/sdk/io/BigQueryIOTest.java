@@ -1682,13 +1682,18 @@ public class BigQueryIOTest implements Serializable {
     BigQueryOptions bqOptions = options.as(BigQueryOptions.class);
     bqOptions.setTempLocation("gs://testbucket/testdir");
     Pipeline pipeline = TestPipeline.create(options);
+    BigQueryIO.Read.Bound read = BigQueryIO.Read.from(
+        options.getInputTable()).withoutValidation();
+    BigQueryIO.Write.Bound write =BigQueryIO.Write
+        .to(options.getOutputTable())
+        .withSchema(NestedValueProvider.of(
+            options.getOutputSchema(), new JsonSchemaToTableSchema()))
+        .withoutValidation();
     pipeline
-        .apply(BigQueryIO.Read.from(options.getInputTable()).withoutValidation())
-        .apply(BigQueryIO.Write
-            .to(options.getOutputTable())
-            .withSchema(NestedValueProvider.of(
-                options.getOutputSchema(), new JsonSchemaToTableSchema()))
-            .withoutValidation());
+        .apply(read)
+        .apply(write);
+    DisplayData.from(read);
+    DisplayData.from(write);
   }
 
   @Test
@@ -1697,13 +1702,18 @@ public class BigQueryIOTest implements Serializable {
     BigQueryOptions bqOptions = options.as(BigQueryOptions.class);
     bqOptions.setTempLocation("gs://testbucket/testdir");
     Pipeline pipeline = TestPipeline.create(options);
+    BigQueryIO.Read.Bound read = BigQueryIO.Read.fromQuery(
+        options.getInputQuery()).withoutValidation();
+    BigQueryIO.Write.Bound write =BigQueryIO.Write
+        .to(options.getOutputTable())
+        .withSchema(NestedValueProvider.of(
+            options.getOutputSchema(), new JsonSchemaToTableSchema()))
+        .withoutValidation();
     pipeline
-        .apply(BigQueryIO.Read.fromQuery(options.getInputQuery()).withoutValidation())
-        .apply(BigQueryIO.Write
-            .to(options.getOutputTable())
-            .withSchema(NestedValueProvider.of(
-                options.getOutputSchema(), new JsonSchemaToTableSchema()))
-            .withoutValidation());
+        .apply(read)
+        .apply(write);
+    DisplayData.from(read);
+    DisplayData.from(write);
   }
 
   private static void testNumFiles(File tempDir, int expectedNumFiles) {
