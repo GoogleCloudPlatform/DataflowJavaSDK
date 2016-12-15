@@ -31,6 +31,7 @@ import com.google.api.services.bigquery.model.JobReference;
 import com.google.api.services.bigquery.model.JobStatistics;
 import com.google.api.services.bigquery.model.JobStatus;
 import com.google.api.services.bigquery.model.QueryRequest;
+import com.google.api.services.bigquery.model.Table;
 import com.google.api.services.bigquery.model.TableReference;
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.api.services.bigquery.model.TableSchema;
@@ -2200,7 +2201,8 @@ public class BigQueryIO {
       /** Returns the table reference, or {@code null}. */
       @Nullable
       public ValueProvider<TableReference> getTable() {
-        return NestedValueProvider.of(jsonTableRef, new JsonTableRefToTableRef());
+        return jsonTableRef == null ? null :
+            NestedValueProvider.of(jsonTableRef, new JsonTableRefToTableRef());
       }
 
       /** Returns {@code true} if table validation is enabled. */
@@ -2622,6 +2624,11 @@ public class BigQueryIO {
     }
   }
 
+  @VisibleForTesting
+  static void clearCreatedTables() {
+    StreamingWriteFn.clearCreatedTables();
+  }
+
   /////////////////////////////////////////////////////////////////////////////
 
   /**
@@ -2652,6 +2659,12 @@ public class BigQueryIO {
     StreamingWriteFn(ValueProvider<TableSchema> schema) {
       this.jsonTableSchema =
           NestedValueProvider.of(schema, new TableSchemaToJsonSchema());
+    }
+
+    private static void clearCreatedTables() {
+      synchronized (createdTables) {
+        createdTables.clear();
+      }
     }
 
     /** Prepares a target BigQuery table. */
@@ -2696,20 +2709,25 @@ public class BigQueryIO {
     }
 
     public TableReference getOrCreateTable(BigQueryOptions options, String tableSpec)
-        throws IOException {
+        throws InterruptedException, IOException {
       TableReference tableReference = parseTableSpec(tableSpec);
       if (!createdTables.contains(tableSpec)) {
         synchronized (createdTables) {
           // Another thread may have succeeded in creating the table in the meanwhile, so
           // check again. This check isn't needed for correctness, but we add it to prevent
           // every thread from attempting a create and overwhelming our BigQuery quota.
+          DatasetService datasetService = bqServices.getDatasetService(options);
           if (!createdTables.contains(tableSpec)) {
-            TableSchema tableSchema = JSON_FACTORY.fromString(
-                jsonTableSchema.get(), TableSchema.class);
-            Bigquery client = Transport.newBigQueryClient(options).build();
-            BigQueryTableInserter inserter = new BigQueryTableInserter(client);
-            inserter.getOrCreateTable(tableReference, Write.WriteDisposition.WRITE_APPEND,
-                Write.CreateDisposition.CREATE_IF_NEEDED, tableSchema);
+            Table table = datasetService.getTable(
+                tableReference.getProjectId(),
+                tableReference.getDatasetId(),
+                tableReference.getTableId());
+            if (table == null) {
+              TableSchema tableSchema = JSON_FACTORY.fromString(
+                  jsonTableSchema.get(), TableSchema.class);
+              datasetService.createTable(
+                  new Table().setTableReference(tableReference).setSchema(tableSchema));
+            }
             createdTables.add(tableSpec);
           }
         }
