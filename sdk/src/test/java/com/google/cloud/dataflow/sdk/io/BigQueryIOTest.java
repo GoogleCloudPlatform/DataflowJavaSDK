@@ -1684,16 +1684,9 @@ public class BigQueryIOTest implements Serializable {
     Pipeline pipeline = TestPipeline.create(options);
     BigQueryIO.Read.Bound read = BigQueryIO.Read.from(
         options.getInputTable()).withoutValidation();
-    BigQueryIO.Write.Bound write =BigQueryIO.Write
-        .to(options.getOutputTable())
-        .withSchema(NestedValueProvider.of(
-            options.getOutputSchema(), new JsonSchemaToTableSchema()))
-        .withoutValidation();
-    pipeline
-        .apply(read)
-        .apply(write);
+    pipeline.apply(read);
+    // Test that this doesn't throw.
     DisplayData.from(read);
-    DisplayData.from(write);
   }
 
   @Test
@@ -1704,15 +1697,26 @@ public class BigQueryIOTest implements Serializable {
     Pipeline pipeline = TestPipeline.create(options);
     BigQueryIO.Read.Bound read = BigQueryIO.Read.fromQuery(
         options.getInputQuery()).withoutValidation();
-    BigQueryIO.Write.Bound write =BigQueryIO.Write
+    pipeline.apply(read);
+    // Test that this doesn't throw.
+    DisplayData.from(read);
+  }
+
+  @Test
+  public void testRuntimeOptionsNotCalledInApplyOutput() {
+    RuntimeTestOptions options = PipelineOptionsFactory.as(RuntimeTestOptions.class);
+    BigQueryOptions bqOptions = options.as(BigQueryOptions.class);
+    bqOptions.setTempLocation("gs://testbucket/testdir");
+    Pipeline pipeline = TestPipeline.create(options);
+    BigQueryIO.Write.Bound write = BigQueryIO.Write
         .to(options.getOutputTable())
         .withSchema(NestedValueProvider.of(
             options.getOutputSchema(), new JsonSchemaToTableSchema()))
         .withoutValidation();
     pipeline
-        .apply(read)
+        .apply(Create.<TableRow>of())
         .apply(write);
-    DisplayData.from(read);
+    // Test that this doesn't throw.
     DisplayData.from(write);
   }
 
