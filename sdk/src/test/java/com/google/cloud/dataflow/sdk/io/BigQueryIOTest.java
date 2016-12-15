@@ -1725,7 +1725,6 @@ public class BigQueryIOTest implements Serializable {
   public void testTagWithUniqueIdsAndTableProjectNotNull() {
     BigQueryOptions bqOptions =
         TestPipeline.testingPipelineOptions().as(BigQueryOptions.class);
-    bqOptions.setProject(null);
     TableReference table = BigQueryIO.parseTableSpec("data_set.table_name");
     BigQueryIO.TagWithUniqueIdsAndTable tag =
         new BigQueryIO.TagWithUniqueIdsAndTable(

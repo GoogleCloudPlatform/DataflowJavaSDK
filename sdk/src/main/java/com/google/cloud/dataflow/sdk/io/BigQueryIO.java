@@ -2877,12 +2877,8 @@ public class BigQueryIO {
       checkArgument(table == null ^ tableRefFunction == null,
           "Exactly one of table or tableRefFunction should be set");
       if (table != null) {
-        if (table.isAccessible() && Strings.isNullOrEmpty(table.get().getProjectId())) {
-          TableReference tableRef = table.get()
-              .setProjectId(options.as(BigQueryOptions.class).getProject());
-          table = NestedValueProvider.of(
-              StaticValueProvider.of(toJsonString(tableRef)),
-              new JsonTableRefToTableRef());
+        if (table.isAccessible() && table.get().getProjectId() == null) {
+          table.get().setProjectId(options.as(BigQueryOptions.class).getProject());
         }
         this.tableSpec = NestedValueProvider.of(table, new TableRefToTableSpec());
       } else {
