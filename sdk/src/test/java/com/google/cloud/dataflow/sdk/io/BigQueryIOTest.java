@@ -22,6 +22,7 @@ import static com.google.cloud.dataflow.sdk.transforms.display.DisplayDataMatche
 import static com.google.common.base.Preconditions.checkArgument;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
@@ -1718,6 +1719,19 @@ public class BigQueryIOTest implements Serializable {
         .apply(write);
     // Test that this doesn't throw.
     DisplayData.from(write);
+  }
+
+  @Test
+  public void testTagWithUniqueIdsAndTableProjectNotNull() {
+    BigQueryOptions bqOptions =
+        TestPipeline.testingPipelineOptions().as(BigQueryOptions.class);
+    bqOptions.setProject(null);
+    TableReference table = BigQueryIO.parseTableSpec("data_set.table_name");
+    BigQueryIO.TagWithUniqueIdsAndTable tag =
+        new BigQueryIO.TagWithUniqueIdsAndTable(
+            bqOptions, StaticValueProvider.of(table), null);
+    table = BigQueryIO.parseTableSpec(tag.getTableSpec().get());
+    assertNotNull(table.getProjectId());
   }
 
   private static void testNumFiles(File tempDir, int expectedNumFiles) {
