@@ -397,6 +397,161 @@ public class BigQueryIOTest implements Serializable {
     }
   }
 
+  private static class TableContainer {
+    Table table;
+    List<TableRow> rows;
+    List<String> ids;
+
+    TableContainer(Table table) {
+      this.table = table;
+      this.rows = new ArrayList<>();
+      this.ids = new ArrayList<>();
+    }
+
+    TableContainer addRow(TableRow row, String id) {
+      rows.add(row);
+      ids.add(id);
+      return this;
+    }
+
+    Table getTable() {
+      return table;
+    }
+
+     List<TableRow> getRows() {
+      return rows;
+    }
+  }
+
+  // Table information must be static, as each ParDo will get a separate instance of
+  // FakeDatasetServices, and they must all modify the same storage.
+  private static com.google.common.collect.Table<String, String, Map<String, TableContainer>>
+      tables = HashBasedTable.create();
+
+  /** A fake dataset service that can be serialized, for use in testReadFromTable. */
+  private static class FakeDatasetService implements DatasetService, Serializable {
+
+    @Override
+    public Table getTable(String projectId, String datasetId, String tableId)
+        throws InterruptedException, IOException {
+      synchronized (tables) {
+        Map<String, TableContainer> dataset =
+            checkNotNull(
+                tables.get(projectId, datasetId),
+                "Tried to get a dataset %s:%s from %s, but no such dataset was set",
+                projectId,
+                datasetId,
+                tableId,
+                FakeDatasetService.class.getSimpleName());
+        TableContainer tableContainer = dataset.get(tableId);
+        return tableContainer == null ? null : tableContainer.getTable();
+      }
+    }
+
+    public List<TableRow> getAllRows(String projectId, String datasetId, String tableId)
+        throws InterruptedException, IOException {
+      synchronized (tables) {
+        return getTableContainer(projectId, datasetId, tableId).getRows();
+      }
+    }
+
+    private TableContainer getTableContainer(String projectId, String datasetId, String tableId)
+            throws InterruptedException, IOException {
+       synchronized (tables) {
+         Map<String, TableContainer> dataset =
+             checkNotNull(
+                 tables.get(projectId, datasetId),
+                 "Tried to get a dataset %s:%s from %s, but no such dataset was set",
+                 projectId,
+                 datasetId,
+                 FakeDatasetService.class.getSimpleName());
+         return checkNotNull(dataset.get(tableId),
+             "Tried to get a table %s:%s.%s from %s, but no such table was set",
+             projectId,
+             datasetId,
+             tableId,
+             FakeDatasetService.class.getSimpleName());
+       }
+    }
+
+    @Override
+    public void deleteTable(String projectId, String datasetId, String tableId)
+        throws IOException, InterruptedException {
+      throw new UnsupportedOperationException("Unsupported");
+    }
+
+
+    @Override
+    public void createTable(Table table) throws IOException {
+      TableReference tableReference = table.getTableReference();
+      synchronized (tables) {
+        Map<String, TableContainer> dataset =
+            checkNotNull(
+                tables.get(tableReference.getProjectId(), tableReference.getDatasetId()),
+                "Tried to get a dataset %s:%s from %s, but no such table was set",
+                tableReference.getProjectId(),
+                tableReference.getDatasetId(),
+                FakeDatasetService.class.getSimpleName());
+        TableContainer tableContainer = dataset.get(tableReference.getTableId());
+        System.out.println("CREATING TABLE " + tableReference);
+        if (tableContainer == null) {
+          tableContainer = new TableContainer(table);
+          dataset.put(tableReference.getTableId(), tableContainer);
+        }
+      }
+    }
+
+    @Override
+    public boolean isTableEmpty(String projectId, String datasetId, String tableId)
+        throws IOException, InterruptedException {
+      Long numBytes = getTable(projectId, datasetId, tableId).getNumBytes();
+      return numBytes == null || numBytes == 0L;
+    }
+
+    @Override
+    public Dataset getDataset(
+        String projectId, String datasetId) throws IOException, InterruptedException {
+      throw new UnsupportedOperationException("Unsupported");
+    }
+
+    @Override
+    public void createDataset(
+        String projectId, String datasetId, String location, String description)
+        throws IOException, InterruptedException {
+      synchronized (tables) {
+        Map<String, TableContainer> dataset = tables.get(projectId, datasetId);
+        if (dataset == null) {
+          dataset = new HashMap<>();
+          tables.put(projectId, datasetId, dataset);
+        }
+      }
+    }
+
+    @Override
+    public void deleteDataset(String projectId, String datasetId)
+        throws IOException, InterruptedException {
+      throw new UnsupportedOperationException("Unsupported");
+    }
+
+    @Override
+    public long insertAll(
+        TableReference ref, List<TableRow> rowList, @Nullable List<String> insertIdList)
+        throws IOException, InterruptedException {
+      synchronized (tables) {
+        assertEquals(rowList.size(), insertIdList.size());
+
+        long dataSize = 0;
+        TableContainer tableContainer = getTableContainer(
+            ref.getProjectId(), ref.getDatasetId(), ref.getTableId());
+        for (int i = 0; i < rowList.size(); ++i) {
+          tableContainer.addRow(rowList.get(i), insertIdList.get(i));
+          dataSize += rowList.get(i).toString().length();
+        }
+        return dataSize;
+      }
+    }
+  }
+
   @Rule public transient ExpectedException thrown = ExpectedException.none();
   @Rule public transient ExpectedLogs logged = ExpectedLogs.none(BigQueryIO.class);
   @Rule public transient TemporaryFolder testFolder = new TemporaryFolder();
@@ -674,6 +829,217 @@ public class BigQueryIOTest implements Serializable {
     logged.verifyNotLogged("try 3/" + BigQueryIO.Write.Bound.MAX_RETRY_JOBS);
     File tempDir = new File(bqOptions.getTempLocation());
     testNumFiles(tempDir, 0);
+  }
+
+  @Test
+  @Category(NeedsRunner.class)
+  public void testStreamingWrite() throws Exception {
+    BigQueryOptions bqOptions = TestPipeline.testingPipelineOptions().as(BigQueryOptions.class);
+    bqOptions.setProject("defaultProject");
+    bqOptions.setTempLocation(testFolder.newFolder("BigQueryIOTest").getAbsolutePath());
+
+    FakeDatasetService datasetService = new FakeDatasetService();
+    datasetService.createDataset("project-id", "dataset-id", "", "");
+    FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
+            .withDatasetService(datasetService);
+
+    Pipeline p = TestPipeline.create(bqOptions);
+    p.apply(Create.of(
+        new TableRow().set("name", "a").set("number", 1),
+        new TableRow().set("name", "b").set("number", 2),
+        new TableRow().set("name", "c").set("number", 3),
+        new TableRow().set("name", "d").set("number", 4))
+          .withCoder(TableRowJsonCoder.of()))
+            .setIsBoundedInternal(PCollection.IsBounded.UNBOUNDED)
+            .apply(BigQueryIO.Write.to("project-id:dataset-id.table-id")
+                .withCreateDisposition(CreateDisposition.CREATE_IF_NEEDED)
+                .withSchema(new TableSchema().setFields(
+                    ImmutableList.of(
+                        new TableFieldSchema().setName("name").setType("STRING"),
+                        new TableFieldSchema().setName("number").setType("INTEGER"))))
+                .withTestServices(fakeBqServices)
+                .withoutValidation());
+    p.run();
+
+
+    assertThat(datasetService.getAllRows("project-id", "dataset-id", "table-id"),
+        containsInAnyOrder(
+            new TableRow().set("name", "a").set("number", 1),
+            new TableRow().set("name", "b").set("number", 2),
+            new TableRow().set("name", "c").set("number", 3),
+            new TableRow().set("name", "d").set("number", 4)));
+  }
+
+  /**
+   * A generic window function that allows partitioning data into windows by a string value.
+   *
+   * <p>Logically, creates multiple global windows, and the user provides a function that
+   * decides which global window a value should go into.
+   */
+  public static class PartitionedGlobalWindows extends
+
+      NonMergingWindowFn<TableRow, PartitionedGlobalWindow> {
+    private SerializableFunction<Object, String> extractPartition;
+
+    public PartitionedGlobalWindows(SerializableFunction<Object, String> extractPartition) {
+      this.extractPartition = extractPartition;
+    }
+
+    @Override
+    public Collection<PartitionedGlobalWindow> assignWindows(AssignContext c) {
+      return Collections.singletonList(new PartitionedGlobalWindow(
+          extractPartition.apply(c.element())));
+    }
+
+    @Override
+    public boolean isCompatible(WindowFn<?, ?> o) {
+      return o instanceof PartitionedGlobalWindows;
+    }
+
+    @Override
+    public Coder<PartitionedGlobalWindow> windowCoder() {
+      return new PartitionedGlobalWindowCoder();
+    }
+
+    @Override
+    public PartitionedGlobalWindow getSideInputWindow(BoundedWindow window) {
+      throw new UnsupportedOperationException(
+          "PartitionedGlobalWindows is not allowed in side inputs");
+    }
+
+    @Override
+    public Instant getOutputTime(Instant inputTimestamp, PartitionedGlobalWindow window) {
+      return inputTimestamp;
+    }
+  }
+
+  /**
+   * Custom Window object that encodes a String value.
+   */
+  public static class PartitionedGlobalWindow extends BoundedWindow {
+    String value;
+
+    public PartitionedGlobalWindow(String value) {
+      this.value = value;
+    }
+
+    @Override
+    public Instant maxTimestamp() {
+      return GlobalWindow.INSTANCE.maxTimestamp();
+    }
+
+    // The following methods are only needed due to BEAM-1022. Once this issue is fixed, we will
+    // no longer need these.
+    @Override public boolean equals(Object other) {
+      if (other instanceof PartitionedGlobalWindow) {
+        return value.equals(((PartitionedGlobalWindow) other).value);
+      }
+      return false;
+    }
+
+    @Override public int hashCode() {
+      return value.hashCode();
+    }
+  }
+
+  /**
+   * Coder for @link{PartitionedGlobalWindow}.
+   */
+  public static class PartitionedGlobalWindowCoder extends AtomicCoder<PartitionedGlobalWindow> {
+    @Override
+    public void encode(PartitionedGlobalWindow window, OutputStream outStream, Context context)
+        throws IOException, CoderException {
+      StringUtf8Coder.of().encode(window.value, outStream, context);
+    }
+
+    @Override
+    public PartitionedGlobalWindow decode(InputStream inStream, Context context)
+        throws IOException, CoderException {
+      return new PartitionedGlobalWindow(StringUtf8Coder.of().decode(inStream, context));
+    }
+  }
+
+  @Test
+  @Category(NeedsRunner.class)
+  public void testStreamingWriteWithWindowFn() throws Exception {
+    BigQueryOptions bqOptions = TestPipeline.testingPipelineOptions().as(BigQueryOptions.class);
+    bqOptions.setProject("defaultProject");
+    bqOptions.setTempLocation(testFolder.newFolder("BigQueryIOTest").getAbsolutePath());
+
+    FakeDatasetService datasetService = new FakeDatasetService();
+    datasetService.createDataset("project-id", "dataset-id", "", "");
+    FakeBigQueryServices fakeBqServices = new FakeBigQueryServices()
+        .withDatasetService(datasetService);
+
+    List<TableRow> inserts = new ArrayList<>();
+    for (int i = 0; i < 10; i++) {
+      inserts.add(new TableRow().set("name", "number" + i).set("number", i));
+    }
+
+    // Create a windowing strategy that puts the input into five different windows depending on
+    // record value.
+    WindowFn<TableRow, PartitionedGlobalWindow> window = new PartitionedGlobalWindows(
+        new SerializableFunction<Object, String>() {
+          @Override
+          public String apply(Object value) {
+            try {
+              if (value instanceof TableRow) {
+                int intValue = (Integer) ((TableRow) value).get("number") % 5;
+                return Integer.toString(intValue);
+              }
+            } catch (NumberFormatException e) {
+              // ignored.
+            }
+            return value.toString();
+          }
+        }
+    );
+
+    SerializableFunction<BoundedWindow, String> tableFunction =
+        new SerializableFunction<BoundedWindow, String>() {
+          @Override
+          public String apply(BoundedWindow input) {
+            return "project-id:dataset-id.table-id-" + ((PartitionedGlobalWindow) input).value;
+          }
+    };
+
+    Pipeline p = TestPipeline.create(bqOptions);
+    p.apply(Create.of(inserts)
+        .withCoder(TableRowJsonCoder.of()))
+        .setIsBoundedInternal(PCollection.IsBounded.UNBOUNDED)
+        .apply(Window.<TableRow>into(window))
+        .apply(BigQueryIO.Write
+            .to(tableFunction)
+            .withCreateDisposition(CreateDisposition.CREATE_IF_NEEDED)
+            .withSchema(new TableSchema().setFields(
+                ImmutableList.of(
+                    new TableFieldSchema().setName("name").setType("STRING"),
+                    new TableFieldSchema().setName("number").setType("INTEGER"))))
+            .withTestServices(fakeBqServices)
+            .withoutValidation());
+    p.run();
+
+
+    assertThat(datasetService.getAllRows("project-id", "dataset-id", "table-id-0"),
+        containsInAnyOrder(
+            new TableRow().set("name", "number0").set("number", 0),
+            new TableRow().set("name", "number5").set("number", 5)));
+    assertThat(datasetService.getAllRows("project-id", "dataset-id", "table-id-1"),
+        containsInAnyOrder(
+            new TableRow().set("name", "number1").set("number", 1),
+            new TableRow().set("name", "number6").set("number", 6)));
+    assertThat(datasetService.getAllRows("project-id", "dataset-id", "table-id-2"),
+        containsInAnyOrder(
+            new TableRow().set("name", "number2").set("number", 2),
+            new TableRow().set("name", "number7").set("number", 7)));
+    assertThat(datasetService.getAllRows("project-id", "dataset-id", "table-id-3"),
+        containsInAnyOrder(
+            new TableRow().set("name", "number3").set("number", 3),
+            new TableRow().set("name", "number8").set("number", 8)));
+    assertThat(datasetService.getAllRows("project-id", "dataset-id", "table-id-4"),
+        containsInAnyOrder(
+            new TableRow().set("name", "number4").set("number", 4),
+            new TableRow().set("name", "number9").set("number", 9)));
   }
 
   @Test
