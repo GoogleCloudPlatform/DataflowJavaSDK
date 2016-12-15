@@ -30,6 +30,7 @@ import com.google.cloud.dataflow.sdk.options.BigQueryOptions;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.List;
 import java.util.NoSuchElementException;
 
 import javax.annotation.Nullable;
@@ -140,6 +141,18 @@ public interface BigQueryServices extends Serializable {
      * <p>Before you can delete a dataset, you must delete all its tables.
      */
     void deleteDataset(String projectId, String datasetId)
+        throws IOException, InterruptedException;
+
+    void createTable(Table table) throws IOException;
+
+    boolean isTableEmpty(String projectId, String datasetId, String tableId)
+        throws IOException, InterruptedException;
+
+    Dataset getDataset(
+        String projectId, String datasetId) throws IOException, InterruptedException;
+
+    long insertAll(
+        TableReference ref, List<TableRow> rowList, @Nullable List<String> insertIdList)
         throws IOException, InterruptedException;
   }
 
