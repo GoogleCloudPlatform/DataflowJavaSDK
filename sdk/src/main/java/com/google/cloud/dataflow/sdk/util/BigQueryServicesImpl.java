@@ -45,6 +45,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.NoSuchElementException;
 
 import javax.annotation.Nullable;
@@ -509,6 +510,18 @@ public class BigQueryServicesImpl implements BigQueryServices {
               datasetId, MAX_RPC_RETRIES),
           Sleeper.DEFAULT,
           backoff);
+    }
+
+    @Override
+    public void createTable(Table table) throws IOException {
+      throw new RuntimeException("Not supported");
+    }
+
+    @Override
+    public long insertAll(
+        TableReference ref, List<TableRow> rowList, @Nullable List<String> insertIdList)
+        throws IOException, InterruptedException {
+      throw new RuntimeException("Not supported");
     }
   }
 
