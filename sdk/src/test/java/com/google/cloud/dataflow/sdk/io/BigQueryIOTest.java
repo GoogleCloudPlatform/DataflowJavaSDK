@@ -1722,14 +1722,15 @@ public class BigQueryIOTest implements Serializable {
   }
 
   @Test
-  public void testTagWithUniqueIdsAndTableProjectNotNull() {
+  public void testTagWithUniqueIdsAndTableProjectNotNullWithNvp() {
     BigQueryOptions bqOptions =
         TestPipeline.testingPipelineOptions().as(BigQueryOptions.class);
-    TableReference table = BigQueryIO.parseTableSpec("data_set.table_name");
     BigQueryIO.TagWithUniqueIdsAndTable tag =
         new BigQueryIO.TagWithUniqueIdsAndTable(
-            bqOptions, StaticValueProvider.of(table), null);
-    table = BigQueryIO.parseTableSpec(tag.getTableSpec().get());
+            bqOptions, NestedValueProvider.of(
+                StaticValueProvider.of("data_set.table_name"),
+                new BigQueryIO.TableSpecToTableRef()), null);
+    TableReference table = BigQueryIO.parseTableSpec(tag.getTableSpec().get());
     assertNotNull(table.getProjectId());
   }
 
