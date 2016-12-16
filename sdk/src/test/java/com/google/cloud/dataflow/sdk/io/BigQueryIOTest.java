@@ -1723,8 +1723,8 @@ public class BigQueryIOTest implements Serializable {
 
   @Test
   public void testTagWithUniqueIdsAndTableProjectNotNullWithNvp() {
-    BigQueryOptions bqOptions =
-        TestPipeline.testingPipelineOptions().as(BigQueryOptions.class);
+    BigQueryOptions bqOptions = PipelineOptionsFactory.as(BigQueryOptions.class);
+    bqOptions.setProject("project");
     BigQueryIO.TagWithUniqueIdsAndTable tag =
         new BigQueryIO.TagWithUniqueIdsAndTable(
             bqOptions, NestedValueProvider.of(
