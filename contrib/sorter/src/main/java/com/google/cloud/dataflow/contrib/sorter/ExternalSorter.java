@@ -66,12 +66,13 @@ class ExternalSorter implements Sorter {
     private int memoryMB = 100;
 
     /** Sets the path to a temporary location where the sorter writes intermediate files. */
-    public void setTempLocation(String tempLocation) {
+    public Options setTempLocation(String tempLocation) {
       if (tempLocation.startsWith("gs://")) {
         throw new IllegalArgumentException("Sorter doesn't support GCS temporary location.");
       }
 
       this.tempLocation = tempLocation;
+      return this;
     }
 
     /** Returns the configured temporary location. */
@@ -79,10 +80,17 @@ class ExternalSorter implements Sorter {
       return tempLocation;
     }
 
-    /** Sets the size of the memory buffer in megabytes. */
-    public void setMemoryMB(int memoryMB) {
+    /**
+     * Sets the size of the memory buffer in megabytes. Must be greater than zero and less than
+     * 2048.
+     */
+    public Options setMemoryMB(int memoryMB) {
       checkArgument(memoryMB > 0, "memoryMB must be greater than zero");
+      // Hadoop's external sort stores the number of available memory bytes in an int, this prevents
+      // integer overflow
+      checkArgument(memoryMB < 2048, "memoryMB must be less than 2048");
       this.memoryMB = memoryMB;
+      return this;
     }
 
     /** Returns the configured size of the memory buffer. */
@@ -134,6 +142,9 @@ class ExternalSorter implements Sorter {
       paths = new Path[] {new Path(tempDir, "test.seq")};
 
       JobConf conf = new JobConf();
+      // Sets directory for intermediate files created during merge of merge sort
+      conf.set("io.seqfile.local.dir", tempDir.toUri().getPath());
+
       writer =
           SequenceFile.createWriter(
               conf,
@@ -143,6 +154,10 @@ class ExternalSorter implements Sorter {
               Writer.compression(CompressionType.NONE));
 
       FileSystem fs = FileSystem.getLocal(conf);
+      // Directory has to exist for Hadoop to recognize it as deletable on exit
+      fs.mkdirs(tempDir);
+      fs.deleteOnExit(tempDir);
+
       sorter =
           new SequenceFile.Sorter(
               fs, new BytesWritable.Comparator(), BytesWritable.class, BytesWritable.class, conf);
