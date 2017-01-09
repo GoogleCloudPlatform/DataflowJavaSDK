@@ -1,7 +1,7 @@
 # KafkaIO : Dataflow Unbounded Source and Sink for Kafka Topics
 
-KafkaIO provides unbounded sources and sinks for [Kafka](https://www.firebase.com/)
-topics. Kafka version 0.9 and above are supported.
+KafkaIO provides unbounded source and sink for [Kafka](http://kafka.apache.org/)
+topics. Kafka versions 0.9 and above are supported.
 
 ## Basic Usage
 
@@ -9,7 +9,7 @@ topics. Kafka version 0.9 and above are supported.
 ```java
  PCollection<KV<Long, String>> kafkaRecords =
    pipeline
-     .applY(KafkaIO.read()
+     .apply(KafkaIO.read()
        .withBootstrapServers("broker_1:9092,broker_2:9092")
        .withTopics(ImmutableList.of("topic_a"))
        .withKeyCoder(BigEndianLongCoder.of())
@@ -25,6 +25,7 @@ topics. Kafka version 0.9 and above are supported.
    .withTopic("results")
    .withKeyCoder(BigEndianLongCoder.of())
    .withValueCoder(StringUtf8Coder.of())
+ );
 ```
 
 Please see JavaDoc for KafkaIO in
