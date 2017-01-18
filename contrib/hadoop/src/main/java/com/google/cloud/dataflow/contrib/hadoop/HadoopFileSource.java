@@ -26,8 +26,10 @@ import com.google.cloud.dataflow.sdk.io.BoundedSource;
 import com.google.cloud.dataflow.sdk.io.Read;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.values.KV;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -42,6 +44,7 @@ import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
+
 import java.io.Externalizable;
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -50,6 +53,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import javax.annotation.Nullable;
 
@@ -94,12 +98,19 @@ import javax.annotation.Nullable;
  */
 public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
   private static final long serialVersionUID = 0L;
+  // See setIsRemoteFileFromLaunchSite() for more information. This variable must be static.
+  private static boolean isRemoteFileFromLaunchSite;
 
   private final String filepattern;
   private final Class<? extends FileInputFormat<?, ?>> formatClass;
   private final Class<K> keyClass;
   private final Class<V> valueClass;
   private final SerializableSplit serializableSplit;
+  // User-provided output coder in place of the default implementation from this class.
+  private final Coder<KV<K, V>> overrideOutputCoder;
+  // Deserializer configurations not found in core-site.xml. E.g., hbase.import.version
+  // which specifies the HBase sequence file's format.
+  private final Map<String, String> serializationProperties;
 
   /**
    * Creates a {@code Read} transform that will read from an {@code HadoopFileSource}
@@ -126,12 +137,53 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
   }
 
   /**
+   * Creates a {@code HadoopFileSource} that reads from the given file name or pattern ("glob")
+   * using the given Hadoop {@link org.apache.hadoop.mapreduce.lib.input.FileInputFormat},
+   * with key-value types specified by the given key class and value class. This constructor
+   * also sets a user-provided output coder and passes on additional configuration parameters
+   * to the deserializer.
+   */
+  public static <K, V, T extends FileInputFormat<K, V>> HadoopFileSource<K, V> from(
+      String filepattern, Class<T> formatClass, Class<K> keyClass, Class<V> valueClass,
+      Coder<KV<K, V>> overrideOutputCoder, Map<String, String> serializationProperties) {
+    @SuppressWarnings("unchecked")
+    HadoopFileSource<K, V> source = (HadoopFileSource<K, V>)
+        new HadoopFileSource(filepattern, formatClass, keyClass, valueClass,
+            null /** serializableSplit **/, overrideOutputCoder, serializationProperties);
+    return source;
+  }
+
+  /**
+   * A workaround to suppress confusing warnings and stack traces when input files are on Google
+   * Cloud Storage.
+   *
+   * <p>When used in a on-cloud dataflow job, this class attempts to access the input files both
+   * from the launching host and the worker VMs on cloud.When the launching host is off the cloud,
+   * e.g., a user's desktop, file accesses from it would fail, because the gcs-connector has been
+   * configured to use the GCE VM's authentication mechanism.
+   *
+   * <p>In the above scenario, the file accesses from the launching host is unnecessary, and
+   * the failure is caught and ignored, but gcs-connector generates a large amount of warning logs
+   * and stack traces, which are confusing because it happens right before the job is staged to
+   * the cloud, which may take a long time. To the user the program may appear to have hung due
+   * to the failure.
+   *
+   * <p>When {@code isRemoteFile} is {@code true}, this class would not try to access
+   * the input files from the launching host, sidestepping the problem. When the program runs
+   * on cloud this flag is not carried over and file accesses would proceed.
+   */
+  public static void setIsRemoteFileFromLaunchSite(boolean isRemoteFile) {
+    isRemoteFileFromLaunchSite = isRemoteFile;
+  }
+
+  /**
    * Create a {@code HadoopFileSource} based on a file or a file pattern specification.
    */
   private HadoopFileSource(String filepattern,
       Class<? extends FileInputFormat<?, ?>> formatClass, Class<K> keyClass,
       Class<V> valueClass) {
-    this(filepattern, formatClass, keyClass, valueClass, null);
+    this(filepattern, formatClass, keyClass, valueClass, null /** serializableSplit**/,
+        null /** overrideOutputCoder**/, ImmutableMap.<String, String>of());
   }
 
   /**
@@ -140,12 +192,16 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
    */
   private HadoopFileSource(String filepattern,
       Class<? extends FileInputFormat<?, ?>> formatClass, Class<K> keyClass,
-      Class<V> valueClass, SerializableSplit serializableSplit) {
+      Class<V> valueClass, SerializableSplit serializableSplit, Coder<KV<K, V>> overrideOutputCoder,
+      Map<String, String> serializationProperties) {
     this.filepattern = filepattern;
     this.formatClass = formatClass;
     this.keyClass = keyClass;
     this.valueClass = valueClass;
     this.serializableSplit = serializableSplit;
+    this.overrideOutputCoder = overrideOutputCoder;
+    this.serializationProperties = serializationProperties == null
+        ? ImmutableMap.<String, String>of() : ImmutableMap.copyOf(serializationProperties);
   }
 
   public String getFilepattern() {
@@ -181,7 +237,8 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
         @Nullable @Override
         public BoundedSource<KV<K, V>> apply(@Nullable InputSplit inputSplit) {
           return new HadoopFileSource<K, V>(filepattern, formatClass, keyClass,
-              valueClass, new SerializableSplit(inputSplit));
+              valueClass, new SerializableSplit(inputSplit), overrideOutputCoder,
+              serializationProperties);
         }
       });
     } else {
@@ -198,7 +255,7 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
 
   private List<InputSplit> computeSplits(long desiredBundleSizeBytes) throws IOException,
       IllegalAccessException, InstantiationException {
-    Job job = Job.getInstance();
+    Job job = Job.getInstance(getDeserializerConfiguration());
     FileInputFormat.setMinInputSplitSize(job, desiredBundleSizeBytes);
     FileInputFormat.setMaxInputSplitSize(job, desiredBundleSizeBytes);
     return createFormat(job).getSplits(job);
@@ -209,15 +266,18 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
     this.validate();
 
     if (serializableSplit == null) {
-      return new HadoopFileReader<>(this, filepattern, formatClass);
+      return new HadoopFileReader<>(this, filepattern, formatClass, serializationProperties);
     } else {
       return new HadoopFileReader<>(this, filepattern, formatClass,
-          serializableSplit.getSplit());
+          serializableSplit.getSplit(), serializationProperties);
     }
   }
 
   @Override
   public Coder<KV<K, V>> getDefaultOutputCoder() {
+    if (overrideOutputCoder != null) {
+      return overrideOutputCoder;
+    }
     return KvCoder.of(getDefaultCoder(keyClass), getDefaultCoder(valueClass));
   }
 
@@ -233,13 +293,28 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
     throw new IllegalStateException("Cannot find coder for " + c);
   }
 
+  private static Configuration getHadoopConfigWithOverrides(Map<String, String> overrides) {
+    Configuration configuration = new Configuration();
+    for (Map.Entry<String, String> entry : overrides.entrySet()) {
+      configuration.set(entry.getKey(), entry.getValue());
+    }
+    return configuration;
+  }
+
+  Configuration getDeserializerConfiguration() {
+    return getHadoopConfigWithOverrides(serializationProperties);
+  }
+
   // BoundedSource
 
   @Override
   public long getEstimatedSizeBytes(PipelineOptions options) {
+    if (isRemoteFileFromLaunchSite) {
+      return 0;
+    }
     long size = 0;
     try {
-      Job job = Job.getInstance(); // new instance
+      Job job = Job.getInstance(getDeserializerConfiguration()); // new instance
       for (FileStatus st : listStatus(createFormat(job), job)) {
         size += st.getLen();
       }
@@ -271,6 +346,7 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
     private final BoundedSource<KV<K, V>> source;
     private final String filepattern;
     private final Class formatClass;
+    private final Map<String, String> serializationProperties;
 
     private FileInputFormat<?, ?> format;
     private TaskAttemptContext attemptContext;
@@ -285,15 +361,17 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
      * Create a {@code HadoopFileReader} based on a file or a file pattern specification.
      */
     public HadoopFileReader(BoundedSource<KV<K, V>> source, String filepattern,
-        Class<? extends FileInputFormat<?, ?>> formatClass) {
-      this(source, filepattern, formatClass, null);
+        Class<? extends FileInputFormat<?, ?>> formatClass,
+        Map<String, String> serializationProperties) {
+      this(source, filepattern, formatClass, null, serializationProperties);
     }
 
     /**
      * Create a {@code HadoopFileReader} based on a single Hadoop input split.
      */
     public HadoopFileReader(BoundedSource<KV<K, V>> source, String filepattern,
-        Class<? extends FileInputFormat<?, ?>> formatClass, InputSplit split) {
+        Class<? extends FileInputFormat<?, ?>> formatClass, InputSplit split,
+        Map<String, String> serializationProperties) {
       this.source = source;
       this.filepattern = filepattern;
       this.formatClass = formatClass;
@@ -301,11 +379,13 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
         this.splits = ImmutableList.of(split);
         this.splitsIterator = splits.listIterator();
       }
+      this.serializationProperties = serializationProperties == null
+          ? ImmutableMap.<String, String>of() : ImmutableMap.copyOf(serializationProperties);
     }
 
     @Override
     public boolean start() throws IOException {
-      Job job = Job.getInstance(); // new instance
+      Job job = Job.getInstance(getDeserializerConfiguration());
       Path path = new Path(filepattern);
       FileInputFormat.addInputPath(job, path);
 
@@ -361,6 +441,11 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
         Thread.currentThread().interrupt();
         throw new IOException(e);
       }
+    }
+
+    @VisibleForTesting
+    Configuration getDeserializerConfiguration() {
+      return getHadoopConfigWithOverrides(serializationProperties);
     }
 
     @SuppressWarnings("unchecked")
