@@ -317,7 +317,7 @@ public class BigQueryServicesImpl implements BigQueryServices {
     }
   }
 
-  @VisibleForTesting
+    @VisibleForTesting
   static class DatasetServiceImpl implements DatasetService {
     // Approximate amount of table data to upload per InsertAll request.
     private static final long UPLOAD_BATCH_SIZE_BYTES = 64 * 1024;
@@ -387,6 +387,27 @@ public class BigQueryServicesImpl implements BigQueryServices {
           client.tables().delete(projectId, datasetId, tableId),
           String.format(
               "Unable to delete table: %s, aborting after %d retries.",
+              tableId, MAX_RPC_RETRIES),
+          Sleeper.DEFAULT,
+          backoff);
+    }
+
+    @Override
+    public Table patchTableDescription(String project,
+                                       String dataset,
+                                       String tableId,
+                                       String tableDescription)
+        throws IOException, InterruptedException {
+      Table table = new Table();
+      table.setDescription(tableDescription);
+
+      BackOff backoff =
+          FluentBackoff.DEFAULT
+              .withMaxRetries(MAX_RPC_RETRIES).withInitialBackoff(INITIAL_RPC_BACKOFF).backoff();
+      return executeWithRetries(
+          client.tables().patch(project, dataset, tableId, table),
+          String.format(
+              "Unable to patch table description: %s, aborting after %d retries.",
               tableId, MAX_RPC_RETRIES),
           Sleeper.DEFAULT,
           backoff);

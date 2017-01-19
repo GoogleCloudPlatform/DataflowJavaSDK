@@ -1549,7 +1549,8 @@ public class BigQueryIOTest implements Serializable {
         StaticValueProvider.of(jsonTable),
         StaticValueProvider.of(jsonSchema),
         WriteDisposition.WRITE_EMPTY,
-        CreateDisposition.CREATE_IF_NEEDED);
+        CreateDisposition.CREATE_IF_NEEDED,
+        null);
 
     DoFnTester<KV<Long, Iterable<List<String>>>, String> tester = DoFnTester.of(writeTables);
     for (KV<Long, Iterable<List<String>>> partition : partitions) {

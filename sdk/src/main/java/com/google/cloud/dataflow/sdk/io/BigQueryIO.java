@@ -1663,6 +1663,13 @@ public class BigQueryIO {
     }
 
     /**
+     * Like {@link #withSchema(TableSchema)}, but with a {@link ValueProvider}.
+     */
+    public static Bound withTableDescription(String tableDescription) {
+      return new Bound().withTableDescription(tableDescription);
+    }
+
+    /**
      * Creates a write transformation with BigQuery table validation disabled.
      */
     public static Bound withoutValidation() {
@@ -1702,6 +1709,8 @@ public class BigQueryIO {
       // WRITE_APPEND and WRITE_EMPTY.
       final WriteDisposition writeDisposition;
 
+      final String tableDescription;
+
       // An option to indicate if table validation is desired. Default is true.
       final boolean validate;
 
@@ -1735,6 +1744,7 @@ public class BigQueryIO {
             null /* jsonSchema */,
             CreateDisposition.CREATE_IF_NEEDED,
             WriteDisposition.WRITE_EMPTY,
+            null /* tableDescription */,
             true /* validate */,
             null /* bigQueryServices */);
       }
@@ -1742,7 +1752,9 @@ public class BigQueryIO {
       private Bound(String name, @Nullable ValueProvider<String> jsonTableRef,
           @Nullable SerializableFunction<BoundedWindow, TableReference> tableRefFunction,
           @Nullable ValueProvider<String> jsonSchema,
-          CreateDisposition createDisposition, WriteDisposition writeDisposition, boolean validate,
+          CreateDisposition createDisposition, WriteDisposition writeDisposition,
+          @Nullable String tableDescription,
+          boolean validate,
           @Nullable BigQueryServices bigQueryServices) {
         super(name);
         this.jsonTableRef = jsonTableRef;
@@ -1750,6 +1762,7 @@ public class BigQueryIO {
         this.jsonSchema = jsonSchema;
         this.createDisposition = checkNotNull(createDisposition, "createDisposition");
         this.writeDisposition = checkNotNull(writeDisposition, "writeDisposition");
+        this.tableDescription = tableDescription;
         this.validate = validate;
         this.bigQueryServices = bigQueryServices;
       }
@@ -1761,7 +1774,7 @@ public class BigQueryIO {
        */
       public Bound named(String name) {
         return new Bound(name, jsonTableRef, tableRefFunction, jsonSchema, createDisposition,
-            writeDisposition, validate, bigQueryServices);
+            writeDisposition, tableDescription, validate, bigQueryServices);
       }
 
       /**
@@ -1817,7 +1830,7 @@ public class BigQueryIO {
         return new Bound(name,
             NestedValueProvider.of(table, new TableRefToJson()),
             tableRefFunction, jsonSchema, createDisposition,
-            writeDisposition, validate, bigQueryServices);
+            writeDisposition, tableDescription, validate, bigQueryServices);
       }
 
       /**
@@ -1832,7 +1845,7 @@ public class BigQueryIO {
       public Bound toTableReference(
           SerializableFunction<BoundedWindow, TableReference> tableRefFunction) {
         return new Bound(name, jsonTableRef, tableRefFunction, jsonSchema, createDisposition,
-            writeDisposition, validate, bigQueryServices);
+            writeDisposition, tableDescription, validate, bigQueryServices);
       }
 
       /**
@@ -1844,7 +1857,7 @@ public class BigQueryIO {
       public Bound withSchema(TableSchema schema) {
         return new Bound(name, jsonTableRef, tableRefFunction,
             StaticValueProvider.of(toJsonString(schema)),
-            createDisposition, writeDisposition, validate, bigQueryServices);
+            createDisposition, writeDisposition, tableDescription, validate, bigQueryServices);
       }
 
       /**
@@ -1853,7 +1866,7 @@ public class BigQueryIO {
       public Bound withSchema(ValueProvider<TableSchema> schema) {
         return new Bound(name, jsonTableRef, tableRefFunction,
             NestedValueProvider.of(schema, new TableSchemaToJsonSchema()),
-            createDisposition, writeDisposition, validate, bigQueryServices);
+            createDisposition, writeDisposition, tableDescription, validate, bigQueryServices);
       }
 
       /**
@@ -1863,7 +1876,7 @@ public class BigQueryIO {
        */
       public Bound withCreateDisposition(CreateDisposition createDisposition) {
         return new Bound(name, jsonTableRef, tableRefFunction, jsonSchema, createDisposition,
-            writeDisposition, validate, bigQueryServices);
+            writeDisposition, tableDescription, validate, bigQueryServices);
       }
 
       /**
@@ -1873,7 +1886,17 @@ public class BigQueryIO {
        */
       public Bound withWriteDisposition(WriteDisposition writeDisposition) {
         return new Bound(name, jsonTableRef, tableRefFunction, jsonSchema, createDisposition,
-            writeDisposition, validate, bigQueryServices);
+            writeDisposition, tableDescription, validate, bigQueryServices);
+      }
+
+      /**
+       * Returns a copy of this write transformation, but with specified table description.
+       *
+       * <p>Does not modify this object.
+       */
+      public Bound withTableDescription(String tableDescription) {
+        return new Bound(name, jsonTableRef, tableRefFunction, jsonSchema, createDisposition,
+            writeDisposition, tableDescription, validate, bigQueryServices);
       }
 
       /**
@@ -1883,13 +1906,13 @@ public class BigQueryIO {
        */
       public Bound withoutValidation() {
         return new Bound(name, jsonTableRef, tableRefFunction, jsonSchema, createDisposition,
-            writeDisposition, false, bigQueryServices);
+            writeDisposition, tableDescription, false, bigQueryServices);
       }
 
       @VisibleForTesting
       Bound withTestServices(BigQueryServices testServices) {
         return new Bound(name, jsonTableRef, tableRefFunction, jsonSchema, createDisposition,
-            writeDisposition, validate, testServices);
+            writeDisposition, tableDescription, validate, testServices);
       }
 
       private static void verifyTableEmpty(
@@ -2048,7 +2071,8 @@ public class BigQueryIO {
                 NestedValueProvider.of(table, new TableRefToJson()),
                 jsonSchema,
                 WriteDisposition.WRITE_EMPTY,
-                CreateDisposition.CREATE_IF_NEEDED)));
+                CreateDisposition.CREATE_IF_NEEDED,
+                tableDescription)));
 
         PCollectionView<Iterable<String>> tempTablesView = tempTables
             .apply("TempTablesView", View.<String>asIterable());
@@ -2062,6 +2086,7 @@ public class BigQueryIO {
                 tempTablesView))
             .withSideInputs(tempTablesView));
 
+
         // Write single partition to final table
         partitions.get(singlePartitionTag)
             .apply("SinglePartitionGroupByKey", GroupByKey.<Long, List<String>>create())
@@ -2073,7 +2098,8 @@ public class BigQueryIO {
                 NestedValueProvider.of(table, new TableRefToJson()),
                 jsonSchema,
                 writeDisposition,
-                createDisposition)));
+                createDisposition,
+                tableDescription)));
 
         return PDone.in(input.getPipeline());
       }
@@ -2151,6 +2177,8 @@ public class BigQueryIO {
               .withLabel("Table CreateDisposition"))
             .add(DisplayData.item("writeDisposition", writeDisposition.toString())
               .withLabel("Table WriteDisposition"))
+            .addIfNotNull(DisplayData.item("tableDescription", tableDescription)
+              .withLabel("Table Description"))
             .addIfNotDefault(DisplayData.item("validation", validate)
               .withLabel("Validation Enabled"), true);
       }
@@ -2331,6 +2359,7 @@ public class BigQueryIO {
       private final ValueProvider<String> jsonSchema;
       private final WriteDisposition writeDisposition;
       private final CreateDisposition createDisposition;
+      private final String tableDescription;
 
       public WriteTables(
           boolean singlePartition,
@@ -2340,7 +2369,8 @@ public class BigQueryIO {
           ValueProvider<String> jsonTableRef,
           ValueProvider<String> jsonSchema,
           WriteDisposition writeDisposition,
-          CreateDisposition createDisposition) {
+          CreateDisposition createDisposition,
+          String tableDescription) {
         this.singlePartition = singlePartition;
         this.bqServices = bqServices;
         this.jobIdToken = jobIdToken;
@@ -2349,6 +2379,7 @@ public class BigQueryIO {
         this.jsonSchema = jsonSchema;
         this.writeDisposition = writeDisposition;
         this.createDisposition = createDisposition;
+        this.tableDescription = tableDescription;
       }
 
       @Override
@@ -2362,13 +2393,15 @@ public class BigQueryIO {
 
         load(
             bqServices.getJobService(c.getPipelineOptions().as(BigQueryOptions.class)),
+            bqServices.getDatasetService(c.getPipelineOptions().as(BigQueryOptions.class)),
             jobIdPrefix,
             ref,
             fromJsonString(
                 jsonSchema == null ? null : jsonSchema.get(), TableSchema.class),
             partition,
             writeDisposition,
-            createDisposition);
+            createDisposition,
+            tableDescription);
         c.output(toJsonString(ref));
 
         removeTemporaryFiles(c.getPipelineOptions(), tempFilePrefix, partition);
@@ -2376,12 +2409,14 @@ public class BigQueryIO {
 
       private void load(
           JobService jobService,
+          DatasetService datasetService,
           String jobIdPrefix,
           TableReference ref,
           @Nullable TableSchema schema,
           List<String> gcsUris,
           WriteDisposition writeDisposition,
-          CreateDisposition createDisposition) throws InterruptedException, IOException {
+          CreateDisposition createDisposition,
+          String tableDescription) throws InterruptedException, IOException {
         JobConfigurationLoad loadConfig = new JobConfigurationLoad()
             .setDestinationTable(ref)
             .setSchema(schema)
@@ -2402,6 +2437,13 @@ public class BigQueryIO {
               parseStatus(jobService.pollJob(jobRef, Bound.LOAD_JOB_POLL_MAX_RETRIES));
           switch (jobStatus) {
             case SUCCEEDED:
+              if (tableDescription != null) {
+                datasetService.patchTableDescription(
+                    projectId,
+                    ref.getDatasetId(),
+                    ref.getTableId(),
+                    tableDescription);
+              }
               return;
             case UNKNOWN:
               throw new RuntimeException("Failed to poll the load job status of job " + jobId);
