@@ -250,7 +250,10 @@ public class HadoopFileSource<K, V> extends BoundedSource<KV<K, V>> {
         size += st.getLen();
       }
     } catch (IOException | NoSuchMethodException | InvocationTargetException
-        | IllegalAccessException | InstantiationException | InterruptedException e) {
+        | IllegalAccessException | InstantiationException) {
+      // ignore, and return 0
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
       // ignore, and return 0
     }
     return size;
