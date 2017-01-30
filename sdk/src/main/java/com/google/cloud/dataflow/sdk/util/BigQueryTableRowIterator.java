@@ -445,6 +445,7 @@ public class BigQueryTableRowIterator implements AutoCloseable {
     destinationTable.setDatasetId(temporaryDatasetId);
     destinationTable.setTableId(temporaryTableId);
     queryConfig.setDestinationTable(destinationTable);
+    queryConfig.setAllowLargeResults(Boolean.TRUE);
 
     Job queryJob = executeWithBackOff(
         client.jobs().insert(projectId, job),
