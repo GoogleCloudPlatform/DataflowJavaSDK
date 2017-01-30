@@ -106,7 +106,6 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
-
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.Matchers;
 import org.junit.Assert;
@@ -122,7 +121,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
-
 import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
@@ -134,8 +132,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
-
-import javax.annotation.Nullable;
 
 /**
  * Tests for BigQueryIO.
@@ -187,8 +183,7 @@ public class BigQueryIOTest implements Serializable {
 
     @Override
     public BigQueryJsonReader getReaderFromQuery(
-        BigQueryOptions bqOptions, String query, String projectId, @Nullable Boolean flatten,
-        @Nullable Boolean useLegacySql) {
+        BigQueryOptions bqOptions, JobConfigurationQuery queryConfig, String projectId) {
       return new FakeBigQueryReader(jsonTableRowReturns);
     }
 
@@ -1749,3 +1744,4 @@ public class BigQueryIOTest implements Serializable {
       }}).length);
   }
 }
+
