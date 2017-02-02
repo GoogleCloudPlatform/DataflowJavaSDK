@@ -372,7 +372,7 @@ public class PubsubTestClient extends PubsubClient {
   @Override
   public void createSubscription(
       TopicPath topic, SubscriptionPath subscription, int ackDeadlineSeconds) throws IOException {
-    throw new UnsupportedOperationException();
+    return;
   }
 
   @Override
