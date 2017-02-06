@@ -80,8 +80,8 @@ public class BigQueryServicesImpl implements BigQueryServices {
 
   @Override
   public BigQueryJsonReader getReaderFromQuery(
-      BigQueryOptions bqOptions, JobConfigurationQuery queryConfig, String projectId) {
-    return BigQueryJsonReaderImpl.fromQuery(bqOptions, queryConfig, projectId);
+      BigQueryOptions bqOptions, String projectId, JobConfigurationQuery queryConfig) {
+    return BigQueryJsonReaderImpl.fromQuery(bqOptions, projectId, queryConfig);
   }
 
   @VisibleForTesting
@@ -516,9 +516,7 @@ public class BigQueryServicesImpl implements BigQueryServices {
     }
 
     private static BigQueryJsonReader fromQuery(
-        BigQueryOptions bqOptions,
-        JobConfigurationQuery queryConfig,
-        String projectId) {
+        BigQueryOptions bqOptions, String projectId, JobConfigurationQuery queryConfig) {
       return new BigQueryJsonReaderImpl(
           BigQueryTableRowIterator.fromQuery(
               queryConfig, projectId, Transport.newBigQueryClient(bqOptions).build()));

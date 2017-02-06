@@ -408,8 +408,8 @@ public class BigQueryTableRowIterator implements AutoCloseable {
    */
   private TableReference executeQueryAndWaitForCompletion()
       throws IOException, InterruptedException {
-    checkState(projectId != null, "Cannot dryRun a query in unknown (null) project");
-    checkState(queryConfig != null, "Cannot dryRun a null query");
+    checkState(projectId != null, "Unable to execute a query without a configured project id");
+    checkState(queryConfig != null, "Unable to execute a query without a configured query");
     // Dry run query to get source table location
     Job dryRunJob = new Job()
         .setConfiguration(new JobConfiguration()

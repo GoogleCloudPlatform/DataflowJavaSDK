@@ -58,7 +58,7 @@ public interface BigQueryServices extends Serializable {
    * Returns a real, mock, or fake {@link BigQueryJsonReader} to query tables.
    */
   BigQueryJsonReader getReaderFromQuery(
-      BigQueryOptions bqOptions, JobConfigurationQuery queryConfig, String projectId);
+      BigQueryOptions bqOptions, String projectId, JobConfigurationQuery queryConfig);
 
   /**
    * An interface for the Cloud BigQuery load service.
