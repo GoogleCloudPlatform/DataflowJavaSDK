@@ -329,7 +329,7 @@ public class PubsubUnboundedSourceTest {
   }
 
   @Test
-  public void testNullTopic() throws Exception {
+  public void testNullSubscription() throws Exception {
     factory = PubsubTestClient.createFactoryForPublish(
         TOPIC, ImmutableList.<OutgoingMessage>of(), ImmutableList.<OutgoingMessage>of());
     TestPipeline p = TestPipeline.create();
