@@ -30,6 +30,7 @@ import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
 import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.options.ValueProvider;
+import com.google.cloud.dataflow.sdk.options.ValueProvider.StaticValueProvider;
 import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.Combine;
 import com.google.cloud.dataflow.sdk.transforms.DoFn;
@@ -1290,6 +1291,7 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
 
   @Override
   public PCollection<T> apply(PBegin input) {
+    ValueProvider<SubscriptionPath> subscriptionPath = subscription;
     if (subscription == null) {
       try {
         try (PubsubClient pubsubClient =
@@ -1299,9 +1301,8 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
                                               .as(DataflowPipelineOptions.class))) {
           checkState(project.isAccessible(), "createRandomSubscription must be called at runtime.");
           checkState(topic.isAccessible(), "createRandomSubscription must be called at runtime.");
-          SubscriptionPath subscriptionPath =
-              pubsubClient.createRandomSubscription(
-                  project.get(), topic.get(), DEAULT_ACK_TIMEOUT_SEC);
+          subscriptionPath = StaticValueProvider.of(pubsubClient.createRandomSubscription(
+              project.get(), topic.get(), DEAULT_ACK_TIMEOUT_SEC));
           LOG.warn("Created subscription {} to topic {}."
                    + " Note this subscription WILL NOT be deleted when the pipeline terminates",
                    subscription, topic);
@@ -1314,7 +1315,7 @@ public class PubsubUnboundedSource<T> extends PTransform<PBegin, PCollection<T>>
     return input.getPipeline().begin()
                 .apply(Read.from(new PubsubSource<T>(this)))
                 .apply(ParDo.named("PubsubUnboundedSource.Stats")
-                            .of(new StatsFn<T>(pubsubFactory, subscription,
-                                               timestampLabel, idLabel)));
+                    .of(new StatsFn<T>(pubsubFactory, checkNotNull(subscriptionPath),
+                            timestampLabel, idLabel)));
   }
 }

@@ -36,7 +36,10 @@ import com.google.cloud.dataflow.sdk.testing.TestPipeline;
 import com.google.cloud.dataflow.sdk.util.CoderUtils;
 import com.google.cloud.dataflow.sdk.util.PubsubClient;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.IncomingMessage;
+import com.google.cloud.dataflow.sdk.util.PubsubClient.OutgoingMessage;
+import com.google.cloud.dataflow.sdk.util.PubsubClient.ProjectPath;
 import com.google.cloud.dataflow.sdk.util.PubsubClient.SubscriptionPath;
+import com.google.cloud.dataflow.sdk.util.PubsubClient.TopicPath;
 import com.google.cloud.dataflow.sdk.util.PubsubTestClient;
 import com.google.cloud.dataflow.sdk.util.PubsubTestClient.PubsubTestClientFactory;
 
@@ -60,8 +63,12 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @RunWith(JUnit4.class)
 public class PubsubUnboundedSourceTest {
+  private static final ProjectPath PROJECT =
+      PubsubClient.projectPathFromId("testProject");
   private static final SubscriptionPath SUBSCRIPTION =
       PubsubClient.subscriptionPathFromName("testProject", "testSubscription");
+  private static final TopicPath TOPIC =
+      PubsubClient.topicPathFromName("testProject", "testTopic");
   private static final String DATA = "testData";
   private static final long TIMESTAMP = 1234L;
   private static final long REQ_TIME = 6373L;
@@ -319,5 +326,15 @@ public class PubsubUnboundedSourceTest {
     // We saw each message exactly once.
     assertTrue(dataToMessageNum.isEmpty());
     reader.close();
+  }
+
+  @Test
+  public void testNullSubscription() throws Exception {
+    factory = PubsubTestClient.createFactoryForPublishVerifySubscription(
+        TOPIC, ImmutableList.<OutgoingMessage>of(), ImmutableList.<OutgoingMessage>of());
+    TestPipeline p = TestPipeline.create();
+    p.apply(new PubsubUnboundedSource<>(
+        clock, factory, StaticValueProvider.of(PROJECT), StaticValueProvider.of(TOPIC),
+        null, StringUtf8Coder.of(), TIMESTAMP_LABEL, ID_LABEL));
   }
 }
