@@ -107,6 +107,11 @@ public class PubsubTestClient extends PubsubClient {
      */
     @Nullable
     Map<String, Long> ackDeadline;
+
+    /**
+     * Whether a subscription has been created.
+     */
+    boolean createdSubscription;
   }
 
   private static final State STATE = new State();
@@ -124,12 +129,40 @@ public class PubsubTestClient extends PubsubClient {
       final TopicPath expectedTopic,
       final Iterable<OutgoingMessage> expectedOutgoingMessages,
       final Iterable<OutgoingMessage> failingOutgoingMessages) {
+    return createFactoryForPublishInternal(
+        expectedTopic, expectedOutgoingMessages, failingOutgoingMessages, false);
+  }
+
+  /**
+   * Return a factory for testing publishers. Only one factory may be in-flight at a time.
+   * The factory must be closed when the test is complete, at which point final validation will
+   * occur.  Additionally, verify that createSubscription was called.
+   */
+  public static PubsubTestClientFactory createFactoryForPublishVerifySubscription(
+      final TopicPath expectedTopic,
+      final Iterable<OutgoingMessage> expectedOutgoingMessages,
+      final Iterable<OutgoingMessage> failingOutgoingMessages) {
+    return createFactoryForPublishInternal(
+        expectedTopic, expectedOutgoingMessages, failingOutgoingMessages, true);
+  }
+
+  /**
+   * Return a factory for testing publishers. Only one factory may be in-flight at a time.
+   * The factory must be closed when the test is complete, at which point final validation will
+   * occur.
+   */
+  public static PubsubTestClientFactory createFactoryForPublishInternal(
+      final TopicPath expectedTopic,
+      final Iterable<OutgoingMessage> expectedOutgoingMessages,
+      final Iterable<OutgoingMessage> failingOutgoingMessages,
+      final boolean verifySubscriptionCreated) {
     synchronized (STATE) {
       checkState(!STATE.isActive, "Test still in flight");
       STATE.expectedTopic = expectedTopic;
       STATE.remainingExpectedOutgoingMessages = Sets.newHashSet(expectedOutgoingMessages);
       STATE.remainingFailingOutgoingMessages = Sets.newHashSet(failingOutgoingMessages);
       STATE.isActive = true;
+      STATE.createdSubscription = false;
     }
     return new PubsubTestClientFactory() {
       @Override
@@ -148,6 +181,9 @@ public class PubsubTestClient extends PubsubClient {
       @Override
       public void close() {
         synchronized (STATE) {
+          if (verifySubscriptionCreated) {
+            checkState(STATE.createdSubscription, "Did not call create subscription");
+          }
           checkState(STATE.isActive, "No test still in flight");
           checkState(STATE.remainingExpectedOutgoingMessages.isEmpty(),
                      "Still waiting for %s messages to be published",
@@ -372,6 +408,9 @@ public class PubsubTestClient extends PubsubClient {
   @Override
   public void createSubscription(
       TopicPath topic, SubscriptionPath subscription, int ackDeadlineSeconds) throws IOException {
+    synchronized (STATE) {
+      STATE.createdSubscription = true;
+    }
     return;
   }
 
