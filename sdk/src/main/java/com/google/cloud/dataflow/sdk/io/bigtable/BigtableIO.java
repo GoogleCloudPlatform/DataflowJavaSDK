@@ -976,9 +976,9 @@ public class BigtableIO {
     public void finalize(Iterable<Long> writerResults, PipelineOptions options) {
       long count = 0;
       for (Long value : writerResults) {
-        value += count;
+        count += value;
       }
-      logger.debug("Wrote {} elements to BigtableIO.Sink {}", sink);
+      logger.debug("Wrote {} elements to BigtableIO.Sink {}", count, sink);
     }
 
     @Override
