@@ -58,7 +58,7 @@ import javax.annotation.Nullable;
  *
  * <p>Additionaly firings before or after the watermark can be requested by calling
  * {@code AfterWatermark.pastEndOfWindow.withEarlyFirings(OnceTrigger)} or
- * {@code AfterWatermark.pastEndOfWindow.withEarlyFirings(OnceTrigger)}.
+ * {@code AfterWatermark.pastEndOfWindow.withLateFirings(OnceTrigger)}.
  *
  * @param <W> {@link BoundedWindow} subclass used to represent the windows used.
  */
