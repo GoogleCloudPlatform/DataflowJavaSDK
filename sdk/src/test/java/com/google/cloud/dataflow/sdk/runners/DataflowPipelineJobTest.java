@@ -26,6 +26,7 @@ import static org.hamcrest.Matchers.hasEntry;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.junit.Assert.assertEquals;
+import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -42,6 +43,7 @@ import com.google.api.services.dataflow.model.MetricStructuredName;
 import com.google.api.services.dataflow.model.MetricUpdate;
 import com.google.cloud.dataflow.sdk.PipelineResult.State;
 import com.google.cloud.dataflow.sdk.runners.dataflow.DataflowAggregatorTransforms;
+import com.google.cloud.dataflow.sdk.testing.ExpectedLogs;
 import com.google.cloud.dataflow.sdk.testing.FastNanoClockAndSleeper;
 import com.google.cloud.dataflow.sdk.transforms.Aggregator;
 import com.google.cloud.dataflow.sdk.transforms.AppliedPTransform;
@@ -90,6 +92,9 @@ public class DataflowPipelineJobTest {
 
   @Rule
   public ExpectedException thrown = ExpectedException.none();
+
+  @Rule
+  public ExpectedLogs expectedLogs = ExpectedLogs.none(DataflowPipelineJob.class);
 
   @Before
   public void setup() {
@@ -191,6 +196,34 @@ public class DataflowPipelineJobTest {
   @Test
   public void testWaitToFinishCancelled() throws Exception {
     assertEquals(State.CANCELLED, mockWaitToFinishInState(State.CANCELLED));
+  }
+
+  /**
+   * Test that {@link DataflowPipelineJob#cancel} doesn't throw if the Dataflow service returns
+   * non-terminal state even though the cancel API call failed, which can happen in practice.
+   *
+   * <p>TODO: delete this code if the API calls become consistent.
+   */
+  @Test
+  public void testCancelTerminatedJobWithStaleState() throws IOException {
+    Dataflow.Projects.Jobs.Get statusRequest =
+        mock(Dataflow.Projects.Jobs.Get.class);
+
+    Job statusResponse = new Job();
+    statusResponse.setCurrentState("JOB_STATE_RUNNING");
+    when(mockJobs.get(PROJECT_ID, JOB_ID)).thenReturn(statusRequest);
+    when(statusRequest.execute()).thenReturn(statusResponse);
+
+    Dataflow.Projects.Jobs.Update update = mock(
+        Dataflow.Projects.Jobs.Update.class);
+    when(mockJobs.update(eq(PROJECT_ID), eq(JOB_ID), any(Job.class)))
+        .thenReturn(update);
+    when(update.execute()).thenThrow(new IOException("Job has terminated in state SUCCESS"));
+
+    DataflowPipelineJob job = new DataflowPipelineJob(
+        PROJECT_ID, JOB_ID, mockWorkflowClient, null);
+    job.cancel();
+    expectedLogs.verifyWarn("Cancel failed because job " + JOB_ID + " is already terminated.");
   }
 
   /**
