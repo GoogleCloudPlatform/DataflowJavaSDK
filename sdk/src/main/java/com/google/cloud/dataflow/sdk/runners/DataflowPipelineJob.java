@@ -292,9 +292,35 @@ public class DataflowPipelineJob implements PipelineResult {
     content.setProjectId(projectId);
     content.setId(jobId);
     content.setRequestedState("JOB_STATE_CANCELLED");
-    dataflowClient.projects().jobs()
-        .update(projectId, jobId, content)
-        .execute();
+    try {
+      dataflowClient.projects().jobs()
+          .update(projectId, jobId, content)
+          .execute();
+    } catch (IOException e) {
+      State state = getState();
+      if (state.isTerminal()) {
+        LOG.warn("Cancel failed because job {} is already terminated in state {}.", jobId, state);
+      } else if (e.getMessage().contains("has terminated")) {
+        // This handles the case where the getState() call above returns RUNNING but the cancel
+        // was rejected because the job is in fact done. Hopefully, someday we can delete this
+        // code if there is better consistency between the State and whether Cancel succeeds.
+        //
+        // Example message:
+        //    Workflow modification failed. Causes: (7603adc9e9bff51e): Cannot perform
+        //    operation 'cancel' on Job: 2017-04-01_22_50_59-9269855660514862348. Job has
+        //    terminated in state SUCCESS: Workflow job: 2017-04-01_22_50_59-9269855660514862348
+        //    succeeded.
+        LOG.warn("Cancel failed because job {} is already terminated.", jobId, e);
+      } else {
+        String errorMsg = String.format(
+            "Failed to cancel job in state %s, "
+                + "please go to the Developers Console to cancel it manually: %s",
+            state,
+            MonitoringUtil.getJobMonitoringPageURL(getProjectId(), getJobId()));
+        LOG.warn(errorMsg);
+        throw new IOException(errorMsg, e);
+      }
+    }
   }
 
   @Override
