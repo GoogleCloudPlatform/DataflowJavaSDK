@@ -486,19 +486,38 @@
 
     <dependency>
       <groupId>io.grpc</groupId>
-      <artifactId>grpc-all</artifactId>
+      <artifactId>grpc-auth</artifactId>
       <version>${grpc.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-core</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-protobuf</artifactId>
+      <version>${grpc.version}</version>
+      <scope>test</scope>
     </dependency>
 
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-handler</artifactId>
-      <version>4.1.0.CR1</version>
+      <version>4.1.1.Final</version>
     </dependency>
 
     <dependency>
       <groupId>com.google.api.grpc</groupId>
-      <artifactId>grpc-pubsub-v1</artifactId>
+      <artifactId>grpc-google-pubsub-v1</artifactId>
       <version>${pubsubgrpc.version}</version>
       <exclusions>
         <!-- Exclude an old version of guava that is being pulled in by a transitive
