@@ -1211,6 +1211,8 @@ public class BigQueryIO {
     protected final BigQueryServices bqServices;
     protected final ValueProvider<String> executingProject;
 
+    private List<BoundedSource<TableRow>> cachedSplitResult;
+
     private BigQuerySourceBase(
         String jobIdToken,
         String extractDestinationDir,
@@ -1225,19 +1227,30 @@ public class BigQueryIO {
     @Override
     public List<BoundedSource<TableRow>> splitIntoBundles(
         long desiredBundleSizeBytes, PipelineOptions options) throws Exception {
-      BigQueryOptions bqOptions = options.as(BigQueryOptions.class);
-      TableReference tableToExtract = getTableToExtract(bqOptions);
-      JobService jobService = bqServices.getJobService(bqOptions);
-      String extractJobId = getExtractJobId(jobIdToken);
-      List<String> tempFiles = executeExtract(extractJobId, tableToExtract, jobService);
+      // splitIntoBundles() can be called multiple times, e.g. Dataflow runner may call it multiple
+      // times with different desiredBundleSizeBytes in case the splitIntoBundles() call produces
+      // too many sources. We ignore desiredBundleSizeBytes anyway, however in any case, we should
+      // not initiate another BigQuery extract job for the repeated splitIntoBundles() calls.
+      if (cachedSplitResult == null) {
+        BigQueryOptions bqOptions = options.as(BigQueryOptions.class);
+        TableReference tableToExtract = getTableToExtract(bqOptions);
+        JobService jobService = bqServices.getJobService(bqOptions);
+        String extractJobId = getExtractJobId(jobIdToken);
+        List<String> tempFiles = executeExtract(extractJobId, tableToExtract, jobService);
 
-      TableSchema tableSchema = bqServices.getDatasetService(bqOptions).getTable(
-          tableToExtract.getProjectId(),
-          tableToExtract.getDatasetId(),
-          tableToExtract.getTableId()).getSchema();
+        TableSchema tableSchema =
+            bqServices
+                .getDatasetService(bqOptions)
+                .getTable(
+                    tableToExtract.getProjectId(),
+                    tableToExtract.getDatasetId(),
+                    tableToExtract.getTableId())
+                .getSchema();
 
-      cleanupTempResource(bqOptions);
-      return createSources(tempFiles, tableSchema);
+        cleanupTempResource(bqOptions);
+        cachedSplitResult = createSources(tempFiles, tableSchema);
+      }
+      return cachedSplitResult;
     }
 
     protected abstract TableReference getTableToExtract(BigQueryOptions bqOptions) throws Exception;

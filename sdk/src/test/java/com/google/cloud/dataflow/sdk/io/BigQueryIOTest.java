@@ -30,6 +30,7 @@ import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Data;
@@ -1130,10 +1131,14 @@ public class BigQueryIOTest implements Serializable {
 
     List<? extends BoundedSource<TableRow>> sources = bqSource.splitIntoBundles(100, options);
     assertEquals(1, sources.size());
+    // Simulate a repeated call to splitIntoBundles(), like a Dataflow worker will sometimes do.
+    sources = bqSource.splitIntoBundles(200, options);
+    assertEquals(1, sources.size());
     BoundedSource<TableRow> actual = sources.get(0);
     assertThat(actual, CoreMatchers.instanceOf(TransformingSource.class));
 
-    Mockito.verify(mockJobService)
+    // A repeated call to splitIntoBundles() should not have caused a duplicate extract job.
+    Mockito.verify(mockJobService, times(1))
         .startExtractJob(Mockito.<JobReference>any(), Mockito.<JobConfigurationExtract>any());
   }
 
