@@ -23,6 +23,7 @@ import com.google.cloud.dataflow.sdk.coders.AvroCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
 import com.google.cloud.dataflow.sdk.io.Read.Bounded;
+import com.google.cloud.dataflow.sdk.io.util.SerializableAvroCodecFactory;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.runners.PipelineRunner;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
@@ -35,6 +36,7 @@ import com.google.cloud.dataflow.sdk.values.PInput;
 import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.avro.Schema;
+import org.apache.avro.file.CodecFactory;
 import org.apache.avro.file.DataFileWriter;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.reflect.ReflectData;
@@ -470,6 +472,15 @@ public class AvroIO {
     }
 
     /**
+     * Returns a {@link PTransform} that writes Avro file(s) using specified codec.
+     * Codec cna be a string value drawn from those in
+     * https://avro.apache.org/docs/1.7.7/api/java/org/apache/avro/file/CodecFactory.html
+     */
+    public static Bound<GenericRecord> withCodec(CodecFactory codec) {
+      return new Bound<>(GenericRecord.class).withCodec(codec);
+    }
+
+    /**
      * A {@link PTransform} that writes a bounded {@link PCollection} to an Avro file (or
      * multiple Avro files matching a sharding pattern).
      *
@@ -477,6 +488,9 @@ public class AvroIO {
      */
     public static class Bound<T> extends PTransform<PCollection<T>, PDone> {
       private static final String DEFAULT_SHARD_TEMPLATE = ShardNameTemplate.INDEX_OF_MAX;
+      private static final SerializableAvroCodecFactory DEFAULT_CODEC =
+          new SerializableAvroCodecFactory(CodecFactory.deflateCodec(6));
+
 
       /** The filename to write to. */
       @Nullable
@@ -494,9 +508,24 @@ public class AvroIO {
       final Schema schema;
       /** An option to indicate if output validation is desired. Default is true. */
       final boolean validate;
+      /**
+       * The codec used to encode the blocks in the Avro file. String value drawn from those in
+       * https://avro.apache.org/docs/1.7.7/api/java/org/apache/avro/file/CodecFactory.html
+       */
+      final SerializableAvroCodecFactory codec;
+
 
       Bound(Class<T> type) {
-        this(null, null, "", 0, DEFAULT_SHARD_TEMPLATE, type, null, true);
+        this(
+            null,
+            null,
+            "",
+            0,
+            DEFAULT_SHARD_TEMPLATE,
+            type,
+            null,
+            true,
+            DEFAULT_CODEC);
       }
 
       Bound(
@@ -507,7 +536,8 @@ public class AvroIO {
           String shardTemplate,
           Class<T> type,
           Schema schema,
-          boolean validate) {
+          boolean validate,
+          SerializableAvroCodecFactory codec) {
         super(name);
         this.filenamePrefix = filenamePrefix;
         this.filenameSuffix = filenameSuffix;
@@ -516,6 +546,7 @@ public class AvroIO {
         this.type = type;
         this.schema = schema;
         this.validate = validate;
+        this.codec = codec;
       }
 
       /**
@@ -526,7 +557,15 @@ public class AvroIO {
        */
       public Bound<T> named(String name) {
         return new Bound<>(
-            name, filenamePrefix, filenameSuffix, numShards, shardTemplate, type, schema, validate);
+            name,
+            filenamePrefix,
+            filenameSuffix,
+            numShards,
+            shardTemplate,
+            type,
+            schema,
+            validate,
+            codec);
       }
 
       /**
@@ -541,7 +580,15 @@ public class AvroIO {
       public Bound<T> to(String filenamePrefix) {
         validateOutputComponent(filenamePrefix);
         return new Bound<>(
-            name, filenamePrefix, filenameSuffix, numShards, shardTemplate, type, schema, validate);
+            name,
+            filenamePrefix,
+            filenameSuffix,
+            numShards,
+            shardTemplate,
+            type,
+            schema,
+            validate,
+            codec);
       }
 
       /**
@@ -555,7 +602,15 @@ public class AvroIO {
       public Bound<T> withSuffix(String filenameSuffix) {
         validateOutputComponent(filenameSuffix);
         return new Bound<>(
-            name, filenamePrefix, filenameSuffix, numShards, shardTemplate, type, schema, validate);
+            name,
+            filenamePrefix,
+            filenameSuffix,
+            numShards,
+            shardTemplate,
+            type,
+            schema,
+            validate,
+            codec);
       }
 
       /**
@@ -575,7 +630,15 @@ public class AvroIO {
       public Bound<T> withNumShards(int numShards) {
         checkArgument(numShards >= 0);
         return new Bound<>(
-            name, filenamePrefix, filenameSuffix, numShards, shardTemplate, type, schema, validate);
+            name,
+            filenamePrefix,
+            filenameSuffix,
+            numShards,
+            shardTemplate,
+            type,
+            schema,
+            validate,
+            codec);
       }
 
       /**
@@ -588,7 +651,15 @@ public class AvroIO {
        */
       public Bound<T> withShardNameTemplate(String shardTemplate) {
         return new Bound<>(
-            name, filenamePrefix, filenameSuffix, numShards, shardTemplate, type, schema, validate);
+            name,
+            filenamePrefix,
+            filenameSuffix,
+            numShards,
+            shardTemplate,
+            type,
+            schema,
+            validate,
+            codec);
       }
 
       /**
@@ -601,7 +672,16 @@ public class AvroIO {
        * <p>Does not modify this object.
        */
       public Bound<T> withoutSharding() {
-        return new Bound<>(name, filenamePrefix, filenameSuffix, 1, "", type, schema, validate);
+        return new Bound<>(
+            name,
+            filenamePrefix,
+            filenameSuffix,
+            1,
+            "",
+            type,
+            schema,
+            validate,
+            codec);
       }
 
       /**
@@ -622,7 +702,8 @@ public class AvroIO {
             shardTemplate,
             type,
             ReflectData.get().getSchema(type),
-            validate);
+            validate,
+            codec);
       }
 
       /**
@@ -641,7 +722,8 @@ public class AvroIO {
             shardTemplate,
             GenericRecord.class,
             schema,
-            validate);
+            validate,
+            codec);
       }
 
       /**
@@ -667,7 +749,34 @@ public class AvroIO {
        */
       public Bound<T> withoutValidation() {
         return new Bound<>(
-            name, filenamePrefix, filenameSuffix, numShards, shardTemplate, type, schema, false);
+            name,
+            filenamePrefix,
+            filenameSuffix,
+            numShards,
+            shardTemplate,
+            type,
+            schema,
+            false,
+            codec);
+      }
+
+      /**
+       * Returns a new {@link PTransform} that's like this one but
+       * that writes to Avro file(s) compressed using specified codec.
+       *
+       * <p>Does not modify this object.
+       */
+      public Bound<T> withCodec(CodecFactory codec) {
+        return new Bound<>(
+            name,
+            filenamePrefix,
+            filenameSuffix,
+            numShards,
+            shardTemplate,
+            type,
+            schema,
+            validate,
+            new SerializableAvroCodecFactory(codec));
       }
 
       @Override
@@ -683,7 +792,11 @@ public class AvroIO {
         com.google.cloud.dataflow.sdk.io.Write.Bound<T> write =
             com.google.cloud.dataflow.sdk.io.Write.to(
                 new AvroSink<>(
-                    filenamePrefix, filenameSuffix, shardTemplate, AvroCoder.of(type, schema)));
+                    filenamePrefix,
+                    filenameSuffix,
+                    shardTemplate,
+                    AvroCoder.of(type, schema),
+                    codec));
         if (getNumShards() > 0) {
           write = write.withNumShards(getNumShards());
         }
@@ -709,7 +822,10 @@ public class AvroIO {
                 0)
             .addIfNotDefault(DisplayData.item("validation", validate)
                 .withLabel("Validation Enabled"),
-                true);
+                true)
+            .addIfNotDefault(DisplayData.item("codec", codec.toString())
+                .withLabel("Avro Compression Codec"),
+                DEFAULT_CODEC.toString());
       }
 
       /**
@@ -751,6 +867,8 @@ public class AvroIO {
       public boolean needsValidation() {
         return validate;
       }
+
+      public CodecFactory getCodec() { return codec.getCodec(); }
     }
 
     /** Disallow construction of utility class. */
@@ -779,17 +897,23 @@ public class AvroIO {
   @VisibleForTesting
   static class AvroSink<T> extends FileBasedSink<T> {
     private final AvroCoder<T> coder;
+    private final SerializableAvroCodecFactory codec;
 
     @VisibleForTesting
     AvroSink(
-        String baseOutputFilename, String extension, String fileNameTemplate, AvroCoder<T> coder) {
+        String baseOutputFilename,
+        String extension,
+        String fileNameTemplate,
+        AvroCoder<T> coder,
+        SerializableAvroCodecFactory codec) {
       super(baseOutputFilename, extension, fileNameTemplate);
       this.coder = coder;
+      this.codec = codec;
     }
 
     @Override
     public FileBasedSink.FileBasedWriteOperation<T> createWriteOperation(PipelineOptions options) {
-      return new AvroWriteOperation<>(this, coder);
+      return new AvroWriteOperation<>(this, coder, codec);
     }
 
     /**
@@ -798,15 +922,19 @@ public class AvroIO {
      */
     private static class AvroWriteOperation<T> extends FileBasedWriteOperation<T> {
       private final AvroCoder<T> coder;
+      private final SerializableAvroCodecFactory codec;
 
-      private AvroWriteOperation(AvroSink<T> sink, AvroCoder<T> coder) {
+      private AvroWriteOperation(AvroSink<T> sink,
+                                 AvroCoder<T> coder,
+                                 SerializableAvroCodecFactory codec) {
         super(sink);
         this.coder = coder;
+        this.codec = codec;
       }
 
       @Override
       public FileBasedWriter<T> createWriter(PipelineOptions options) throws Exception {
-        return new AvroWriter<>(this, coder);
+        return new AvroWriter<>(this, coder, codec);
       }
     }
 
@@ -817,17 +945,21 @@ public class AvroIO {
     private static class AvroWriter<T> extends FileBasedWriter<T> {
       private final AvroCoder<T> coder;
       private DataFileWriter<T> dataFileWriter;
+      private SerializableAvroCodecFactory codec;
 
-      public AvroWriter(FileBasedWriteOperation<T> writeOperation, AvroCoder<T> coder) {
+      public AvroWriter(FileBasedWriteOperation<T> writeOperation,
+                        AvroCoder<T> coder,
+                        SerializableAvroCodecFactory codec) {
         super(writeOperation);
         this.mimeType = MimeTypes.BINARY;
         this.coder = coder;
+        this.codec = codec;
       }
 
       @SuppressWarnings("deprecation") // uses internal test functionality.
       @Override
       protected void prepareWrite(WritableByteChannel channel) throws Exception {
-        dataFileWriter = new DataFileWriter<>(coder.createDatumWriter());
+        dataFileWriter = new DataFileWriter<>(coder.createDatumWriter()).setCodec(codec.getCodec());
         dataFileWriter.create(coder.getSchema(), Channels.newOutputStream(channel));
       }
 
