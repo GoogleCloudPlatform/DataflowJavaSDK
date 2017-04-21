@@ -1211,7 +1211,7 @@ public class BigQueryIO {
     protected final BigQueryServices bqServices;
     protected final ValueProvider<String> executingProject;
 
-    private List<BoundedSource<TableRow>> cachedSplitResult;
+    private transient List<BoundedSource<TableRow>> cachedSplitResult;
 
     private BigQuerySourceBase(
         String jobIdToken,
