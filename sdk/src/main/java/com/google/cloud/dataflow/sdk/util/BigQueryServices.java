@@ -126,6 +126,13 @@ public interface BigQueryServices extends Serializable {
     void deleteTable(String projectId, String datasetId, String tableId)
         throws IOException, InterruptedException;
 
+    /** Patch BigQuery {@link Table} description. */
+    Table patchTableDescription(String project,
+                                String dataset,
+                                String tableId,
+                                String tableDescription)
+        throws IOException, InterruptedException;
+
     /**
      * Create a {@link Dataset} with the given {@code location} and {@code description}.
      */
