@@ -480,6 +480,13 @@ public class PubsubIO {
     }
 
     /**
+     * Set ackDeadlineSeconds for randomly created subscription when subscription is not specified.
+     */
+    public static Bound<String> ackDeadlineSeconds(int ackDeadlineSeconds) {
+      return new Bound<>(DEFAULT_PUBSUB_CODER).ackDeadlineSeconds(ackDeadlineSeconds);
+    }
+
+    /**
      * Creates and returns a transform reading from Cloud Pub/Sub where record timestamps are
      * expected to be provided as Pub/Sub message attributes. The {@code timestampLabel}
      * parameter specifies the name of the attribute that contains the timestamp.
@@ -589,13 +596,16 @@ public class PubsubIO {
       /** Stop after reading for this much time. */
       @Nullable private final Duration maxReadTime;
 
+      /** Set ackDeadlineSeconds for randomly created subscription. */
+      @Nullable private final int ackDeadlineSeconds;
+
       private Bound(Coder<T> coder) {
-        this(null, null, null, null, coder, null, 0, null);
+        this(null, null, null, null, coder, null, 0, null, PubsubReader.ACK_TIMEOUT_SEC);
       }
 
       private Bound(String name, ValueProvider<PubsubSubscription> subscription,
           ValueProvider<PubsubTopic> topic, String timestampLabel, Coder<T> coder,
-          String idLabel, int maxNumRecords, Duration maxReadTime) {
+          String idLabel, int maxNumRecords, Duration maxReadTime, int ackDeadlineSeconds) {
         super(name);
         this.subscription = subscription;
         this.topic = topic;
@@ -604,6 +614,7 @@ public class PubsubIO {
         this.idLabel = idLabel;
         this.maxNumRecords = maxNumRecords;
         this.maxReadTime = maxReadTime;
+        this.ackDeadlineSeconds = ackDeadlineSeconds;
       }
 
       /**
@@ -613,7 +624,8 @@ public class PubsubIO {
        */
       public Bound<T> named(String name) {
         return new Bound<>(
-            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
+            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords,
+                maxReadTime, ackDeadlineSeconds);
       }
 
       /**
@@ -643,7 +655,16 @@ public class PubsubIO {
         }
         return new Bound<>(name,
             NestedValueProvider.of(subscription, new SubscriptionTranslator()),
-            topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
+            topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime, ackDeadlineSeconds);
+      }
+
+      /**
+       * Set ackDeadlineSeconds for randomly created subscription when
+       * subscription is not specified.
+       */
+      public Bound<T> ackDeadlineSeconds(int ackDeadlineSeconds) {
+        return new Bound<>(name, subscription, topic, timestampLabel, coder, idLabel,
+                maxNumRecords, maxReadTime, ackDeadlineSeconds);
       }
 
       /**
@@ -668,7 +689,7 @@ public class PubsubIO {
         }
         return new Bound<>(name, subscription,
             NestedValueProvider.of(topic, new TopicTranslator()),
-            timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
+            timestampLabel, coder, idLabel, maxNumRecords, maxReadTime, ackDeadlineSeconds);
       }
 
       /**
@@ -680,7 +701,8 @@ public class PubsubIO {
        */
       public Bound<T> timestampLabel(String timestampLabel) {
         return new Bound<>(
-            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
+            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords,
+                maxReadTime, ackDeadlineSeconds);
       }
 
       /**
@@ -692,7 +714,8 @@ public class PubsubIO {
        */
       public Bound<T> idLabel(String idLabel) {
         return new Bound<>(
-            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
+            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords,
+                maxReadTime, ackDeadlineSeconds);
       }
 
       /**
@@ -706,7 +729,8 @@ public class PubsubIO {
        */
       public <X> Bound<X> withCoder(Coder<X> coder) {
         return new Bound<>(
-            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
+            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords,
+                maxReadTime, ackDeadlineSeconds);
       }
 
       /**
@@ -716,7 +740,8 @@ public class PubsubIO {
        */
       public Bound<T> maxNumRecords(int maxNumRecords) {
         return new Bound<>(
-            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
+            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords,
+                maxReadTime, ackDeadlineSeconds);
       }
 
       /**
@@ -726,7 +751,8 @@ public class PubsubIO {
        */
       public Bound<T> maxReadTime(Duration maxReadTime) {
         return new Bound<>(
-            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords, maxReadTime);
+            name, subscription, topic, timestampLabel, coder, idLabel, maxNumRecords,
+                maxReadTime, ackDeadlineSeconds);
       }
 
       @Override
@@ -822,6 +848,10 @@ public class PubsubIO {
         return maxReadTime;
       }
 
+      public int getAckDeadlineSeconds() {
+        return ackDeadlineSeconds;
+      }
+
       /**
        * Default reader when Pubsub subscription has some form of upper bound.
        *
@@ -858,7 +888,8 @@ public class PubsubIO {
               ProjectPath projectPath = PubsubClient.projectPathFromId(projectId);
               try {
                 subscriptionPath =
-                    pubsubClient.createRandomSubscription(projectPath, topicPath, ACK_TIMEOUT_SEC);
+                    pubsubClient.createRandomSubscription(projectPath,
+                            topicPath, ackDeadlineSeconds);
               } catch (Exception e) {
                 throw new RuntimeException("Failed to create subscription: ", e);
               }

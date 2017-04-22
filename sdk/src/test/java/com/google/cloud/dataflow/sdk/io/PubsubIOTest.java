@@ -138,6 +138,15 @@ public class PubsubIOTest {
   }
 
   @Test
+  public void testAckDeadlineSeconds() {
+    assertEquals(60, PubsubIO.Read.named("test").getAckDeadlineSeconds());
+    assertEquals(60, PubsubIO.Read.ackDeadlineSeconds(60).getAckDeadlineSeconds());
+    assertEquals(15, PubsubIO.Read.ackDeadlineSeconds(15).getAckDeadlineSeconds());
+    assertEquals(-1, PubsubIO.Read.ackDeadlineSeconds(-1).getAckDeadlineSeconds());
+    assertEquals(0, PubsubIO.Read.ackDeadlineSeconds(0).getAckDeadlineSeconds());
+  }
+
+  @Test
   public void testNullTopic() {
     String subscription = "projects/project/subscriptions/subscription";
     PubsubIO.Read.Bound<String> read = PubsubIO.Read
