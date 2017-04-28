@@ -108,6 +108,8 @@
     <dataflow.release_name>Google Cloud Dataflow SDK for Java</dataflow.release_name>
     <dataflow.container_version>${project.version}-20170317</dataflow.container_version>
     <dataflow.environment_major_version>6</dataflow.environment_major_version>
+
+    <archetype.sdk_version_dependency>2.0.0-beta4-SNAPSHOT</archetype.sdk_version_dependency>
   </properties>
 
   <packaging>pom</packaging>
@@ -260,6 +262,12 @@
               </goals>
             </execution>
           </executions>
+        </plugin>
+
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-resources-plugin</artifactId>
+          <version>3.0.2</version>
         </plugin>
 
         <plugin>
