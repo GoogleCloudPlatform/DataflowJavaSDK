@@ -21,7 +21,7 @@ import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 
 /**
- * {@code PTransorm}s to count the elements in a {@link PCollection}.
+ * {@code PTransform}s to count the elements in a {@link PCollection}.
  *
  * <p>{@link Count#perElement()} can be used to count the number of occurrences of each
  * distinct element in the PCollection, {@link Count#perKey()} can be used to count the
