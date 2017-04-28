@@ -94,11 +94,86 @@ public class GcpOptionsTest {
   }
 
   @Test
+  public void testGetProjectFromUserHomeDefaultAndActivePrefersActive() throws Exception {
+    Map<String, String> environment = ImmutableMap.of();
+    System.setProperty("user.home", tmpFolder.getRoot().getAbsolutePath());
+
+    makeActiveConfigFile(new File(tmpFolder.newFolder(".config", "gcloud"), "active_config"),
+        "testactive"); // active configuration name
+
+    File configurations = tmpFolder.newFolder(".config", "gcloud", "configurations");
+    makePropertiesFileWithProject(
+        new File(configurations, "config_testactive"),
+        "active-project"); // name of the active project
+
+    assertEquals("active-project",
+        runGetProjectTest(
+            new File(configurations, "config_default"),
+            environment));
+  }
+
+  @Test
+  public void testGetProjectFromUserHomeDefaultAndEmptyActivePrefersDefault() throws Exception {
+    Map<String, String> environment = ImmutableMap.of();
+    System.setProperty("user.home", tmpFolder.getRoot().getAbsolutePath());
+
+    makeActiveConfigFile(new File(tmpFolder.newFolder(".config", "gcloud"), "active_config"),
+        ""); // active configuration name
+
+    File configurations = tmpFolder.newFolder(".config", "gcloud", "configurations");
+    makePropertiesFileWithProject(
+        new File(configurations, "config_testactive"),
+        "active-project"); // name of the active project
+
+    assertEquals("test-project",
+        runGetProjectTest(
+            new File(configurations, "config_default"),
+            environment));
+  }
+
+  @Test
+  public void testGetProjectFromUserHomeDefaultAndInvalidActivePrefersDefault() throws Exception {
+    Map<String, String> environment = ImmutableMap.of();
+    System.setProperty("user.home", tmpFolder.getRoot().getAbsolutePath());
+
+    makeActiveConfigFile(new File(tmpFolder.newFolder(".config", "gcloud"), "active_config"),
+        "testactive\ntestactive2"); // active configuration name
+
+    File configurations = tmpFolder.newFolder(".config", "gcloud", "configurations");
+    makePropertiesFileWithProject(
+        new File(configurations, "config_testactive"),
+        "active-project"); // name of the active project
+
+    assertEquals("test-project",
+        runGetProjectTest(
+            new File(configurations, "config_default"),
+            environment));
+  }
+
+  @Test
+  public void testGetProjectFromUserHomeOldAndNoActiveFilePrefersOld() throws Exception {
+    Map<String, String> environment = ImmutableMap.of();
+    System.setProperty("user.home", tmpFolder.getRoot().getAbsolutePath());
+
+    File gcloudFolder = tmpFolder.newFolder(".config", "gcloud");
+    makeActiveConfigFile(new File(gcloudFolder, "active_config"), "testactive");
+    assertEquals("test-project",
+        runGetProjectTest(
+            new File(gcloudFolder, "properties"),
+            environment));
+  }
+
+  @Test
   public void testUnableToGetDefaultProject() throws Exception {
     System.setProperty("user.home", tmpFolder.getRoot().getAbsolutePath());
     DefaultProjectFactory projectFactory = spy(new DefaultProjectFactory());
     when(projectFactory.getEnvironment()).thenReturn(ImmutableMap.<String, String>of());
     assertNull(projectFactory.create(PipelineOptionsFactory.create()));
+  }
+
+  private static void makeActiveConfigFile(File path, String activeConfigName)
+    throws IOException {
+    Files.write(activeConfigName, path, StandardCharsets.UTF_8);
   }
 
   private static void makePropertiesFileWithProject(File path, String projectId)
