@@ -109,6 +109,11 @@
     <dataflow.container_version>${project.version}-20170317</dataflow.container_version>
     <dataflow.environment_major_version>6</dataflow.environment_major_version>
 
+    <!-- Archetype version propagated automatically to underlying archetype modules.
+         Example values are: ${project.version}, 1.2.3-SNAPSHOT, [1.0.0,2),
+                             [${project.version}, 2), etc.
+         Starter archetype reference copy isn't affected by this value; a manual
+         change is expected there. -->
     <archetype.sdk_version_dependency>2.0.0-beta4-SNAPSHOT</archetype.sdk_version_dependency>
   </properties>
 
