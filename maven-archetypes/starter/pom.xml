@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  ~ Copyright (C) 2015 Google Inc.
+  ~ Copyright (C) 2017 Google Inc.
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License"); you may not
   ~ use this file except in compliance with the License. You may obtain a copy of
@@ -14,24 +14,23 @@
   ~ License for the specific language governing permissions and limitations under
   ~ the License.
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
     <groupId>com.google.cloud.dataflow</groupId>
-    <artifactId>google-cloud-dataflow-java-sdk-parent</artifactId>
-    <version>1.10.0-SNAPSHOT</version>
-    <relativePath>../../pom.xml</relativePath>
+    <artifactId>google-cloud-dataflow-java-archetypes-parent</artifactId>
+    <version>2.0.0-beta4-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
   </parent>
 
-  <groupId>com.google.cloud.dataflow</groupId>
   <artifactId>google-cloud-dataflow-java-archetypes-starter</artifactId>
-  <name>Google Cloud Dataflow Java SDK - Starter Archetype</name>
-  <description>A Maven archetype to create a simple starter pipeline to
-    get started using the Google Cloud Dataflow Java SDK. </description>
-  <url>http://cloud.google.com/dataflow</url>
+  <name>Google Cloud Dataflow SDK for Java - Starter Archetype</name>
+  <description>Google Cloud Dataflow SDK for Java is a distribution of Apache
+      Beam designed to simplify usage of Apache Beam on Google Cloud Dataflow
+      service. This archetype creates a simple starter pipeline to get started
+      using the Google Cloud Dataflow SDK for Java.</description>
 
   <packaging>maven-archetype</packaging>
 
@@ -49,8 +48,38 @@
         <plugin>
           <artifactId>maven-archetype-plugin</artifactId>
           <version>2.4</version>
+          <dependencies>
+            <dependency>
+              <groupId>org.apache.maven.shared</groupId>
+              <artifactId>maven-invoker</artifactId>
+              <version>2.2</version>
+            </dependency>
+          </dependencies>
+          <executions>
+            <!-- archetype-packaging above binds this plugin's goals as follows:
+                     archetype:jar to the package phase,
+                     archetype:integration-test to the integration-test phase,
+                     archetype:update-local-catalog to the install phase.
+                 We defer the integration-test goal to the install phase, since
+                 this test actually depends on the core SDK to be installed. -->
+            <execution>
+              <id>default-integration-test</id>
+              <phase>install</phase>
+              <goals>
+                <goal>integration-test</goal>
+              </goals>
+              <configuration>
+                <!--
+                On windows EOL will be \n\r but we expect \n in tests.
+                -->
+                <ignoreEOLStyle>true</ignoreEOLStyle>
+              </configuration>
+            </execution>
+          </executions>
         </plugin>
       </plugins>
     </pluginManagement>
   </build>
+  <!-- Dependency section from Beam omitted. Used in Beam for parallelizing build to ensure
+       relevant sections are built, but that is not being done here. -->
 </project>
