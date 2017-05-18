@@ -37,6 +37,25 @@
   </modules>
 
   <build>
+    <resources>
+      <!-- use filtering for the pom.xml template (with custom delimiter, see below) -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+        <includes>
+          <include>archetype-resources/pom.xml</include>
+        </includes>
+      </resource>
+      <!-- all of the other resources file should be used as resource but without filtering -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>false</filtering>
+        <excludes>
+          <exclude>archetype-resources/pom.xml</exclude>
+        </excludes>
+      </resource>
+    </resources>
+
     <pluginManagement>
       <plugins>
         <plugin>
@@ -51,22 +70,24 @@
         </plugin>
       </plugins>
     </pluginManagement>
-
-    <resources>
-      <resource>
-        <directory>src/main/resources</directory>
-        <filtering>true</filtering>
-        <includes>
-          <include>archetype-resources/pom.xml</include>
-        </includes>
-      </resource>
-      <resource>
-        <directory>src/main/resources</directory>
-        <filtering>false</filtering>
-        <excludes>
-          <exclude>archetype-resources/pom.xml</exclude>
-        </excludes>
-      </resource>
-    </resources>
+    
+    <plugins>
+      <!-- Disable the Maven jar plugin because Maven archetypes
+         are packaged using the Maven archetype packaging plugin. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>default-jar</id>
+            <phase>none</phase>
+          </execution>
+          <execution>
+            <id>default-test-jar</id>
+            <phase>none</phase>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
   </build>
 </project>

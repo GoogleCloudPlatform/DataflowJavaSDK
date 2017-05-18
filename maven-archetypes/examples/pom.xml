@@ -74,6 +74,7 @@
       </plugins>
     </pluginManagement>
   </build>
+
   <!-- Dependency section from Beam omitted. Used in Beam for parallelizing build to ensure
-       relevant sections are built, but that is not being done here. -->
+      relevant sections are built, but that is not being done here. -->
 </project>
