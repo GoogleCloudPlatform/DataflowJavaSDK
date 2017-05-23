@@ -136,7 +136,7 @@
     <dependency>
       <groupId>com.google.cloud.dataflow</groupId>
       <artifactId>google-cloud-dataflow-java-sdk-all</artifactId>
-      <version>@archetype.sdk_version_dependency@</version>
+      <version>@project.version@</version>
     </dependency>
 
     <!-- Dependencies below this line are specific dependencies needed by the examples code. -->
