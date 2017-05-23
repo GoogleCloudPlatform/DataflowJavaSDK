@@ -114,7 +114,7 @@
                              [${project.version}, 2), etc.
          Starter archetype reference copy isn't affected by this value; a manual
          change is expected there. -->
-    <archetype.sdk_version_dependency>2.0.0-beta4-SNAPSHOT</archetype.sdk_version_dependency>
+    <archetype.sdk_version_dependency>2.1.0-SNAPSHOT</archetype.sdk_version_dependency>
   </properties>
 
   <packaging>pom</packaging>
