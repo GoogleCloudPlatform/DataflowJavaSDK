@@ -53,8 +53,8 @@ provides tools to create and execute Dataflow pipelines inside Eclipse.
 
 ## Status [![Build Status](https://api.travis-ci.org/GoogleCloudPlatform/DataflowJavaSDK.svg?branch=master)](https://travis-ci.org/GoogleCloudPlatform/DataflowJavaSDK)
 
-Both the SDK and the Dataflow Service are generally available, open to all
-developers, and considered stable and fully qualified for production use.
+Both the SDK and the Dataflow Service are generally available and considered
+stable and fully qualified for production use.
 
 This [`master`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/) branch
 contains code to build Dataflow SDK 2.0.0 and newer, as a distribution of Apache
