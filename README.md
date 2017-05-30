@@ -103,3 +103,5 @@ on GitHub to report any bugs, comments or questions regarding SDK development.
 * [Apache Beam](https://beam.apache.org/)
 * [Dataflow Concepts and Programming Model](https://beam.apache.org/documentation/programming-guide/)
 * [Java API Reference](https://beam.apache.org/documentation/sdks/javadoc/)
+
+_Apache, Apache Beam and the orange letter B logo are either registered trademarks or trademarks of the Apache Software Foundation in the United States and/or other countries._
