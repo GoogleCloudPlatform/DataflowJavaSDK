@@ -27,9 +27,10 @@ underlying source code is hosted in the
 [Apache Beam repository](https://github.com/apache/beam).
 
 [General usage](https://cloud.google.com/dataflow/getting-started) of Google
-Cloud Dataflow does **not** require use of this repository. Instead:
+Cloud Dataflow does **not** require use of this repository. Instead, you can do
+any one of the following:
 
-1. depend directly on a specific
+1. Depend directly on a specific
 [version](https://cloud.google.com/dataflow/downloads) of the SDK in
 the [Maven Central Repository](http://search.maven.org/#search%7Cga%7C1%7Cg%3A%22com.google.cloud.dataflow%22)
 by adding the following dependency to development
@@ -41,23 +42,24 @@ environments like Eclipse or Apache Maven:
           <version>version_number</version>
         </dependency>
 
-1. download the example pipelines from the separate
+1. Download the example pipelines from the separate
 [DataflowJavaSDK-examples](https://github.com/GoogleCloudPlatform/DataflowJavaSDK-examples)
 repository.
 
 1. If you are using [Eclipse](https://eclipse.org/) integrated development
 environment (IDE), the
 [Cloud Dataflow Plugin for Eclipse](https://cloud.google.com/dataflow/docs/quickstarts/quickstart-java-eclipse)
-provides tools to create and execute Dataflow pipelines.
+provides tools to create and execute Dataflow pipelines inside Eclipse.
 
 ## Status [![Build Status](https://api.travis-ci.org/GoogleCloudPlatform/DataflowJavaSDK.svg?branch=master)](https://travis-ci.org/GoogleCloudPlatform/DataflowJavaSDK)
 
 Both the SDK and the Dataflow Service are generally available, open to all
 developers, and considered stable and fully qualified for production use.
 
-This (`master`) branch contains code to build Dataflow SDK 2.0.0 and newer,
-as a distribution of Apache Beam. Pre-Beam SDKs (versions 1.x) are maintained
-in the [`master-1.x`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/tree/master-1.x)
+This [`master`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/) branch
+contains code to build Dataflow SDK 2.0.0 and newer, as a distribution of Apache
+Beam. Pre-Beam SDKs, versions 1.x, are maintained in the
+[`master-1.x`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/tree/master-1.x)
 branch.
 
 ## Overview
@@ -75,8 +77,9 @@ that is ready for execution.
 We provide two runners:
 
   1. The `DirectRunner` runs the pipeline on your local machine.
-  1. The `DataflowRunner` submits the pipeline to the Dataflow Service, where it runs using managed
-resources in the [Google Cloud Platform](https://cloud.google.com) (GCP).
+  1. The `DataflowRunner` submits the pipeline to the Cloud Dataflow Service,
+where it runs using managed resources in the
+[Google Cloud Platform](https://cloud.google.com).
 
 The SDK is built to be extensible and support additional execution environments
 beyond local execution and the Google Cloud Dataflow Service. Apache Beam
