@@ -30,7 +30,7 @@ underlying source code is hosted in the
 Cloud Dataflow does **not** require use of this repository. Instead:
 
 1. depend directly on a specific
-[version](https://cloud.google.com/dataflow/release-notes/java) of the SDK in
+[version](https://cloud.google.com/dataflow/downloads) of the SDK in
 the [Maven Central Repository](http://search.maven.org/#search%7Cga%7C1%7Cg%3A%22com.google.cloud.dataflow%22)
 by adding the following dependency to development
 environments like Eclipse or Apache Maven:
@@ -45,65 +45,46 @@ environments like Eclipse or Apache Maven:
 [DataflowJavaSDK-examples](https://github.com/GoogleCloudPlatform/DataflowJavaSDK-examples)
 repository.
 
-<!-- 1. If you are using [Eclipse](https://eclipse.org/) integrated development
+1. If you are using [Eclipse](https://eclipse.org/) integrated development
 environment (IDE), the
-[Cloud Dataflow Plugin for Eclipse](https://cloud.google.com/dataflow/getting-started-eclipse)
-provides tools to create and execute Dataflow pipelines locally and on the
-Dataflow Service. -->
+[Cloud Dataflow Plugin for Eclipse](https://cloud.google.com/dataflow/docs/quickstarts/quickstart-java-eclipse)
+provides tools to create and execute Dataflow pipelines.
 
-## Status [![Build Status](https://travis-ci.org/GoogleCloudPlatform/DataflowJavaSDK.svg?branch=v2)](https://travis-ci.org/GoogleCloudPlatform/DataflowJavaSDK)
+## Status [![Build Status](https://api.travis-ci.org/GoogleCloudPlatform/DataflowJavaSDK.svg?branch=master)](https://travis-ci.org/GoogleCloudPlatform/DataflowJavaSDK)
 
-This branch is a work-in-progress for the Dataflow SDK for Java, version 2.0.0.
-It is currently supported on the Cloud Dataflow service in Beta.
+Both the SDK and the Dataflow Service are generally available, open to all
+developers, and considered stable and fully qualified for production use.
 
-<!--Both the SDK and the Dataflow Service are generally available, open to all
-developers, and considered stable and fully qualified for production use.-->
+This (`master`) branch contains code to build Dataflow SDK 2.0.0 and newer,
+as a distribution of Apache Beam. Pre-Beam SDKs (versions 1.x) are maintained
+in the [`master-1.x`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/tree/master-1.x)
+branch.
 
 ## Overview
 
 The key concepts in this programming model are:
 
-* [`PCollection`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/sdk/src/main/java/com/google/cloud/dataflow/sdk/values/PCollection.java):
-represents a collection of data, which could be bounded or unbounded in size.
-* [`PTransform`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/sdk/src/main/java/com/google/cloud/dataflow/sdk/transforms/PTransform.java):
-represents a computation that transforms input PCollections into output
-PCollections.
-* [`Pipeline`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/sdk/src/main/java/com/google/cloud/dataflow/sdk/Pipeline.java):
-manages a directed acyclic graph of PTransforms and PCollections that is ready
-for execution.
-* [`PipelineRunner`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/sdk/src/main/java/com/google/cloud/dataflow/sdk/runners/PipelineRunner.java):
-specifies where and how the pipeline should execute.
+* `PCollection`: represents a collection of data, which could be bounded or
+unbounded in size.
+* `PTransform`: represents a computation that transforms input PCollections
+into output PCollections.
+* `Pipeline`: manages a directed acyclic graph of PTransforms and PCollections
+that is ready for execution.
+* `PipelineRunner`: specifies where and how the pipeline should execute.
 
 We provide two runners:
 
-  1. The [`DirectRunner`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/sdk/src/main/java/com/google/cloud/dataflow/sdk/runners/DirectPipelineRunner.java)
-runs the pipeline on your local machine.
-  1. The [`DataflowRunner`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/sdk/src/main/java/com/google/cloud/dataflow/sdk/runners/DataflowPipelineRunner.java)
-submits the pipeline to the Dataflow Service, where it runs using managed
+  1. The `DirectRunner` runs the pipeline on your local machine.
+  1. The `DataflowRunner` submits the pipeline to the Dataflow Service, where it runs using managed
 resources in the [Google Cloud Platform](https://cloud.google.com) (GCP).
 
 The SDK is built to be extensible and support additional execution environments
 beyond local execution and the Google Cloud Dataflow Service. Apache Beam
-contains additional SDKs, runners, IO connectors, etc.
+contains additional SDKs, runners, and IO connectors.
 
 ## Getting Started
 
-This repository consists of the following parts:
-
-* The [`sdk`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/sdk)
-module provides a set of basic Java APIs to program against.
-* The [`examples`](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/examples)
-module provides a few samples to get started. We recommend starting with the
-`WordCount` example.
-
-The following command will build both the `sdk` and `example` modules and
-install them in your local Maven repository:
-
-    mvn clean install
-
-After building and installing, you can execute the `WordCount` and other
-example pipelines by following the instructions in this
-[README](https://github.com/GoogleCloudPlatform/DataflowJavaSDK/blob/master/examples/README.md).
+Please try our [Quickstarts](https://cloud.google.com/dataflow/docs/quickstarts).
 
 ## Contact Us
 
@@ -117,5 +98,5 @@ on GitHub to report any bugs, comments or questions regarding SDK development.
 
 * [Google Cloud Dataflow](https://cloud.google.com/dataflow/)
 * [Apache Beam](https://beam.apache.org/)
-* [Dataflow Concepts and Programming Model](https://cloud.google.com/dataflow/model/programming-model)
-* [Java API Reference](https://cloud.google.com/dataflow/java-sdk/JavaDoc/index)
+* [Dataflow Concepts and Programming Model](https://beam.apache.org/documentation/programming-guide/)
+* [Java API Reference](https://beam.apache.org/documentation/sdks/javadoc/)
