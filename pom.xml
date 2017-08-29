@@ -103,7 +103,7 @@
     <timestamp>${maven.build.timestamp}</timestamp>
     <maven.build.timestamp.format>yyyy-MM-dd HH:mm</maven.build.timestamp.format>
 
-    <beam.version>2.0.0</beam.version>
+    <beam.version>2.1.0</beam.version>
 
     <dataflow.release_name>Google Cloud Dataflow SDK for Java</dataflow.release_name>
     <dataflow.container_version>${project.version}-20170517</dataflow.container_version>
