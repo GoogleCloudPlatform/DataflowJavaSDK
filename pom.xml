@@ -105,6 +105,16 @@
 
     <beam.version>2.1.0</beam.version>
 
+    <bigquery.version>v2-rev295-1.22.0</bigquery.version>
+    <google-clients.version>1.22.0</google-clients.version>
+    <guava.version>20.0</guava.version>
+    <hamcrest.version>1.3</hamcrest.version>
+    <joda.version>2.4</joda.version>
+    <junit.version>4.12</junit.version>
+    <mockito.version>1.9.5</mockito.version>
+    <pubsub.version>v1-rev10-1.22.0</pubsub.version>
+    <slf4j.version>1.7.14</slf4j.version>
+
     <dataflow.release_name>Google Cloud Dataflow SDK for Java</dataflow.release_name>
     <dataflow.container_version>${project.version}-20170823</dataflow.container_version>
     <dataflow.legacy_environment_major_version>6</dataflow.legacy_environment_major_version>
