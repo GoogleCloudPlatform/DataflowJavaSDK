@@ -54,7 +54,7 @@
     <connection>scm:git:git@github.com:wcn3/DataflowJavaSDK.git</connection>
     <developerConnection>scm:git:git@github.com:wcn3/DataflowJavaSDK.git</developerConnection>
     <url>git@github.com:wcn3/DataflowJavaSDK.git</url>
-    <tag>release-2.3.0</tag>
+    <tag>release-2.4.0</tag>
   </scm>
 
   <distributionManagement>
