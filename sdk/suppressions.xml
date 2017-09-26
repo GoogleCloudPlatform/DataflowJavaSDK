@@ -19,9 +19,8 @@
 "http://www.puppycrawl.com/dtds/suppressions_1_1.dtd">
 
 <suppressions>
-  <suppress checks="JavadocPackage" files=".*[\\/]src[\\/]test[\\/].*"/>
-  <suppress checks="JavadocPackage" files=".*[\\/]maven-archetypes[\\/].*"/>
-  <suppress checks="JavadocPackage" files=".*[\\/]examples[\\/].*"/>
+  <!-- suppress all Javadoc checks -->
+  <suppress checks="JavadocPackage" files=".*"/>
 
   <!-- suppress all checks in the generated directories -->
   <suppress checks=".*" files=".+[\\/]generated[\\/].+\.java" />
