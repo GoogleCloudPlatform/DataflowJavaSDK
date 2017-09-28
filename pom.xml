@@ -103,12 +103,14 @@
     <timestamp>${maven.build.timestamp}</timestamp>
     <maven.build.timestamp.format>yyyy-MM-dd HH:mm</maven.build.timestamp.format>
 
-    <beam.version>2.1.0</beam.version>
+    <beam.version>2.2.0-SNAPSHOT</beam.version>
 
     <dataflow.release_name>Google Cloud Dataflow SDK for Java</dataflow.release_name>
     <dataflow.container_version>${project.version}-20170517</dataflow.container_version>
     <dataflow.legacy_environment_major_version>6</dataflow.legacy_environment_major_version>
     <dataflow.fnapi_environment_major_version>1</dataflow.fnapi_environment_major_version>
+
+    <junit.version>4.12</junit.version>
   </properties>
 
   <packaging>pom</packaging>
@@ -158,7 +160,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.6.1</version>
+          <version>3.6.2</version>
           <configuration>
             <source>1.7</source>
             <target>1.7</target>
@@ -166,6 +168,8 @@
               <arg>-Xlint:all</arg>
               <arg>-Werror</arg>
               <arg>-Xlint:-options</arg>
+              <!-- Ignore warnings for annotations which aren't consumed by annotation processors. -->
+              <arg>-Xlint:-processing</arg>
             </compilerArgs>
             <showWarnings>true</showWarnings>
           </configuration>
@@ -181,18 +185,29 @@
               <artifactId>checkstyle</artifactId>
               <version>6.19</version>
             </dependency>
+            <dependency>
+              <groupId>org.apache.beam</groupId>
+              <artifactId>beam-sdks-java-build-tools</artifactId>
+              <version>${beam.version}</version>
+            </dependency>
           </dependencies>
           <configuration>
-            <configLocation>sdk/checkstyle.xml</configLocation>
+            <configLocation>beam/checkstyle.xml</configLocation>
             <suppressionsLocation>sdk/suppressions.xml</suppressionsLocation>
             <consoleOutput>true</consoleOutput>
             <failOnViolation>true</failOnViolation>
-            <includeResources>true</includeResources>
+            <includeResources>false</includeResources>
             <includeTestSourceDirectory>true</includeTestSourceDirectory>
           </configuration>
           <executions>
+            <!--
+              Execute checkstyle after compilation but before tests.
+              This ensures that any parsing or type checking errors are from
+              javac, so they look as expected. Beyond that, we want to
+              fail as early as possible.
+            -->
             <execution>
-              <phase>verify</phase>
+              <phase>test-compile</phase>
               <goals>
                 <goal>check</goal>
               </goals>
@@ -424,6 +439,13 @@
         <groupId>org.apache.beam</groupId>
         <artifactId>beam-examples-java8</artifactId>
         <version>${beam.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>junit</groupId>
+        <artifactId>junit</artifactId>
+        <version>${junit.version}</version>
+        <scope>test</scope>
       </dependency>
     </dependencies>
   </dependencyManagement>
