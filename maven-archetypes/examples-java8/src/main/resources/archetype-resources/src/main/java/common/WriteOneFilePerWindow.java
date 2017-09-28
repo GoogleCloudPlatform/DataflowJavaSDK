@@ -17,24 +17,24 @@
  */
 package ${package}.common;
 
-    import static com.google.common.base.MoreObjects.firstNonNull;
+import static com.google.common.base.MoreObjects.firstNonNull;
 
-    import javax.annotation.Nullable;
-    import org.apache.beam.sdk.io.FileBasedSink;
-    import org.apache.beam.sdk.io.FileBasedSink.FilenamePolicy;
-    import org.apache.beam.sdk.io.FileBasedSink.OutputFileHints;
-    import org.apache.beam.sdk.io.TextIO;
-    import org.apache.beam.sdk.io.fs.ResolveOptions.StandardResolveOptions;
-    import org.apache.beam.sdk.io.fs.ResourceId;
-    import org.apache.beam.sdk.transforms.DoFn;
-    import org.apache.beam.sdk.transforms.PTransform;
-    import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
-    import org.apache.beam.sdk.transforms.windowing.IntervalWindow;
-    import org.apache.beam.sdk.transforms.windowing.PaneInfo;
-    import org.apache.beam.sdk.values.PCollection;
-    import org.apache.beam.sdk.values.PDone;
-    import org.joda.time.format.DateTimeFormatter;
-    import org.joda.time.format.ISODateTimeFormat;
+import javax.annotation.Nullable;
+import org.apache.beam.sdk.io.FileBasedSink;
+import org.apache.beam.sdk.io.FileBasedSink.FilenamePolicy;
+import org.apache.beam.sdk.io.FileBasedSink.OutputFileHints;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.io.fs.ResolveOptions.StandardResolveOptions;
+import org.apache.beam.sdk.io.fs.ResourceId;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.PTransform;
+import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
+import org.apache.beam.sdk.transforms.windowing.IntervalWindow;
+import org.apache.beam.sdk.transforms.windowing.PaneInfo;
+import org.apache.beam.sdk.values.PCollection;
+import org.apache.beam.sdk.values.PDone;
+import org.joda.time.format.DateTimeFormatter;
+import org.joda.time.format.ISODateTimeFormat;
 
 /**
  * A {@link DoFn} that writes elements to files with names deterministically derived from the lower

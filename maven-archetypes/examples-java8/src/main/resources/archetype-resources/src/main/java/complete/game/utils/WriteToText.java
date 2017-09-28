@@ -17,31 +17,31 @@
  */
 package ${package}.complete.game.utils;
 
-    import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkArgument;
 
-    import java.io.Serializable;
-    import java.util.ArrayList;
-    import java.util.List;
-    import java.util.Map;
-    import java.util.TimeZone;
-    import java.util.stream.Collectors;
-    import org.apache.beam.sdk.io.FileBasedSink;
-    import org.apache.beam.sdk.io.FileBasedSink.FilenamePolicy;
-    import org.apache.beam.sdk.io.FileBasedSink.OutputFileHints;
-    import org.apache.beam.sdk.io.TextIO;
-    import org.apache.beam.sdk.io.fs.ResolveOptions.StandardResolveOptions;
-    import org.apache.beam.sdk.io.fs.ResourceId;
-    import org.apache.beam.sdk.transforms.DoFn;
-    import org.apache.beam.sdk.transforms.PTransform;
-    import org.apache.beam.sdk.transforms.ParDo;
-    import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
-    import org.apache.beam.sdk.transforms.windowing.IntervalWindow;
-    import org.apache.beam.sdk.transforms.windowing.PaneInfo;
-    import org.apache.beam.sdk.values.PCollection;
-    import org.apache.beam.sdk.values.PDone;
-    import org.joda.time.DateTimeZone;
-    import org.joda.time.format.DateTimeFormat;
-    import org.joda.time.format.DateTimeFormatter;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TimeZone;
+import java.util.stream.Collectors;
+import org.apache.beam.sdk.io.FileBasedSink;
+import org.apache.beam.sdk.io.FileBasedSink.FilenamePolicy;
+import org.apache.beam.sdk.io.FileBasedSink.OutputFileHints;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.io.fs.ResolveOptions.StandardResolveOptions;
+import org.apache.beam.sdk.io.fs.ResourceId;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.PTransform;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
+import org.apache.beam.sdk.transforms.windowing.IntervalWindow;
+import org.apache.beam.sdk.transforms.windowing.PaneInfo;
+import org.apache.beam.sdk.values.PCollection;
+import org.apache.beam.sdk.values.PDone;
+import org.joda.time.DateTimeZone;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 
 /**
  * Generate, format, and write rows. Use provided information about the field names and types, as
