@@ -117,7 +117,7 @@
     <joda.version>2.4</joda.version>
     <junit.version>4.12</junit.version>
     <maven-compiler-plugin.version>3.6.1</maven-compiler-plugin.version>
-    <maven-exec-plugin.version>1.4.0</maven-exec-plugin.version> <!-- Dataflow uses 1.5 where Beam uses 1.4 -->
+    <maven-exec-plugin.version>1.5.0</maven-exec-plugin.version>
     <maven-jar-plugin.version>3.0.2</maven-jar-plugin.version>
     <maven-shade-plugin.version>3.0.0</maven-shade-plugin.version>
     <mockito.version>1.9.5</mockito.version>
