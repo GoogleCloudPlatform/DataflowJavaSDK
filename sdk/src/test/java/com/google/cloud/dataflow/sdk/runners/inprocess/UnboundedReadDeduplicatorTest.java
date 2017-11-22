@@ -60,7 +60,7 @@ public class UnboundedReadDeduplicatorTest {
     byte[] id = new byte[] {-1, 2, 4, 22};
     UnboundedReadDeduplicator dedupper = CachedIdDeduplicator.create();
     final CountDownLatch startSignal = new CountDownLatch(1);
-    int numThreads = 1000;
+    int numThreads = 10;
     final CountDownLatch readyLatch = new CountDownLatch(numThreads);
     final CountDownLatch finishLine = new CountDownLatch(numThreads);
 
