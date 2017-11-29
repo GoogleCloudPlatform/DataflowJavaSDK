@@ -237,9 +237,10 @@ public class RetryHttpRequestInitializer implements HttpRequestInitializer {
                                             .setMultiplier(2).build(),
             sleeper, ignoredResponseCodes));
 
-    // Retry immediately on IOExceptions.
+    // Similarly back off on IOExceptions.
     LoggingHttpBackOffIOExceptionHandler loggingBackoffHandler =
-        new LoggingHttpBackOffIOExceptionHandler(BackOff.ZERO_BACKOFF);
+        new LoggingHttpBackOffIOExceptionHandler(
+            new ExponentialBackOff.Builder().setNanoClock(nanoClock).setMultiplier(2).build());
     request.setIOExceptionHandler(loggingBackoffHandler);
 
     // Set response initializer
