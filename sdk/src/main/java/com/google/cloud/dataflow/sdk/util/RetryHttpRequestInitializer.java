@@ -240,7 +240,7 @@ public class RetryHttpRequestInitializer implements HttpRequestInitializer {
     // Similarly back off on IOExceptions.
     LoggingHttpBackOffIOExceptionHandler loggingBackoffHandler =
         new LoggingHttpBackOffIOExceptionHandler(
-            new ExponentialBackOff.Builder().setNanoClock(nanoClock).setMultiplier(2).build()));
+            new ExponentialBackOff.Builder().setNanoClock(nanoClock).setMultiplier(2).build());
     request.setIOExceptionHandler(loggingBackoffHandler);
 
     // Set response initializer
