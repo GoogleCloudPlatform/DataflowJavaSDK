@@ -91,10 +91,10 @@ public class WriteOneFilePerWindow extends PTransform<PCollection<String>, PDone
 
     @Override
     public ResourceId windowedFilename(int shardNumber,
-        int numShards,
-        BoundedWindow window,
-        PaneInfo paneInfo,
-        OutputFileHints outputFileHints) {
+                                       int numShards,
+                                       BoundedWindow window,
+                                       PaneInfo paneInfo,
+                                       OutputFileHints outputFileHints) {
       IntervalWindow intervalWindow = (IntervalWindow) window;
       String filename =
           String.format(

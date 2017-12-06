@@ -145,10 +145,10 @@ public class WriteToText<InputT>
 
     @Override
     public ResourceId windowedFilename(int shardNumber,
-        int numShards,
-        BoundedWindow window,
-        PaneInfo paneInfo,
-        OutputFileHints outputFileHints) {
+                                       int numShards,
+                                       BoundedWindow window,
+                                       PaneInfo paneInfo,
+                                       OutputFileHints outputFileHints) {
       IntervalWindow intervalWindow = (IntervalWindow) window;
       String filename =
           String.format(
