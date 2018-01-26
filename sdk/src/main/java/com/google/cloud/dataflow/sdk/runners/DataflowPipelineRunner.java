@@ -136,6 +136,8 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
+import com.google.common.base.Splitter;
+import com.google.common.base.StandardSystemProperty;
 import com.google.common.base.Strings;
 import com.google.common.base.Utf8;
 import com.google.common.collect.ForwardingMap;
@@ -3198,22 +3200,29 @@ public class DataflowPipelineRunner extends PipelineRunner<DataflowPipelineJob> 
    * @return A list of absolute paths to the resources the class loader uses.
    */
   protected static List<String> detectClassPathResourcesToStage(ClassLoader classLoader) {
-    if (!(classLoader instanceof URLClassLoader)) {
+    List<String> files = new ArrayList<>();
+    if (classLoader == ClassLoader.getSystemClassLoader()) {
+      for (String element :
+          Splitter.on(File.pathSeparatorChar)
+              .split(StandardSystemProperty.JAVA_CLASS_PATH.value())) {
+        files.add(new File(element).getAbsolutePath());
+      }
+    } else if (classLoader instanceof URLClassLoader) {
+      for (URL url : ((URLClassLoader) classLoader).getURLs()) {
+        try {
+          files.add(new File(url.toURI()).getAbsolutePath());
+        } catch (IllegalArgumentException | URISyntaxException e) {
+          String message = String.format("Unable to convert url (%s) to file.", url);
+          LOG.error(message);
+          throw new IllegalArgumentException(message, e);
+        }
+      }
+    } else {
       String message = String.format("Unable to use ClassLoader to detect classpath elements. "
-          + "Current ClassLoader is %s, only URLClassLoaders are supported.", classLoader);
+          + "Current ClassLoader is %s, only URLClassLoaders and the system ClassLoader are "
+          + "supported.", classLoader);
       LOG.error(message);
       throw new IllegalArgumentException(message);
-    }
-
-    List<String> files = new ArrayList<>();
-    for (URL url : ((URLClassLoader) classLoader).getURLs()) {
-      try {
-        files.add(new File(url.toURI()).getAbsolutePath());
-      } catch (IllegalArgumentException | URISyntaxException e) {
-        String message = String.format("Unable to convert url (%s) to file.", url);
-        LOG.error(message);
-        throw new IllegalArgumentException(message, e);
-      }
     }
     return files;
   }
