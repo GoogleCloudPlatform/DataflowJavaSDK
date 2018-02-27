@@ -33,7 +33,6 @@
   <modules>
     <module>starter</module>
     <module>examples</module>
-    <module>examples-java8</module>
   </modules>
 
   <build>
