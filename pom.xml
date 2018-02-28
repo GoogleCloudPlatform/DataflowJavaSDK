@@ -431,12 +431,6 @@
       </dependency>
 
       <dependency>
-        <groupId>org.apache.beam</groupId>
-        <artifactId>beam-examples-java8</artifactId>
-        <version>${beam.version}</version>
-      </dependency>
-
-      <dependency>
         <groupId>junit</groupId>
         <artifactId>junit</artifactId>
         <version>${junit.version}</version>
