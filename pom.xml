@@ -99,18 +99,21 @@
   </prerequisites>
 
   <properties>
+    <java.version>1.8</java.version>
+
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <timestamp>${maven.build.timestamp}</timestamp>
     <maven.build.timestamp.format>yyyy-MM-dd HH:mm</maven.build.timestamp.format>
 
-    <beam.version>2.2.0</beam.version>
+    <beam.version>2.3.0</beam.version>
 
     <dataflow.release_name>Google Cloud Dataflow SDK for Java</dataflow.release_name>
-    <dataflow.container_version>${project.version}-20170517</dataflow.container_version>
+    <dataflow.container_version>${beam.version}</dataflow.container_version>
     <dataflow.legacy_environment_major_version>6</dataflow.legacy_environment_major_version>
     <dataflow.fnapi_environment_major_version>1</dataflow.fnapi_environment_major_version>
 
     <bigquery.version>v2-rev355-1.22.0</bigquery.version>
+    <checkstyle.version>6.19</checkstyle.version>
     <google-clients.version>1.22.0</google-clients.version>
     <guava.version>20.0</guava.version>
     <hamcrest.version>1.3</hamcrest.version>
@@ -120,11 +123,22 @@
     <pubsub.version>v1-rev10-1.22.0</pubsub.version>
     <slf4j.version>1.7.25</slf4j.version>
 
+    <archetype-packaging.version>2.4</archetype-packaging.version>
+    <exec-maven-plugin.version>1.6.0</exec-maven-plugin.version>
     <surefire-plugin.version>2.20</surefire-plugin.version>
+    <maven-archetype-plugin.version>2.4</maven-archetype-plugin.version>
+    <maven-checkstyle-plugin.version>2.17</maven-checkstyle-plugin.version>
+    <maven-clean-plugin.version>3.0.0</maven-clean-plugin.version>
     <maven-compiler-plugin.version>3.6.2</maven-compiler-plugin.version>
-    <maven-exec-plugin.version>1.6.0</maven-exec-plugin.version>
+    <maven-dependency-plugin.version>3.0.1</maven-dependency-plugin.version>
+    <maven-invoker.version>2.2</maven-invoker.version>
     <maven-jar-plugin.version>3.0.2</maven-jar-plugin.version>
+    <maven-javadoc-plugin.version>3.0.0-M1</maven-javadoc-plugin.version>
+    <maven-release-plugin>2.5.3</maven-release-plugin>
+    <maven-resources-plugin.version>3.0.2</maven-resources-plugin.version>
     <maven-shade-plugin.version>3.0.0</maven-shade-plugin.version>
+    <maven-surefire-plugin.version>2.20</maven-surefire-plugin.version>
+    <maven-source-plugin.version>3.0.1</maven-source-plugin.version>
   </properties>
 
   <packaging>pom</packaging>
@@ -139,45 +153,17 @@
       <plugins>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
-          <artifactId>maven-enforcer-plugin</artifactId>
-          <version>1.4.1</version>
-          <executions>
-            <execution>
-              <id>enforce-java</id>
-              <goals>
-                <goal>enforce</goal>
-              </goals>
-              <configuration>
-                <rules>
-                  <!--
-                    Require Java 8 and above to build the distribution. Note
-                    that this is a requirement on process to build the
-                    distribution only. It is expected for the build to fail
-                    using Java 7, but the output is still required to work on
-                    Java 7.
-                  -->
-                  <requireJavaVersion>
-                    <version>[1.8.0,)</version>
-                  </requireJavaVersion>
-                </rules>
-              </configuration>
-            </execution>
-          </executions>
-        </plugin>
-
-        <plugin>
-          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-clean-plugin</artifactId>
-          <version>3.0.0</version>
+          <version>${maven-clean-plugin.version}</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.6.2</version>
+          <version>${maven-compiler-plugin.version}</version>
           <configuration>
-            <source>1.7</source>
-            <target>1.7</target>
+            <source>${java.version}</source>
+            <target>${java.version}</target>
             <compilerArgs>
               <arg>-Xlint:all</arg>
               <arg>-Werror</arg>
@@ -192,12 +178,12 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-checkstyle-plugin</artifactId>
-          <version>2.17</version>
+          <version>${maven-checkstyle-plugin.version}</version>
           <dependencies>
             <dependency>
               <groupId>com.puppycrawl.tools</groupId>
               <artifactId>checkstyle</artifactId>
-              <version>6.19</version>
+              <version>${checkstyle.version}</version>
             </dependency>
             <dependency>
               <groupId>org.apache.beam</groupId>
@@ -232,7 +218,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-jar-plugin</artifactId>
-          <version>3.0.2</version>
+          <version>${maven-jar-plugin.version}</version>
           <configuration>
             <skipIfEmpty>true</skipIfEmpty>
           </configuration>
@@ -255,7 +241,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-source-plugin</artifactId>
-          <version>3.0.1</version>
+          <version>${maven-source-plugin.version}</version>
           <executions>
             <execution>
               <id>attach-sources</id>
@@ -277,7 +263,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-javadoc-plugin</artifactId>
-          <version>2.10.4</version>
+          <version>${maven-javadoc-plugin.version}</version>
           <configuration>
             <failOnError>false</failOnError>
           </configuration>
@@ -295,13 +281,13 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-resources-plugin</artifactId>
-          <version>3.0.2</version>
+          <version>${maven-resources-plugin.version}</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-dependency-plugin</artifactId>
-          <version>3.0.0</version>
+          <version>${maven-dependency-plugin.version}</version>
           <executions>
             <execution>
               <goals>
@@ -317,18 +303,18 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
-          <version>2.20</version>
+          <version>${maven-surefire-plugin.version}</version>
         </plugin>
 
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-archetype-plugin</artifactId>
-          <version>2.4</version>
+          <version>${maven-archetype-plugin.version}</version>
           <dependencies>
             <dependency>
               <groupId>org.apache.maven.shared</groupId>
               <artifactId>maven-invoker</artifactId>
-              <version>2.2</version>
+              <version>${maven-invoker.version}</version>
             </dependency>
           </dependencies>
           <executions>
@@ -354,7 +340,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-release-plugin</artifactId>
-          <version>2.5.3</version>
+          <version>${maven-release-plugin}</version>
           <configuration>
             <autoVersionSubmodules>true</autoVersionSubmodules>
             <useReleaseProfile>true</useReleaseProfile>
@@ -365,7 +351,7 @@
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>exec-maven-plugin</artifactId>
-          <version>1.5.0</version>
+          <version>${exec-maven-plugin.version}</version>
           <configuration>
             <cleanupDaemonThreads>false</cleanupDaemonThreads>
           </configuration>
@@ -374,11 +360,6 @@
     </pluginManagement>
 
     <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-enforcer-plugin</artifactId>
-      </plugin>
-
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -446,12 +427,6 @@
       <dependency>
         <groupId>org.apache.beam</groupId>
         <artifactId>beam-examples-java</artifactId>
-        <version>${beam.version}</version>
-      </dependency>
-
-      <dependency>
-        <groupId>org.apache.beam</groupId>
-        <artifactId>beam-examples-java8</artifactId>
         <version>${beam.version}</version>
       </dependency>
 

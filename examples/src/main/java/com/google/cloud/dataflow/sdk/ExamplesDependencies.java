@@ -15,7 +15,7 @@
  */
 package com.google.cloud.dataflow.sdk;
 
-import org.apache.beam.examples.MinimalWordCountJava8;
+import org.apache.beam.examples.MinimalWordCount;
 import org.apache.beam.examples.WordCount;
 
 /**
@@ -25,5 +25,5 @@ import org.apache.beam.examples.WordCount;
 class ExamplesDependencies {
   SdkDependencies sdkDependencies;
   WordCount wordCount;
-  MinimalWordCountJava8 minimalWordCount;
+  MinimalWordCount minimalWordCount;
 }
