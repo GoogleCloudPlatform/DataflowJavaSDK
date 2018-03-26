@@ -108,7 +108,7 @@
     <beam.version>2.3.0</beam.version>
 
     <dataflow.release_name>Google Cloud Dataflow SDK for Java</dataflow.release_name>
-    <dataflow.container_version>${beam.version}</dataflow.container_version>
+    <dataflow.container_version>beam-${beam.version}</dataflow.container_version>
     <dataflow.legacy_environment_major_version>6</dataflow.legacy_environment_major_version>
     <dataflow.fnapi_environment_major_version>1</dataflow.fnapi_environment_major_version>
 
