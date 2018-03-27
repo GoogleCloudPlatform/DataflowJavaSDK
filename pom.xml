@@ -105,15 +105,16 @@
     <timestamp>${maven.build.timestamp}</timestamp>
     <maven.build.timestamp.format>yyyy-MM-dd HH:mm</maven.build.timestamp.format>
 
-    <beam.version>2.3.0</beam.version>
+    <beam.version>2.4.0</beam.version>
 
     <dataflow.release_name>Google Cloud Dataflow SDK for Java</dataflow.release_name>
     <dataflow.container_version>beam-${beam.version}</dataflow.container_version>
     <dataflow.legacy_environment_major_version>6</dataflow.legacy_environment_major_version>
     <dataflow.fnapi_environment_major_version>1</dataflow.fnapi_environment_major_version>
 
-    <bigquery.version>v2-rev355-1.22.0</bigquery.version>
-    <checkstyle.version>6.19</checkstyle.version>
+    <bigquery.version>v2-rev374-1.22.0</bigquery.version>
+    <checkstyle.version>8.7</checkstyle.version>
+    <eclipse-m2e.version>1.0.0</eclipse-m2e.version>
     <google-clients.version>1.22.0</google-clients.version>
     <guava.version>20.0</guava.version>
     <hamcrest.version>1.3</hamcrest.version>
@@ -125,19 +126,19 @@
 
     <archetype-packaging.version>2.4</archetype-packaging.version>
     <exec-maven-plugin.version>1.6.0</exec-maven-plugin.version>
-    <surefire-plugin.version>2.20</surefire-plugin.version>
+    <surefire-plugin.version>2.20.1</surefire-plugin.version>
     <maven-archetype-plugin.version>2.4</maven-archetype-plugin.version>
-    <maven-checkstyle-plugin.version>2.17</maven-checkstyle-plugin.version>
+    <maven-checkstyle-plugin.version>3.0.0</maven-checkstyle-plugin.version>
     <maven-clean-plugin.version>3.0.0</maven-clean-plugin.version>
-    <maven-compiler-plugin.version>3.6.2</maven-compiler-plugin.version>
-    <maven-dependency-plugin.version>3.0.1</maven-dependency-plugin.version>
+    <maven-compiler-plugin.version>3.7.0</maven-compiler-plugin.version>
+    <maven-dependency-plugin.version>3.0.2</maven-dependency-plugin.version>
     <maven-invoker.version>2.2</maven-invoker.version>
     <maven-jar-plugin.version>3.0.2</maven-jar-plugin.version>
     <maven-javadoc-plugin.version>3.0.0-M1</maven-javadoc-plugin.version>
     <maven-release-plugin>2.5.3</maven-release-plugin>
     <maven-resources-plugin.version>3.0.2</maven-resources-plugin.version>
-    <maven-shade-plugin.version>3.0.0</maven-shade-plugin.version>
-    <maven-surefire-plugin.version>2.20</maven-surefire-plugin.version>
+    <maven-shade-plugin.version>3.1.0</maven-shade-plugin.version>
+    <maven-surefire-plugin.version>2.20.1</maven-surefire-plugin.version>
     <maven-source-plugin.version>3.0.1</maven-source-plugin.version>
   </properties>
 
