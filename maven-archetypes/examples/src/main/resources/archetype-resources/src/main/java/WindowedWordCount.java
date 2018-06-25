@@ -106,7 +106,7 @@ public class WindowedWordCount {
     }
 
     @ProcessElement
-    public void processElement(ProcessContext c) {
+    public void processElement(@Element String element, OutputReceiver<String> receiver) {
       Instant randomTimestamp =
           new Instant(
               ThreadLocalRandom.current()
@@ -115,7 +115,7 @@ public class WindowedWordCount {
       /**
        * Concept #2: Set the data element with that timestamp.
        */
-      c.outputWithTimestamp(c.element(), new Instant(randomTimestamp));
+      receiver.outputWithTimestamp(element, new Instant(randomTimestamp));
     }
   }
 
@@ -165,8 +165,7 @@ public class WindowedWordCount {
     void setNumShards(Integer numShards);
   }
 
-  public static void main(String[] args) throws IOException {
-    Options options = PipelineOptionsFactory.fromArgs(args).withValidation().as(Options.class);
+  static void runWindowedWordCount(Options options) throws IOException {
     final String output = options.getOutput();
     final Instant minTimestamp = new Instant(options.getMinTimestampMillis());
     final Instant maxTimestamp = new Instant(options.getMaxTimestampMillis());
@@ -215,6 +214,12 @@ public class WindowedWordCount {
     } catch (Exception exc) {
       result.cancel();
     }
+  }
+
+  public static void main(String[] args) throws IOException {
+    Options options = PipelineOptionsFactory.fromArgs(args).withValidation().as(Options.class);
+
+    runWindowedWordCount(options);
   }
 
 }
