@@ -93,19 +93,19 @@ public class WordCount {
         ExtractWordsFn.class, "lineLenDistro");
 
     @ProcessElement
-    public void processElement(ProcessContext c) {
-      lineLenDist.update(c.element().length());
-      if (c.element().trim().isEmpty()) {
+    public void processElement(@Element String element, OutputReceiver<String> receiver) {
+      lineLenDist.update(element.length());
+      if (element.trim().isEmpty()) {
         emptyLines.inc();
       }
 
       // Split the line into words.
-      String[] words = c.element().split(ExampleUtils.TOKENIZER_PATTERN);
+      String[] words = element.split(ExampleUtils.TOKENIZER_PATTERN, -1);
 
       // Output each word encountered into the output PCollection.
       for (String word : words) {
         if (!word.isEmpty()) {
-          c.output(word);
+          receiver.output(word);
         }
       }
     }
@@ -172,9 +172,7 @@ public class WordCount {
     void setOutput(String value);
   }
 
-  public static void main(String[] args) {
-    WordCountOptions options = PipelineOptionsFactory.fromArgs(args).withValidation()
-      .as(WordCountOptions.class);
+  static void runWordCount(WordCountOptions options) {
     Pipeline p = Pipeline.create(options);
 
     // Concepts #2 and #3: Our pipeline applies the composite CountWords transform, and passes the
@@ -185,5 +183,12 @@ public class WordCount {
      .apply("WriteCounts", TextIO.write().to(options.getOutput()));
 
     p.run().waitUntilFinish();
+  }
+
+  public static void main(String[] args) {
+    WordCountOptions options = PipelineOptionsFactory.fromArgs(args).withValidation()
+      .as(WordCountOptions.class);
+
+    runWordCount(options);
   }
 }
