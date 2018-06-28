@@ -14,7 +14,7 @@
   the License.
 -->
 
-# Google Cloud Dataflow SDK for Java [DISCONTINUED]
+# Google Cloud Dataflow SDK for Java
 
 
 **FUTURE DEPRECATION NOTICE**: The Cloud Dataflow SDK 2.5.0 will be the last Cloud Dataflow SDK release for Java that is separate from the Apache Beam SDK releases. The Cloud Dataflow service will fully support official Apache Beam SDK releases. Users are encouraged to start planning to use the Apache Beam SDK for their pipelines instead of the Cloud Dataflow SDK. The Cloud Dataflow service will also support previously released Apache Beam SDKs starting with version 2.0.0 and above. See the Cloud Dataflow support page for the support status of various SDKs.
