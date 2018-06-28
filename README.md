@@ -16,9 +16,11 @@
 
 # Google Cloud Dataflow SDK for Java [DISCONTINUED]
 
-**The release cycle of Google Cloud Dataflow SDK for Java has been 
-discontinued**. To keep receiving updates, please rely on [Apache Beam](
-http://github.com/apache/beam), and its latest releases.
+---
+
+**FUTURE DEPRECATION NOTICE***: The Cloud Dataflow SDK 2.5.0 will be the last Cloud Dataflow SDK release for Java that is separate from the Apache Beam SDK releases. The Cloud Dataflow service will fully support official Apache Beam SDK releases. Users are encouraged to start planning to use the Apache Beam SDK for their pipelines instead of the Cloud Dataflow SDK. The Cloud Dataflow service will also support previously released Apache Beam SDKs starting with version 2.0.0 and above. See the Cloud Dataflow support page for the support status of various SDKs.
+
+---
 
 [Google Cloud Dataflow](https://cloud.google.com/dataflow/) provides a simple,
 powerful programming model for building both batch and streaming parallel data
