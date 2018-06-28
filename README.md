@@ -14,7 +14,11 @@
   the License.
 -->
 
-# Google Cloud Dataflow SDK for Java
+# Google Cloud Dataflow SDK for Java [DISCONTINUED]
+
+**The release cycle of Google Cloud Dataflow SDK for Java has been 
+discontinued**. To keep receiving updates, please rely on [Apache Beam](
+http://github.com/apache/beam), and its latest releases.
 
 [Google Cloud Dataflow](https://cloud.google.com/dataflow/) provides a simple,
 powerful programming model for building both batch and streaming parallel data
