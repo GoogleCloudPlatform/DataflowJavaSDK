@@ -19,6 +19,7 @@ import org.apache.beam.runners.dataflow.DataflowRunner;
 import org.apache.beam.runners.direct.DirectRunner;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO;
+import org.apache.beam.sdk.io.kafka.KafkaIO;
 
 /**
  * Mark the dependencies as used at compile time.
@@ -26,6 +27,7 @@ import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO;
 class SdkDependencies {
   private Pipeline p;
   private BigQueryIO bigQueryIO;
+  private KafkaIO kafkaIO;
   private DirectRunner directRunner;
   private DataflowRunner dataflowRunner;
 }
